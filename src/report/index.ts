@@ -199,22 +199,30 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // PreparedLayout parameter with a dozen numeric properties repeats "is finite and not NaN"
 // a dozen times, on every function that takes one, and the repetition drowns the requires
 // and ensures lines that carry actual information. The number default folds into one line
-// per value, e.g. `every number in prepared is finite and not NaN`: exactly the same
-// assumption, since the leaf list is the declared type's own property list, already
-// visible in the source. Small values (one or two number leaves) keep their exact per-leaf
-// lines, and non-number leaves (booleans, tagged-union qualifiers) always print exactly.
+// per value, e.g. `every number-typed value in prepared is finite and not NaN`. The
+// quantifier deliberately ranges over the DECLARED number leaves, not over whatever
+// numbers happen to be present at runtime: the per-leaf line `box.width is finite and not
+// NaN` asserts that box.width actually holds a finite number, so a non-number smuggled
+// through `any` violates the assumption and keeps the ensures vacuous rather than false —
+// the folded line must keep exactly that force (a review round ran the counterexample).
+// Nullish-wrapped leaves stay out of the fold and keep their exact lines: a `number |
+// null` leaf legally holds null, which the folded assertion would wrongly forbid. Small
+// values (one or two number leaves) keep their per-leaf lines, and non-number leaves
+// (booleans, tagged-union qualifiers) always print exactly.
 function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
   const folds = numberLeafCount(declared) >= 3 && declared.kind !== 'number'
-  if (folds) assumptions.push(`every number in ${path} is finite and not NaN`)
+  if (folds) assumptions.push(`every number-typed value in ${path} is finite and not NaN`)
   pushDeclaredAssumptions(path, declared, assumptions, {skipNumberLeaves: folds})
 }
 
+// Counts the number leaves the fold may cover. Nullish subtrees count zero: their leaves
+// keep exact per-leaf lines whether or not the root folds.
 function numberLeafCount(declared: DeclaredKind): number {
   switch (declared.kind) {
     case 'number': return 1
     case 'boolean': return 0
     case 'opaque': return 0
-    case 'nullish': return numberLeafCount(declared.inner)
+    case 'nullish': return 0
     case 'array': return numberLeafCount(declared.element)
     case 'tuple': {
       let count = 0
@@ -287,9 +295,9 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
     case 'nullish': {
       const sentinelWords = declared.sentinels === 'both' ? 'null or undefined' : declared.sentinels
       if (declared.inner.kind === 'number') {
-        // E.g. `animatedUntilTime is null or a finite non-NaN number`. The folded number
-        // line covers the when-present part, so a folding root prints nothing here.
-        if (!options.skipNumberLeaves) assumptions.push(`${path} is ${sentinelWords} or a finite non-NaN number`)
+        // E.g. `animatedUntilTime is null or a finite non-NaN number`. Never folded: the
+        // folded line's kind assertion would wrongly forbid the legal null.
+        assumptions.push(`${path} is ${sentinelWords} or a finite non-NaN number`)
       } else if (declared.inner.kind === 'boolean') {
         assumptions.push(`${path} is ${sentinelWords} or a boolean`)
       } else {
@@ -297,9 +305,10 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
         // `Config | null` parameter prints `config is null or config.width is finite and
         // not NaN`. The seeded finiteness of every leaf must reach the report: the
         // ensures lines rest on it. An opaque inner (`string | null`) contributes no
-        // line, because nothing is claimed about the string either way.
+        // line, because nothing is claimed about the string either way. The whole
+        // nullish subtree prints exactly even under a folding root (see numberLeafCount).
         const leaf: string[] = []
-        pushDeclaredAssumptions(path, declared.inner, leaf, options)
+        pushDeclaredAssumptions(path, declared.inner, leaf, exactLeaves)
         for (const line of leaf) assumptions.push(`${path} is ${sentinelWords} or ${line}`)
       }
       break

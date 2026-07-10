@@ -87,11 +87,13 @@ describe('tagged unions and narrowing', () => {
         return owner.count
       }
     `)
-    // Three number leaves (index, owner.page, owner.count) fold into the one-line number
-    // default; the fold covers the leaves regardless of variant and null-ness, so the
-    // per-leaf qualifiers disappear with the lines.
+    // box.owner is nullish-wrapped, and nullish subtrees never fold (their lines carry
+    // the null caveat the folded assertion cannot), so only box.index counts toward the
+    // fold threshold and every line stays exact.
     expect(analyzedFunction(report, 'ownerPage').assumptions).toEqual([
-      'every number in box is finite and not NaN',
+      'box.index is finite and not NaN',
+      "box.owner is null or box.owner.page is finite and not NaN (when box.owner.type is 'explore')",
+      "box.owner is null or box.owner.count is finite and not NaN (when box.owner.type is 'imagine')",
     ])
     expect(analyzedFunction(report, 'ownerPage').ensures).toEqual(['return is a finite number'])
   })
@@ -140,9 +142,9 @@ describe('tagged unions and narrowing', () => {
       'return.code is a finite integer number from 400 through 400 (when return.ok is false)',
     ])
     // The literal-union tag expands to two variants carrying navWidth; with sheetHeight
-    // that is three number leaves, so the default folds into one line.
+    // that is three number-typed leaves, so the default folds into one line.
     expect(analyzedFunction(report, 'navSpace').assumptions).toEqual([
-      'every number in nav is finite and not NaN',
+      'every number-typed value in nav is finite and not NaN',
     ])
   })
 
