@@ -224,10 +224,12 @@ test('file audits lead with honest coverage and route only relevant checked patt
   expect(output).toContain('**Encode a real input rule where the calculation begins.**')
   expect(output).not.toContain(refactorGuide('encode-input-rule').before)
 
+  // A do-while stays outside the subset (while itself lowers now), and no catalog guide
+  // claims a safe rewrite for one, so the audit must say plainly that nothing applies.
   const unsupportedWithoutGuide = auditSource('unsupported.ts', `
     export function wait(width: number): number {
-      while (width > 0) return width
-      return 0
+      do { width = width - 1 } while (width > 0)
+      return width
     }
   `)
   expect(unsupportedWithoutGuide.guideIDs).toEqual([])

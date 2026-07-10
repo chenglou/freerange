@@ -61,6 +61,14 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
     lowerForStatement(statement, context)
     return
   }
+  if (ts.isWhileStatement(statement)) {
+    lowerWhileStatement(statement, context)
+    return
+  }
+  if (ts.isContinueStatement(statement)) {
+    lowerContinueStatement(statement, context)
+    return
+  }
   if (ts.isBlock(statement)) {
     lowerStatements(statement.statements, context)
     return
@@ -291,6 +299,15 @@ function lowerForOfStatement(statement: ts.ForOfStatement, context: FunctionCont
     site: addSite(context, statement),
   })
 
+  // The counter is a raw header parameter, not a symbol binding, so a continue cannot
+  // observe a stale value: the bump is emitted fresh at each back edge (the body end here,
+  // and every continue site).
+  const advance = (advanceContext: FunctionContext): ValueID[] => {
+    const one = addInstruction(advanceContext, statement, {kind: 'constant', value: 1})
+    const next = addInstruction(advanceContext, statement, {kind: 'binary', operator: 'add', left: counter, right: one})
+    return [next]
+  }
+
   context.currentBlock = context.blocks[body]!
   context.bindings = new Map(conditionBindings)
   context.bindings.set(
@@ -302,15 +319,16 @@ function lowerForOfStatement(statement: ts.ForOfStatement, context: FunctionCont
       mode: 'proven',
     }),
   )
+  context.loops.push({header, carried, advance})
   lowerStatement(statement.statement, context)
+  context.loops.pop()
   if (context.currentBlock.terminator == null) {
-    const one = addInstruction(context, statement, {kind: 'constant', value: 1})
-    const next = addInstruction(context, statement, {kind: 'binary', operator: 'add', left: counter, right: one})
+    const extra = advance(context)
     terminate(context.currentBlock, {
       kind: 'jump',
       target: {
         block: header,
-        arguments: [...carried.map(symbol => requiredBranchBinding(symbol, context.bindings)), next],
+        arguments: [...carried.map(symbol => requiredBranchBinding(symbol, context.bindings)), ...extra],
       },
       site: addSite(context, statement),
     })
@@ -329,11 +347,13 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
     }
   }
   if (statement.condition == null) throw unsupported(statement, {kind: 'forLoopWithoutCondition'})
-  if (statement.incrementor == null) throw unsupported(statement, {kind: 'forLoopWithoutIncrementor'})
   requireBooleanCondition(statement.condition, context.checker)
 
   const bindingsBeforeLoop = new Map(context.bindings)
-  const assigned = assignedSymbols([statement.condition, statement.statement, statement.incrementor], context.checker)
+  const scanned = statement.incrementor == null
+    ? [statement.condition, statement.statement]
+    : [statement.condition, statement.statement, statement.incrementor]
+  const assigned = assignedSymbols(scanned, context.checker)
   const carried = [...bindingsBeforeLoop.keys()].filter(symbol => assigned.has(symbol))
   const header = createBlock(context, carried.length, addSite(context, statement))
   terminate(context.currentBlock, {
@@ -352,11 +372,21 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
   const exit = createBlock(context)
   lowerBranchingCondition(statement.condition, body, exit, context)
 
+  // A continue runs the incrementor before jumping back, same as the normal body end —
+  // JavaScript's order (continue in a for loop still advances the counter). An absent
+  // incrementor makes the loop while-shaped; progress then lives in the body.
+  const advance = (advanceContext: FunctionContext): ValueID[] => {
+    if (statement.incrementor != null) lowerStatementExpression(statement.incrementor, advanceContext)
+    return []
+  }
+
   context.currentBlock = context.blocks[body]!
   context.bindings = new Map(conditionBindings)
+  context.loops.push({header, carried, advance})
   lowerStatement(statement.statement, context)
+  context.loops.pop()
   if (context.currentBlock.terminator == null) {
-    lowerStatementExpression(statement.incrementor, context)
+    advance(context)
     terminate(context.currentBlock, {
       kind: 'jump',
       target: {block: header, arguments: carried.map(symbol => requiredBranchBinding(symbol, context.bindings))},
@@ -366,6 +396,73 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
 
   context.currentBlock = context.blocks[exit]!
   context.bindings = conditionBindings
+}
+
+// `while (cond) body` is a for loop with no initializer and no incrementor: the same
+// header/body/exit blocks, the same carried-binding block parameters, the same widening
+// and fixed point at the header. Progress lives in the body's own assignments, so a body
+// that never changes the condition's inputs converges to the non-exiting-loop stop.
+function lowerWhileStatement(statement: ts.WhileStatement, context: FunctionContext): void {
+  requireBooleanCondition(statement.expression, context.checker)
+
+  const bindingsBeforeLoop = new Map(context.bindings)
+  const assigned = assignedSymbols([statement.expression, statement.statement], context.checker)
+  const carried = [...bindingsBeforeLoop.keys()].filter(symbol => assigned.has(symbol))
+  const header = createBlock(context, carried.length, addSite(context, statement))
+  terminate(context.currentBlock, {
+    kind: 'jump',
+    target: {block: header, arguments: carried.map(symbol => requiredBranchBinding(symbol, bindingsBeforeLoop))},
+    site: addSite(context, statement),
+  })
+
+  context.currentBlock = context.blocks[header]!
+  context.bindings = new Map(bindingsBeforeLoop)
+  for (let index = 0; index < carried.length; index++) {
+    context.bindings.set(carried[index]!, context.currentBlock.parameters[index]!)
+  }
+  const conditionBindings = new Map(context.bindings)
+  const body = createBlock(context)
+  const exit = createBlock(context)
+  lowerBranchingCondition(statement.expression, body, exit, context)
+
+  context.currentBlock = context.blocks[body]!
+  context.bindings = new Map(conditionBindings)
+  context.loops.push({header, carried, advance: () => []})
+  lowerStatement(statement.statement, context)
+  context.loops.pop()
+  if (context.currentBlock.terminator == null) {
+    terminate(context.currentBlock, {
+      kind: 'jump',
+      target: {block: header, arguments: carried.map(symbol => requiredBranchBinding(symbol, context.bindings))},
+      site: addSite(context, statement),
+    })
+  }
+
+  context.currentBlock = context.blocks[exit]!
+  context.bindings = conditionBindings
+}
+
+// `continue` ends the current path the way `return` does, except the jump targets the
+// innermost loop's header instead of leaving the function. The loop's advance step runs
+// first (a for loop's incrementor, the for-of counter bump), then the carried bindings
+// are read at their current values — exactly what the normal body-end back edge does.
+function lowerContinueStatement(statement: ts.ContinueStatement, context: FunctionContext): void {
+  if (statement.label != null) {
+    throw unsupported(statement, {kind: 'statementForm', syntax: 'ContinueStatement with a label'})
+  }
+  const loop = context.loops[context.loops.length - 1]
+  // TypeScript already rejects continue outside a loop; the guard keeps lowering total if
+  // such a file ever reaches this point.
+  if (loop == null) throw unsupported(statement, {kind: 'statementForm', syntax: 'ContinueStatement'})
+  const extra = loop.advance(context)
+  terminate(context.currentBlock, {
+    kind: 'jump',
+    target: {
+      block: loop.header,
+      arguments: [...loop.carried.map(symbol => requiredBranchBinding(symbol, context.bindings)), ...extra],
+    },
+    site: addSite(context, statement),
+  })
 }
 
 function lowerBranch(

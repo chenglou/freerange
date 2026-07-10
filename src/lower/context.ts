@@ -37,6 +37,17 @@ export type FunctionContext = {
   blocks: MutableBlock[]
   bindings: Map<ts.Symbol, ValueID>
   parameters: FunctionIR['parameters']
+  // Innermost-last stack of enclosing loops, consulted by `continue`. A continue runs the
+  // loop's advance step (a for loop's incrementor, the for-of counter bump; nothing for
+  // while), then jumps to the header carrying the loop's carried bindings plus whatever
+  // extra arguments the advance step returns (the for-of counter).
+  loops: LoopTarget[]
+}
+
+export type LoopTarget = {
+  header: BlockID
+  carried: ts.Symbol[]
+  advance: (context: FunctionContext) => ValueID[]
 }
 
 export function createFunctionContext(
@@ -58,6 +69,7 @@ export function createFunctionContext(
     blocks: [entry],
     bindings: new Map(),
     parameters: [],
+    loops: [],
   }
 }
 
@@ -71,6 +83,7 @@ export type LoweringSnapshot = {
   instructionCount: number
   blockCount: number
   bindings: Map<ts.Symbol, ValueID>
+  loopCount: number
 }
 
 export function snapshotLowering(context: FunctionContext): LoweringSnapshot {
@@ -79,6 +92,7 @@ export function snapshotLowering(context: FunctionContext): LoweringSnapshot {
     instructionCount: context.currentBlock.instructions.length,
     blockCount: context.blocks.length,
     bindings: new Map(context.bindings),
+    loopCount: context.loops.length,
   }
 }
 
@@ -88,6 +102,7 @@ export function restoreLowering(context: FunctionContext, snapshot: LoweringSnap
   snapshot.block.terminator = null
   context.currentBlock = snapshot.block
   context.bindings = snapshot.bindings
+  context.loops.length = snapshot.loopCount
 }
 
 export function addSite(context: FunctionContext, node: ts.Node): SiteID {
