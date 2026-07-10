@@ -199,9 +199,10 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // PreparedLayout parameter with a dozen numeric properties repeats "is finite and not NaN"
 // a dozen times, on every function that takes one, and the repetition drowns the requires
 // and ensures lines that carry actual information. The number default folds into one line
-// per value, e.g. `every number-typed value in prepared is finite and not NaN`. The
-// quantifier deliberately ranges over the DECLARED number leaves, not over whatever
-// numbers happen to be present at runtime: the per-leaf line `box.width is finite and not
+// per value, e.g. `every value declared as a number in prepared is finite and not NaN`.
+// The quantifier names the declaration because the report's other quantifier idiom
+// (`every widths element is ...`) ranges over runtime elements, and a runtime reading of
+// this line would be vacuous for exactly the smuggled non-numbers that must violate it: the per-leaf line `box.width is finite and not
 // NaN` asserts that box.width actually holds a finite number, so a non-number smuggled
 // through `any` violates the assumption and keeps the ensures vacuous rather than false —
 // the folded line must keep exactly that force (a review round ran the counterexample).
@@ -211,7 +212,7 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // (booleans, tagged-union qualifiers) always print exactly.
 function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
   const folds = numberLeafCount(declared) >= 3 && declared.kind !== 'number'
-  if (folds) assumptions.push(`every number-typed value in ${path} is finite and not NaN`)
+  if (folds) assumptions.push(`every value declared as a number in ${path} is finite and not NaN`)
   pushDeclaredAssumptions(path, declared, assumptions, {skipNumberLeaves: folds})
 }
 

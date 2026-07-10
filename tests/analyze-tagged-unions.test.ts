@@ -144,7 +144,7 @@ describe('tagged unions and narrowing', () => {
     // The literal-union tag expands to two variants carrying navWidth; with sheetHeight
     // that is three number-typed leaves, so the default folds into one line.
     expect(analyzedFunction(report, 'navSpace').assumptions).toEqual([
-      'every number-typed value in nav is finite and not NaN',
+      'every value declared as a number in nav is finite and not NaN',
     ])
   })
 
