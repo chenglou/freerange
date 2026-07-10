@@ -207,7 +207,8 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // through `any` violates the assumption and keeps the ensures vacuous rather than false —
 // the folded line must keep exactly that force (a review round ran the counterexample).
 // Nullish-wrapped leaves stay out of the fold and keep their exact lines: a `number |
-// null` leaf legally holds null, which the folded assertion would wrongly forbid. Small
+// null` leaf legally holds null, which the folded assertion would wrongly forbid.
+// Tagged-union leaves stay out too (see numberLeafCount's taggedUnion arm). Small
 // values (one or two number leaves) keep their per-leaf lines, and non-number leaves
 // (booleans, tagged-union qualifiers) always print exactly.
 function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
@@ -235,16 +236,13 @@ function numberLeafCount(declared: DeclaredKind): number {
       for (const property of declared.properties) count += numberLeafCount(property.declared)
       return count
     }
-    case 'taggedUnion': {
-      let count = 0
-      for (const variant of declared.variants) {
-        for (const property of variant.properties) {
-          if (property.name === declared.tagProperty) continue
-          count += numberLeafCount(property.declared)
-        }
-      }
-      return count
-    }
+    // Tagged unions never fold: their per-leaf lines carry the `(when route.type is ...)`
+    // qualifier scoping each assumption to its variant, which one folded line cannot
+    // express — a legal value of one variant has no values in the other variants' slots,
+    // so an unqualified declaration-wide assertion is violated by every legal value,
+    // while a presence-scoped one is vacuous for a wrong-shape smuggle (a review round
+    // ran both failures).
+    case 'taggedUnion': return 0
   }
 }
 
@@ -338,7 +336,7 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
             ? `when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)} and ${path}.${property.name} is present`
             : `when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)}`
           const perProperty: string[] = []
-          pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, perProperty, options)
+          pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, perProperty, exactLeaves)
           for (const line of perProperty) leaf.push(`${line} (${qualifier})`)
         }
         for (const line of leaf) {

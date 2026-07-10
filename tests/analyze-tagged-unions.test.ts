@@ -141,10 +141,12 @@ describe('tagged unions and narrowing', () => {
       'return.value is a finite number more than 0 (when return.ok is true)',
       'return.code is a finite integer number from 400 through 400 (when return.ok is false)',
     ])
-    // The literal-union tag expands to two variants carrying navWidth; with sheetHeight
-    // that is three number-typed leaves, so the default folds into one line.
+    // Tagged unions never fold: the qualified lines scope each assumption to its
+    // variant, which one folded line cannot express.
     expect(analyzedFunction(report, 'navSpace').assumptions).toEqual([
-      'every value declared as a number in nav is finite and not NaN',
+      "nav.navWidth is finite and not NaN (when nav.type is 'desktopCollapsedNav')",
+      "nav.navWidth is finite and not NaN (when nav.type is 'desktopExpandedNav')",
+      "nav.sheetHeight is finite and not NaN (when nav.type is 'mobileNav')",
     ])
   })
 
