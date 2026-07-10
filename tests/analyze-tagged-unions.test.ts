@@ -87,6 +87,9 @@ describe('tagged unions and narrowing', () => {
         return owner.count
       }
     `)
+    // box.owner is nullish-wrapped, and nullish subtrees never fold (their lines carry
+    // the null caveat the folded assertion cannot), so only box.index counts toward the
+    // fold threshold and every line stays exact.
     expect(analyzedFunction(report, 'ownerPage').assumptions).toEqual([
       'box.index is finite and not NaN',
       "box.owner is null or box.owner.page is finite and not NaN (when box.owner.type is 'explore')",
@@ -138,6 +141,8 @@ describe('tagged unions and narrowing', () => {
       'return.value is a finite number more than 0 (when return.ok is true)',
       'return.code is a finite integer number from 400 through 400 (when return.ok is false)',
     ])
+    // Tagged unions never fold: the qualified lines scope each assumption to its
+    // variant, which one folded line cannot express.
     expect(analyzedFunction(report, 'navSpace').assumptions).toEqual([
       "nav.navWidth is finite and not NaN (when nav.type is 'desktopCollapsedNav')",
       "nav.navWidth is finite and not NaN (when nav.type is 'desktopExpandedNav')",
