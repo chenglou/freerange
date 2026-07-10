@@ -465,4 +465,55 @@ describe('arrays and declared values', () => {
       .toEqual(['slots[each] is null or slots[each].x is finite and not NaN'])
   })
 
+  test('the number default folds per value at three plain leaves; nullish and tagged-union leaves stay exact', () => {
+    // A record with many number leaves would repeat "is finite and not NaN" once per leaf
+    // on every function that takes one. Three or more plain number leaves fold into one
+    // line quantified over the DECLARED properties ("holds" demands a value, so a
+    // non-number smuggled through any AND an absent property both violate the line — four
+    // review rounds shaped this wording). Nullish leaves keep their null disjunct and
+    // tagged-union leaves keep their variant qualifiers: one unqualified line cannot
+    // carry either. Two plain leaves stay per-leaf; module bindings fold like parameters.
+    const report = analyzeSource('assumes-fold.ts', `
+      type Meter = {kind: 'linear'; slope: number} | {kind: 'log'; base: number}
+      type Panel = {width: number; height: number; gap: number; visible: boolean; ratio: number | null; meter: Meter}
+      export function panelArea(panel: Panel): number {
+        return panel.width * panel.height + panel.gap
+      }
+      export function span(range: {low: number; high: number}): number {
+        return range.high - range.low
+      }
+      export function pathTotal(points: {x: number; y: number; z: number}[]): number {
+        let total = 0
+        for (const point of points) { total = total + point.x + point.y + point.z }
+        return total
+      }
+      let camera = {x: 0, y: 0, zoom: 1}
+      export function zoomedX(offset: number): number {
+        return (camera.x + offset) * camera.zoom
+      }
+      export function resetCamera(): number {
+        camera = {x: 0, y: 0, zoom: 1}
+        return camera.zoom
+      }
+    `)
+    expect(analyzedFunction(report, 'panelArea').assumptions).toEqual([
+      'every property declared as a number in panel holds a finite non-NaN number',
+      'panel.visible is a boolean',
+      'panel.ratio is null or a finite non-NaN number',
+      "panel.meter.slope is finite and not NaN (when panel.meter.kind is 'linear')",
+      "panel.meter.base is finite and not NaN (when panel.meter.kind is 'log')",
+    ])
+    expect(analyzedFunction(report, 'span').assumptions).toEqual([
+      'range.low is finite and not NaN',
+      'range.high is finite and not NaN',
+    ])
+    expect(analyzedFunction(report, 'pathTotal').assumptions).toEqual([
+      'every property declared as a number in points holds a finite non-NaN number',
+    ])
+    expect(analyzedFunction(report, 'zoomedX').assumptions).toEqual([
+      'offset is finite and not NaN',
+      'every property declared as a number in camera holds a finite non-NaN number',
+    ])
+  })
+
 })

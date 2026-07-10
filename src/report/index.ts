@@ -199,10 +199,12 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // PreparedLayout parameter with a dozen numeric properties repeats "is finite and not NaN"
 // a dozen times, on every function that takes one, and the repetition drowns the requires
 // and ensures lines that carry actual information. The number default folds into one line
-// per value, e.g. `every value declared as a number in prepared is finite and not NaN`.
-// The quantifier names the declaration because the report's other quantifier idiom
-// (`every widths element is ...`) ranges over runtime elements, and a runtime reading of
-// this line would be vacuous for exactly the smuggled non-numbers that must violate it: the per-leaf line `box.width is finite and not
+// per value, e.g. `every property declared as a number in prepared holds a finite non-NaN
+// number` (array elements and tuple slots are index properties, so one word covers every
+// leaf). The quantifier ranges over the DECLARED properties and demands a held value; a
+// quantifier over runtime values would be vacuous for exactly the two smuggles that must
+// violate the line — a non-number in a number slot (not a "number value") and an absent
+// property (no value at all), both reachable through `any`: the per-leaf line `box.width is finite and not
 // NaN` asserts that box.width actually holds a finite number, so a non-number smuggled
 // through `any` violates the assumption and keeps the ensures vacuous rather than false —
 // the folded line must keep exactly that force (a review round ran the counterexample).
@@ -213,7 +215,7 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // (booleans, tagged-union qualifiers) always print exactly.
 function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
   const folds = numberLeafCount(declared) >= 3 && declared.kind !== 'number'
-  if (folds) assumptions.push(`every value declared as a number in ${path} is finite and not NaN`)
+  if (folds) assumptions.push(`every property declared as a number in ${path} holds a finite non-NaN number`)
   pushDeclaredAssumptions(path, declared, assumptions, {skipNumberLeaves: folds})
 }
 
