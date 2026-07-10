@@ -21,13 +21,12 @@ export function formatTypeScriptDiagnostics(
     getCanonicalFileName: ts.sys.useCaseSensitiveFileNames ? file => file : file => file.toLowerCase(),
     getNewLine: () => ts.sys.newLine,
   }
-  return usePrettyDiagnostics(options)
+  return usePrettyOutput(options['pretty'])
     ? ts.formatDiagnosticsWithColorAndContext(diagnostics, host)
     : ts.formatDiagnostics(diagnostics, host)
 }
 
-function usePrettyDiagnostics(options: ts.CompilerOptions): boolean {
-  const configured = options['pretty']
+export function usePrettyOutput(configured?: unknown): boolean {
   if (typeof configured === 'boolean') return configured
   const noColor = process.env['NO_COLOR']
   if (noColor != null && noColor !== '') return false

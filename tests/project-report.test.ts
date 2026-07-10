@@ -110,16 +110,27 @@ export function outOfBounds(): number {
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('freerange lint')
-    expect(result.stdout).toContain('contracts.ts:2:10  note  this division requires 7 caller conditions')
+    expect(result.stdout).toStartWith('contracts.ts(2,10): note [caller-contract]: this division requires 7 caller conditions')
+    expect(result.stdout).not.toContain('Notes are caller conditions')
+    expect(result.stdout).not.toContain('\u001B[')
     expect(result.stdout).toContain('  wrapper: columnCount is nonzero')
     expect(result.stdout).toContain('  adapted: (width - gap) is nonzero')
     expect(result.stdout).not.toContain('guarded: columnCount is nonzero')
     expect(result.stdout).toContain('2 divisions require 1 caller condition')
-    expect(result.stdout).toContain('error  asserted element read (arr[i]!) is provably out of bounds')
+    expect(result.stdout).toContain('error [out-of-bounds-read]: asserted element read (arr[i]!) is provably out of bounds')
     expect(result.stdout).toContain('6 findings (1 error, 0 warnings, 5 notes).')
     expect(result.stdout).toContain('coverage: 10/11 named top-level function declarations fully analyzed; 1 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
     expect(existsSync(join(projectDirectory, 'freerange-report'))).toBe(false)
+
+    const colored = Bun.spawnSync({
+      cmd: [process.execPath, freerangeCli],
+      cwd: projectDirectory,
+      env: {...process.env, NO_COLOR: '', FORCE_COLOR: '1'},
+      stdout: 'pipe',
+      stderr: 'pipe',
+    }).stdout.toString()
+    expect(colored).toContain('\u001B[96mcontracts.ts\u001B[0m:\u001B[93m2\u001B[0m:\u001B[93m10\u001B[0m - \u001B[96mnote\u001B[0m')
+    expect(colored).toContain('\u001B[90m [caller-contract]: \u001B[0m')
 
     const targeted = runCli(projectDirectory, 'contracts.ts')
     expect(targeted.stdout).toContain(`wrapper
@@ -156,8 +167,7 @@ export function clean(): number {
 
     expect(projectAudit.exitCode).toBe(0)
     expect(projectAudit.stderr).toBe('')
-    expect(projectAudit.stdout).toContain('freerange audit')
-    expect(projectAudit.stdout).toContain('advice.ts (3/4 functions fully analyzed; 1 unsupported)')
+    expect(projectAudit.stdout).toStartWith('advice.ts (3/4 functions fully analyzed; 1 unsupported)')
     expect(projectAudit.stdout).toContain('[guard-derived-value, encode-input-rule]')
     expect(projectAudit.stdout).toContain('[write-explicit-condition]')
     expect(projectAudit.stdout).toContain('2 matched locations in 1 file.')

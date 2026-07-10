@@ -19,7 +19,7 @@ import {reportPath, siteLocation} from './ir/program.ts'
 import {describePrecondition, type PreconditionOperation} from './report/format-requirement.ts'
 import {createReport, formatReport} from './report/index.ts'
 import {checkFile} from './typescript/check.ts'
-import {formatTypeScriptDiagnostics, TypeScriptDiagnosticsError} from './typescript/diagnostics.ts'
+import {formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
 import {
   findTypeScriptConfig,
   loadTypeScriptProjectGraph,
@@ -64,6 +64,7 @@ type ProjectScan = {
   files: DetailedAnalysis[]
   coverage: ProjectCoverage
   hasTypeScriptErrors: boolean
+  pretty: boolean
 }
 
 export function runProject(searchFrom: string): boolean {
@@ -71,14 +72,14 @@ export function runProject(searchFrom: string): boolean {
   const findings = scan.files.flatMap(collectLintFindings)
     .sort((left, right) =>
       left.file.localeCompare(right.file) || left.line - right.line || left.column - right.column)
-  console.log(formatProjectLint(findings, scan.coverage))
+  console.log(formatProjectLint(findings, scan.coverage, scan.pretty))
   return scan.hasTypeScriptErrors
 }
 
 export function runProjectAudit(searchFrom: string): boolean {
   const scan = analyzeProject(searchFrom)
   const audits = scan.files.map(createFileAudit)
-  console.log(formatProjectAudit(audits, scan.coverage))
+  console.log(formatProjectAudit(audits, scan.coverage, scan.pretty))
   return scan.hasTypeScriptErrors
 }
 
@@ -147,6 +148,7 @@ function analyzeProject(searchFrom: string): ProjectScan {
       unsupported,
     },
     hasTypeScriptErrors: hasErrorDiagnostics(allDiagnostics),
+    pretty: usePrettyOutput(rootProject.parsed.options['pretty']),
   }
 }
 
@@ -210,14 +212,9 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
   return findings
 }
 
-function formatProjectLint(findings: LintFinding[], coverage: ProjectCoverage): string {
-  const lines = [
-    'freerange lint',
-    '',
-    'Notes are caller conditions that this project cannot verify.',
-    '',
-  ]
-  for (const finding of findings) lines.push(...formatLintFinding(finding))
+function formatProjectLint(findings: LintFinding[], coverage: ProjectCoverage, pretty: boolean): string {
+  const lines: string[] = []
+  for (const finding of findings) lines.push(...formatLintFinding(finding, pretty))
 
   if (findings.length === 0) lines.push('No lint findings.')
   const errors = findings.filter(finding => lintLevel(finding) === 'error').length
@@ -232,18 +229,18 @@ function formatProjectLint(findings: LintFinding[], coverage: ProjectCoverage): 
   return lines.join('\n')
 }
 
-function formatLintFinding(finding: LintFinding): string[] {
-  const location = `${finding.file}:${finding.line}:${finding.column}`
+function formatLintFinding(finding: LintFinding, pretty: boolean): string[] {
+  const location = formatDiagnosticLocation(finding.file, finding.line, finding.column, pretty)
   if (finding.kind === 'simple') {
     return [finding.stop === 'outOfBoundsRead'
-      ? `${location}  error  asserted element read (arr[i]!) is provably out of bounds in ${finding.functionName}  [out-of-bounds-read]`
-      : `${location}  warning  loop in ${finding.functionName} has no analyzable exit; it may never terminate  [non-exiting-loop]`]
+      ? `${formatLintPrefix(finding, 'out-of-bounds-read', pretty)}asserted element read (arr[i]!) is provably out of bounds in ${finding.functionName}`
+      : `${formatLintPrefix(finding, 'non-exiting-loop', pretty)}loop in ${finding.functionName} has no analyzable exit; it may never terminate`]
   }
   const operationCount = finding.additionalLocations.length + 1
   if (operationCount === 1 && finding.contracts.length === 1) {
     const contract = finding.contracts[0]!
     return [
-      `${location}  note  callers of ${contract.functionName} must keep ${contract.condition} (${finding.operation} at ${location})  [caller-contract]`,
+      `${formatLintPrefix(finding, 'caller-contract', pretty)}callers of ${contract.functionName} must keep ${contract.condition} (${finding.operation} at ${location})`,
     ]
   }
 
@@ -252,7 +249,7 @@ function formatLintFinding(finding: LintFinding): string[] {
     : `${operationCount} ${finding.operation === 'element read' ? 'element reads' : `${finding.operation}s`}`
   const conditionSubject = `${finding.contracts.length} caller condition${finding.contracts.length === 1 ? '' : 's'}`
   const lines = [
-    `${location}  note  ${operationSubject} ${operationCount === 1 ? 'requires' : 'require'} ${conditionSubject}  [caller-contract]`,
+    `${formatLintPrefix(finding, 'caller-contract', pretty)}${operationSubject} ${operationCount === 1 ? 'requires' : 'require'} ${conditionSubject}`,
   ]
   let lastShownLine = finding.line
   let lastShownColumn = finding.column
@@ -260,7 +257,7 @@ function formatLintFinding(finding: LintFinding): string[] {
     if (lastShownLine === additional.line && lastShownColumn === additional.column) continue
     lastShownLine = additional.line
     lastShownColumn = additional.column
-    lines.push(`  also at ${finding.file}:${additional.line}:${additional.column}`)
+    lines.push(`  also at ${formatDiagnosticLocation(finding.file, additional.line, additional.column, pretty)}`)
   }
   for (const contract of finding.contracts) lines.push(`  ${contract.functionName}: ${contract.condition}`)
   return lines
@@ -271,7 +268,28 @@ function lintLevel(finding: LintFinding): 'error' | 'warning' | 'note' {
   return finding.stop === 'outOfBoundsRead' ? 'error' : 'warning'
 }
 
-function formatProjectAudit(audits: FileAudit[], coverage: ProjectCoverage): string {
+function formatLintPrefix(finding: LintFinding, rule: string, pretty: boolean): string {
+  const location = formatDiagnosticLocation(finding.file, finding.line, finding.column, pretty)
+  const level = lintLevel(finding)
+  const separator = pretty ? ' - ' : ': '
+  const formattedLevel = pretty
+    ? color(level === 'error' ? 91 : level === 'warning' ? 93 : 96, level)
+    : level
+  const ruleLabel = ` [${rule}]: `
+  return `${location}${separator}${formattedLevel}${pretty ? color(90, ruleLabel) : ruleLabel}`
+}
+
+function formatDiagnosticLocation(file: string, line: number, column: number, pretty: boolean): string {
+  return pretty
+    ? `${color(96, file)}:${color(93, line)}:${color(93, column)}`
+    : `${file}(${line},${column})`
+}
+
+function color(code: number, text: string | number): string {
+  return `\u001B[${code}m${text}\u001B[0m`
+}
+
+function formatProjectAudit(audits: FileAudit[], coverage: ProjectCoverage, pretty: boolean): string {
   const matched = audits
     .map(audit => ({
       audit,
@@ -280,7 +298,7 @@ function formatProjectAudit(audits: FileAudit[], coverage: ProjectCoverage): str
     .filter(entry => entry.matches.length > 0)
     .sort((left, right) => left.audit.file.localeCompare(right.audit.file))
   const matchCount = matched.reduce((total, entry) => total + entry.matches.length, 0)
-  const lines = ['freerange audit', '']
+  const lines: string[] = []
 
   if (matched.length === 0) {
     lines.push('No recognized refactoring patterns matched.')
@@ -288,8 +306,8 @@ function formatProjectAudit(audits: FileAudit[], coverage: ProjectCoverage): str
     for (let index = 0; index < matched.length; index++) {
       const {audit, matches} = matched[index]!
       if (index > 0) lines.push('')
-      lines.push(`${audit.file} (${formatAuditCoverage(audit.coverage)})`)
-      for (const match of matches) lines.push(formatAuditMatch(audit, match))
+      lines.push(`${pretty ? color(96, audit.file) : audit.file} (${formatAuditCoverage(audit.coverage)})`)
+      for (const match of matches) lines.push(formatAuditMatch(audit, match, pretty))
     }
   }
 
@@ -335,13 +353,14 @@ function groupAuditReferences(references: AuditReference[]): AuditReference[] {
   return matches
 }
 
-function formatAuditMatch(audit: FileAudit, reference: AuditReference): string {
+function formatAuditMatch(audit: FileAudit, reference: AuditReference, pretty: boolean): string {
   const locationPrefix = `${audit.file}:`
   const location = reference.location.startsWith(locationPrefix)
     ? reference.location.slice(locationPrefix.length)
     : reference.location
   const guides = reference.guideIDs.map(refactorGuide)
-  return `  ${location}  ${reference.functionName}: ${guides.map(guide => guide.title).join('; also consider ')}  [${reference.guideIDs.join(', ')}]`
+  const guideLabel = `[${reference.guideIDs.join(', ')}]`
+  return `  ${pretty ? color(93, location) : location}  ${reference.functionName}: ${guides.map(guide => guide.title).join('; also consider ')}  ${pretty ? color(90, guideLabel) : guideLabel}`
 }
 
 function formatCoverage(coverage: ProjectCoverage): string {
