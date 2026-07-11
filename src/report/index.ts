@@ -653,11 +653,12 @@ function numberSummary(path: string, value: AbstractNumber, program: ProgramIR):
   // The blame suffix names where the degradation was born, so the line points at the
   // missing input fact instead of just shrugging. A recovered value (clamped back to a
   // clean range) prints no suffix even when the annotation lingers.
-  const blame = value.lossSite == null || (isFiniteNumber(value) && !value.mayBeNaN)
+  const blameSite = value.mayBeNaN ? value.nanSite : value.nonFiniteSite
+  const blame = blameSite == null || (isFiniteNumber(value) && !value.mayBeNaN)
     ? ''
     : value.mayBeNaN
-      ? ` (NaN possible from the operation at ${formatSite(program, value.lossSite)})`
-      : ` (can overflow at ${formatSite(program, value.lossSite)})`
+      ? ` (NaN possible from the operation at ${formatSite(program, blameSite)})`
+      : ` (can overflow at ${formatSite(program, blameSite)})`
   const subject = `${path} is a ${domain}${kind}number`
   // A point interval is an exact value (`return 0.1 + 0.2` is exactly
   // 0.30000000000000004); rewriting either bound into strict phrasing would print an

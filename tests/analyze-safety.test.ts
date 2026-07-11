@@ -519,6 +519,18 @@ describe('acceptance and module safety', () => {
       .toEqual(['return is a finite integer number from 0 through 1'])
   })
 
+  test('NaN attribution names the operation that introduces NaN, not an earlier overflow', () => {
+    const report = analyzeSource('nan-attribution.ts', `
+      export function differenceAfterOverflow(left: number, right: number): number {
+        const product = left * right
+        return product - product
+      }
+    `)
+    expect(analyzedFunction(report, 'differenceAfterOverflow').ensures).toEqual([
+      'return is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at nan-attribution.ts:4:16)',
+    ])
+  })
+
   test('a refinement that clips to finite bounds also proves finiteness', () => {
     // a * b can overflow, but Infinity fails x < 100, so inside both guards the value is
     // genuinely finite — the wording must not say "possibly non-finite from 0 through 100".

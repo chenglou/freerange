@@ -334,7 +334,8 @@ export type ModuleBindingIR = {
 
 export type ProgramIR = {
   file: string
-  // What report paths are made relative to; see reportPath.
+  // What report paths are made relative to; CLI commands use their working directory,
+  // matching TypeScript diagnostics. See reportPath.
   baseDirectory: string
   // Offset of each line's first character, copied from ts.SourceFile.getLineStarts(), so
   // locations can be formatted after the TypeScript objects are gone (analyzeSource inputs
@@ -377,9 +378,9 @@ export function formatSite(program: ProgramIR, site: SiteID): string {
   return `${reportPath(program)}:${line}:${column}`
 }
 
-// Report lines name files relative to the analysis base (the repo root in project runs,
-// the working directory for single files): shorter lines, and the report survives being
-// checked in or diffed across machines, which absolute paths never do.
+// Report lines name files relative to the analysis base. CLI commands use their working
+// directory, matching TypeScript diagnostics and producing stable relative paths without
+// absolute machine-specific prefixes.
 export function reportPath(program: ProgramIR): string {
   return relative(program.baseDirectory, program.file)
 }

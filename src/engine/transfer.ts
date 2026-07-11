@@ -94,22 +94,30 @@ function passthroughValue(result: AbstractValue): StepResult {
   return {kind: 'value', value: result}
 }
 
-// The blame annotation (see AbstractNumber.lossSite — never semantics): a degraded result
-// inherits the earliest operand's loss site, or, when the operands were all clean, stamps
-// this operation as where finiteness or NaN-freedom died.
+// Report annotations only: a degraded result inherits the relevant operand site, or, when
+// every operand still had the property, records this operation. Finiteness and NaN use
+// separate sites because an overflow can enable a later operation to produce NaN without
+// being the operation that produced it.
 function computedNumber(raw: AbstractNumber, operands: AbstractNumber[], site: SiteID): StepResult {
   return {kind: 'value', value: withLossBlame(raw, operands, site)}
 }
 
 function withLossBlame(result: AbstractNumber, operands: AbstractNumber[], site: SiteID): AbstractNumber {
   if (isFiniteNumber(result) && !result.mayBeNaN) return result
-  if (result.lossSite != null) return result
-  const carrier = operands.find(operand => operand.lossSite != null)
-  if (carrier?.lossSite != null) return {...result, lossSite: carrier.lossSite}
-  const lostFinite = !isFiniteNumber(result) && operands.every(operand => isFiniteNumber(operand))
-  const gainedNaN = result.mayBeNaN && operands.every(operand => !operand.mayBeNaN)
-  if (lostFinite || gainedNaN) return {...result, lossSite: site}
-  return result
+  let annotated = result
+  if (!isFiniteNumber(result) && result.nonFiniteSite == null) {
+    const carrier = operands.find(operand => !isFiniteNumber(operand) && operand.nonFiniteSite != null)
+    const nonFiniteSite = carrier?.nonFiniteSite
+      ?? (operands.every(operand => isFiniteNumber(operand)) ? site : undefined)
+    if (nonFiniteSite != null) annotated = {...annotated, nonFiniteSite}
+  }
+  if (result.mayBeNaN && result.nanSite == null) {
+    const carrier = operands.find(operand => operand.mayBeNaN && operand.nanSite != null)
+    const nanSite = carrier?.nanSite
+      ?? (operands.every(operand => !operand.mayBeNaN) ? site : undefined)
+    if (nanSite != null) annotated = {...annotated, nanSite}
+  }
+  return annotated
 }
 
 // See TransferContext.usedOutsideCompare. Terminator uses (return values, branch
@@ -840,8 +848,15 @@ function meetValues(current: AbstractValue, refined: AbstractValue): AbstractVal
       // field, and the refined side's is the fresher fact.
       const excludedPoint = refined.excludesPoint ?? current.excludesPoint
       if (excludedPoint != null) met.excludesPoint = excludedPoint
-      const lossSite = refined.lossSite ?? current.lossSite
-      return lossSite == null ? met : {...met, lossSite}
+      if (!isFiniteNumber(met)) {
+        const nonFiniteSite = refined.nonFiniteSite ?? current.nonFiniteSite
+        if (nonFiniteSite != null) met.nonFiniteSite = nonFiniteSite
+      }
+      if (met.mayBeNaN) {
+        const nanSite = refined.nanSite ?? current.nanSite
+        if (nanSite != null) met.nanSite = nanSite
+      }
+      return met
     }
     case 'record': {
       if (current.kind !== 'record') return refined

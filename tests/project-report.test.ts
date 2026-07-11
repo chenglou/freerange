@@ -143,6 +143,25 @@ export function outOfBounds(): number {
   }
 })
 
+test('bare fr reports failures in module initialization', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-initializer-'))
+  try {
+    writeProject(projectDirectory, {'module-loop.ts': `while (true) {}
+export function answer(): number { return 42 }
+`})
+
+    const result = runCli(projectDirectory)
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('module-loop.ts(1,1): warning [non-exiting-loop]: loop in module initialization has no analyzable exit; it may never terminate')
+    expect(result.stdout).not.toContain('No lint findings.')
+    expect(result.stdout).toContain('1 finding (0 errors, 1 warning, 0 notes).')
+  } finally {
+    rmSync(projectDirectory, {recursive: true, force: true})
+  }
+})
+
 test('project audit is a concise index while file audit keeps the detailed guide', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-audit-'))
   try {
@@ -261,12 +280,13 @@ test('bare fr searches upward and solution configs include their project referen
       include: ['src/**/*.ts'],
     }))
     writeFileSync(join(packageDirectory, 'src', 'answer.ts'),
-      'export function answer(): number { return 42 }\n')
+      'export function answer(value: number, divisor: number): number { return value / divisor }\n')
 
     const result = runCli(nestedDirectory)
 
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('No lint findings.')
+    expect(result.stdout).toStartWith('../answer.ts(')
+    expect(result.stdout).not.toContain('packages/geometry/src/answer.ts')
     expect(result.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
@@ -295,6 +315,8 @@ export function gap(): number { return GAP }
     const targeted = runCli(join(projectDirectory, 'src'), 'target.ts')
     expect(targeted.exitCode).toBe(0)
     expect(targeted.stderr).not.toContain('broken.ts')
+    expect(targeted.stdout).toContain('\ntarget.ts\n\n')
+    expect(targeted.stdout).not.toContain('\nsrc/target.ts\n')
     expect(targeted.stdout).toContain('return is a finite integer number from 24 through 24')
 
     const missing = runCli(join(projectDirectory, 'src'), 'missing.ts')

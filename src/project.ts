@@ -14,6 +14,7 @@ import {
   type AuditReference,
   type FileAudit,
 } from './audit.ts'
+import type {FunctionAnalysis} from './engine/outcome.ts'
 import type {SiteID} from './ir/ids.ts'
 import {reportPath, siteLocation} from './ir/program.ts'
 import {describePrecondition, type PreconditionOperation} from './report/format-requirement.ts'
@@ -104,7 +105,6 @@ function analyzeProject(searchFrom: string): ProjectScan {
   }
   const projects = loadTypeScriptProjectGraph(configPath)
   const rootProject = projects.at(-1)!
-  const rootDirectory = rootProject.rootDirectory
   const sources = projectSources(projects)
   const diagnosticsByProject = new Map(projects.map(project => [project, collectProjectDiagnostics(project)]))
   const allDiagnostics = uniqueDiagnostics(projects.flatMap(project => diagnosticsByProject.get(project)!.all))
@@ -127,7 +127,7 @@ function analyzeProject(searchFrom: string): ProjectScan {
       continue
     }
 
-    const detailed = analyzeProjectSource(source, rootDirectory)
+    const detailed = analyzeProjectSource(source, process.cwd())
     files.push(detailed)
     const fileFunctions = detailed.analysis.functions
     for (const fn of fileFunctions) {
@@ -157,21 +157,27 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
   const findings: LintFinding[] = []
   const callerContractsBySite = new Map<SiteID, CallerContractFinding>()
 
-  for (const fn of analysis.functions) {
-    if (fn.kind === 'partial') {
-      for (const stop of fn.stops) {
-        if (stop.reason.kind !== 'outOfBoundsRead' && stop.reason.kind !== 'nonExitingLoop') continue
-        const location = siteLocation(program, stop.site)
-        findings.push({
-          kind: 'simple',
-          file,
-          line: location.line,
-          column: location.column,
-          functionName: fn.lowering.name,
-          stop: stop.reason.kind,
-        })
-      }
+  const collectStops = (fn: FunctionAnalysis): void => {
+    if (fn.kind !== 'partial') return
+    for (const stop of fn.stops) {
+      if (stop.reason.kind !== 'outOfBoundsRead' && stop.reason.kind !== 'nonExitingLoop') continue
+      const location = siteLocation(program, stop.site)
+      findings.push({
+        kind: 'simple',
+        file,
+        line: location.line,
+        column: location.column,
+        functionName: fn.lowering.name,
+        stop: stop.reason.kind,
+      })
     }
+  }
+
+  // The module initializer is analyzed through the same engine but stored separately
+  // because no function can call it. Its failures are still project lint findings.
+  collectStops(analysis.initializer)
+  for (const fn of analysis.functions) {
+    collectStops(fn)
     if (fn.kind !== 'analyzed') continue
 
     const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
@@ -393,13 +399,12 @@ function analyzeTargetFile(file: string): DetailedAnalysis | null {
   }
 
   const projects = loadTypeScriptProjectGraph(configPath)
-  const rootProject = projects.at(-1)!
   const source = projectSources(projects).find(candidate => resolve(candidate.sourceFile.fileName) === absoluteFile)
   if (source == null) throw new Error(`${absoluteFile} is not part of the TypeScript project ${configPath}.`)
   const diagnostics = ts.getPreEmitDiagnostics(source.project.program, source.sourceFile)
   printTypeScriptDiagnostics(diagnostics, source.project.parsed.options, process.cwd())
   if (hasErrorDiagnostics(diagnostics)) return null
-  return analyzeProjectSource(source, rootProject.rootDirectory)
+  return analyzeProjectSource(source, process.cwd())
 }
 
 type CollectedProjectDiagnostics = {
@@ -425,11 +430,11 @@ function collectProjectDiagnostics(project: LoadedTypeScriptProject): CollectedP
   return {all, global, byFile}
 }
 
-function analyzeProjectSource(source: ProjectSource, baseDirectory: string): DetailedAnalysis {
+function analyzeProjectSource(source: ProjectSource, reportBaseDirectory: string): DetailedAnalysis {
   return analyzeCheckedSource({
     sourceFile: source.sourceFile,
     checker: source.project.program.getTypeChecker(),
-  }, baseDirectory)
+  }, reportBaseDirectory)
 }
 
 function uniqueDiagnostics(diagnostics: readonly ts.Diagnostic[]): ts.Diagnostic[] {

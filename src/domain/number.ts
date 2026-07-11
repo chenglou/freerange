@@ -16,16 +16,14 @@ export type AbstractNumber = {
   // width - 4 ≠ 0, so the guard a peeled requires line names actually discharges it.
   // Absent means "no point excluded"; producers stay conservative by construction (x - x
   // can be zero from nonzero operands) except for those exact rules, and joins keep a
-  // point only when both sides exclude it. Unlike lossSite below, this is semantics:
+  // point only when both sides exclude it. Unlike the report sites below, this is semantics:
   // sameNumbers compares it. One point, not a set — the deliberate cap.
   excludesPoint?: number
-  // Annotation only, never semantics: the operation where finiteness or NaN-freedom was
-  // first lost, for the report's blame suffix. Deliberately excluded from sameNumbers and
-  // never branched on by the engine — if it participated in equality, two semantically
-  // identical values re-derived through different operations would look changed at loop
-  // headers and disturb fixed points. Joins keep the left side's site when both carry one;
-  // blame is best-effort prose, not a guarantee.
-  lossSite?: SiteID
+  // Annotation only, never semantics: where finiteness and NaN-freedom were first lost,
+  // kept separately so a later NaN-producing operation is not blamed on an earlier
+  // overflow. Deliberately excluded from sameNumbers and never branched on by the engine.
+  nonFiniteSite?: SiteID
+  nanSite?: SiteID
 }
 
 const float64Scratch = new Float64Array(1)
@@ -360,8 +358,12 @@ export function joinNumbers(left: AbstractNumber, right: AbstractNumber): Abstra
   // side carries a cut, since it is the point division cares about).
   const excludesPoint = sharedExcludedPoint(left, right, joined.lower, joined.upper)
   if (excludesPoint != null) joined.excludesPoint = excludesPoint
-  const lossSite = left.lossSite ?? right.lossSite
-  if (lossSite != null) joined.lossSite = lossSite
+  const nonFiniteSite = (!isFiniteNumber(left) ? left.nonFiniteSite : undefined)
+    ?? (!isFiniteNumber(right) ? right.nonFiniteSite : undefined)
+  if (!isFiniteNumber(joined) && nonFiniteSite != null) joined.nonFiniteSite = nonFiniteSite
+  const nanSite = (left.mayBeNaN ? left.nanSite : undefined)
+    ?? (right.mayBeNaN ? right.nanSite : undefined)
+  if (joined.mayBeNaN && nanSite != null) joined.nanSite = nanSite
   return joined
 }
 
@@ -386,7 +388,8 @@ export function widenNumber(previous: AbstractNumber, next: AbstractNumber): Abs
     integer: next.integer,
     mayBeNaN: next.mayBeNaN,
   }
-  if (next.lossSite != null) widened.lossSite = next.lossSite
+  if (!isFiniteNumber(widened) && next.nonFiniteSite != null) widened.nonFiniteSite = next.nonFiniteSite
+  if (widened.mayBeNaN && next.nanSite != null) widened.nanSite = next.nanSite
   // The widened interval is a fresh, wider cover — a point stays excluded only when both
   // rounds excluded it, same rule as joins. The cut can disappear across rounds and never
   // reappear, so the fixed point still converges.
