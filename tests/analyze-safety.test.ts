@@ -241,7 +241,7 @@ describe('acceptance and module safety', () => {
     })
   })
 
-  test('values typed any carry claim-free; every use of one stops instead of trusting the type', () => {
+  test('values typed any carry claim-free; numeric uses stop only the paths that reach them', () => {
     // TypeScript accepts an any-typed value in every position, so a type-checked function
     // can still put a boolean into a number variable. The value carries as opaque — the
     // checker's word is void, so nothing is claimed — and each downstream use hits a
@@ -268,6 +268,32 @@ describe('acceptance and module safety', () => {
       export function passThrough(width: number): number {
         return width + 1
       }
+      export function directAddition(value: any, enabled: boolean): number {
+        if (enabled) return value + 1
+        return 0
+      }
+      export function directCompound(value: any, enabled: boolean): number {
+        if (enabled) {
+          value += 1
+          return 1
+        }
+        return 0
+      }
+      export function directComparison(value: any, enabled: boolean): number {
+        if (enabled && value < 10) return 1
+        return 0
+      }
+      export function directMath(value: any, enabled: boolean): number {
+        if (enabled) return Math.abs(value)
+        return 0
+      }
+      export function directIndex(values: number[], index: any, enabled: boolean): number {
+        if (enabled) return values[index]!
+        return 0
+      }
+      export function directEquality(left: any, right: any): number {
+        return left === right ? 1 : 0
+      }
     `)
     // launder's addition and laundersArgument's call both stop on the carried opaque; the
     // stop names the narrowing mismatch, and no numeric claim is published for any of them.
@@ -278,12 +304,22 @@ describe('acceptance and module safety', () => {
     // A bare return of the carried value completes — with an empty contract.
     expect(analyzedFunction(report, 'laundersReturn').ensures).toEqual([])
     expect(analyzedFunction(report, 'passThrough').ensures).toEqual(['return is a finite number'])
+    for (const name of ['directAddition', 'directCompound', 'directComparison', 'directMath', 'directIndex']) {
+      const fn = report.functions.find(candidate => candidate.name === name)
+      expect(fn?.kind).toBe('partial')
+      expect(fn?.kind === 'partial' ? fn.stopped : []).toHaveLength(1)
+      expect(fn?.kind === 'partial' ? fn.observed : []).toEqual([
+        'return is a finite integer number from 0 through 0',
+      ])
+    }
+    expect(analyzedFunction(report, 'directEquality').ensures).toEqual([
+      'return is a finite integer number from 0 through 1',
+    ])
   })
 
   test('hedges boolean module reads whose writes the analysis never sees', () => {
-    // poison is rejected (its parameter is typed any), but it still runs at runtime and
-    // writes flag, so the scan demotes flag to its declared kind and "return is boolean"
-    // stays conditional on the binding actually holding a boolean.
+    // poison writes a claim-free value into flag, so the scan demotes flag to its declared
+    // kind and "return is boolean" stays conditional on the binding actually holding one.
     const report = analyzeSource('module-any-boolean.ts', `
       let flag = false
       export function poison(value: any): void {

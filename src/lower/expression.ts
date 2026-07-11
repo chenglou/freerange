@@ -91,7 +91,7 @@ export function lowerStatementExpression(expression: ts.Expression, context: Fun
         // value-position binary arm does, instead of slipping an untyped add through to
         // the engine's kind-mismatch backstop.
         if (assignment.operator === 'add'
-          && valueKind(context.checker.getTypeAtLocation(current), context.checker) === 'opaque') {
+          && (context.checker.getTypeAtLocation(current).flags & ts.TypeFlags.StringLike) !== 0) {
           lowerExpression(assignment.node.right, context)
           const concatenated = addInstruction(context, current, {kind: 'opaqueConstant'})
           assignIdentifier(symbol, assignment.target, concatenated, current, context)
@@ -388,7 +388,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     // string, the result is an opaque value. Both operands still lower, so an unsupported
     // construct inside one rejects as usual.
     if (current.operatorToken.kind === ts.SyntaxKind.PlusToken
-      && valueKind(context.checker.getTypeAtLocation(current), context.checker) === 'opaque') {
+      && (context.checker.getTypeAtLocation(current).flags & ts.TypeFlags.StringLike) !== 0) {
       lowerExpression(current.left, context)
       lowerExpression(current.right, context)
       return addInstruction(context, current, {kind: 'opaqueConstant'})
@@ -780,7 +780,11 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
   // Through valueKind, not a raw flag test, so there is one definition of "number":
   // a literal union like `1 | 2` — the numeric discriminant of a tagged record — is a
   // number here exactly as it is at the declarator and destructuring gates.
-  if (valueKind(type, checker) !== 'number') {
+  // TypeScript permits `any` in a numeric operation, but its static permission proves
+  // nothing about the runtime value. Let the claim-free value reach the evaluator, whose
+  // numeric gate stops only the path that executes the operation. Other non-number types
+  // remain lowering rejections because diagnostic-clean TypeScript does not license them.
+  if (valueKind(type, checker) !== 'number' && (type.flags & ts.TypeFlags.Any) === 0) {
     throw unsupported(node, {kind: 'nonNumberOperand', typeText: checker.typeToString(type)})
   }
 }
@@ -871,8 +875,8 @@ function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number
   // `unknown` and `any` both carry without claims. For unknown the checker forces
   // narrowing before any use, so its word stays intact; for any the checker's word is
   // void, and claim-free is the one honest reading — nothing numeric is ever said about
-  // the value, every operation on it stops at the gates, and a write of one into a typed
-  // binding leaves the binding opaque instead of letting the declared type re-mint claims.
+  // the value, operations that require a concrete kind stop at their gates, and a write
+  // into a typed binding leaves the binding opaque instead of re-minting claims.
   if ((type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0) return 'opaque'
   if (type.isUnion()) {
     // `T | null`, `T | undefined`, and `T | null | undefined` classify as nullable when T
