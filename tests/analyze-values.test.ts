@@ -458,9 +458,10 @@ describe('arrays and declared values', () => {
     `)
     const scaled = analyzedFunction(report, 'scaledWidth')
     // The string property makes no assumption line — there is nothing to claim about it.
+    // The boolean property makes none either, but only because scaledWidth never reads
+    // box.visible; `flagged` below reads its boolean and prints the line.
     expect(scaled.assumptions).toEqual([
       'box.width is finite and not NaN',
-      'box.visible is a boolean',
       'factor is finite and not NaN',
     ])
     // A template literal is carried; the numeric contract survives.
@@ -508,7 +509,7 @@ describe('arrays and declared values', () => {
         return values[0] ?? fallback
       }
       export function gridSum(grid: number[][], config: {width: number; label: string} | null): number {
-        if (config === null) return 0
+        if (config === null) return grid.length
         return config.width
       }
     `)
@@ -677,7 +678,10 @@ describe('arrays and declared values', () => {
         extras?: number[]
       }
       export function firstWidth(prepared: Prepared): number {
-        return prepared.widths[0] ?? 0
+        const bands = prepared.gaps.length + prepared.labels.length
+        const extra = prepared.overrides === null ? 0 : prepared.overrides.length
+        const spare = prepared.extras === undefined ? 0 : prepared.extras.length
+        return (prepared.widths[0] ?? 0) + bands + extra + spare
       }
     `)
     expect(analyzedFunction(report, 'firstWidth').assumptions).toEqual([
@@ -713,7 +717,8 @@ describe('arrays and declared values', () => {
       }
       type DuoPlusNullable = {widths: number[]; heights: number[]; overrides: number[] | null}
       export function duoPlusTotal(layout: DuoPlusNullable): number {
-        return layout.widths.length + layout.heights.length
+        const extra = layout.overrides === null ? 0 : layout.overrides.length
+        return layout.widths.length + layout.heights.length + extra
       }
     `)
     expect(formatReport(report)).not.toContain('every property declared as an array in')
@@ -747,7 +752,8 @@ describe('arrays and declared values', () => {
         margins: number[]
       }
       export function panelWidth(panel: Panel): number {
-        return panel.width + (panel.widths[0] ?? 0)
+        return panel.width + panel.height + panel.gap
+          + (panel.widths[0] ?? 0) + (panel.gaps[0] ?? 0) + (panel.margins[0] ?? 0)
       }
     `)
     expect(analyzedFunction(report, 'panelWidth').assumptions).toEqual([
@@ -771,7 +777,7 @@ describe('arrays and declared values', () => {
     const report = analyzeSource('nullable-array-root.ts', `
       type Frame = {rows: number[]; columns: string[]; labels: string[]}
       export function rowCount(grid: number[][][] | null, frame: Frame): number {
-        if (grid === null) return frame.rows.length
+        if (grid === null) return frame.rows.length + frame.columns.length + frame.labels.length
         return grid.length
       }
       type Bands = {widths: number[]; gaps: number[]; margins: number[]}
@@ -810,7 +816,7 @@ describe('arrays and declared values', () => {
     const report = analyzeSource('nested-under-fold.ts', `
       type Chart = {labels: string[]; legends: string[]; series: number[][]}
       export function seriesCount(chart: Chart): number {
-        return chart.series.length
+        return chart.labels.length + chart.legends.length + chart.series.length
       }
     `)
     expect(analyzedFunction(report, 'seriesCount').assumptions).toEqual([
@@ -832,7 +838,8 @@ describe('arrays and declared values', () => {
     const report = analyzeSource('nullable-ancestor-fold.ts', `
       type Layout = {widths: number[]; gaps: number[]; labels: string[]; config: {grid: number[]} | null}
       export function totalBands(layout: Layout): number {
-        return layout.widths.length + layout.gaps.length
+        const gridCount = layout.config === null ? 0 : layout.config.grid.length
+        return layout.widths.length + layout.gaps.length + layout.labels.length + gridCount
       }
     `)
     expect(analyzedFunction(report, 'totalBands').assumptions).toEqual([
@@ -872,7 +879,10 @@ describe('arrays and declared values', () => {
       type Meter = {kind: 'linear'; slope: number} | {kind: 'log'; base: number}
       type Panel = {width: number; height: number; gap: number; visible: boolean; ratio: number | null; meter: Meter}
       export function panelArea(panel: Panel): number {
-        return panel.width * panel.height + panel.gap
+        if (!panel.visible) return 0
+        const boost = panel.ratio === null ? 0 : panel.ratio
+        const scale = panel.meter.kind === 'linear' ? panel.meter.slope : panel.meter.base
+        return panel.width * panel.height + panel.gap + boost + scale
       }
       export function span(range: {low: number; high: number}): number {
         return range.high - range.low
@@ -913,6 +923,107 @@ describe('arrays and declared values', () => {
     expect(analyzedFunction(report, 'zoomedX').assumptions).toEqual([
       'offset is finite and not NaN',
       'every property declared as a number in camera holds a finite non-NaN number',
+    ])
+  })
+
+  test('assumes lines cover only the paths the body reads; untouched paths print nothing', () => {
+    // A declared path no instruction ever touches derived no value, so no printed
+    // requires or ensures can rest on its trust — dropping its line removes no
+    // load-bearing condition, and stops penalizing legal callers: before the filter, a
+    // caller passing a sparse array in an UNREAD position violated a printed line and
+    // needlessly voided the whole contract. The filter is report-layer only; verdicts
+    // and the engine's seeding are untouched.
+    const report = analyzeSource('read-filter.ts', `
+      type Box = {xs: number[]; ys: number[]}
+      export function noArrays(box: Box, flag: boolean): boolean {
+        return flag
+      }
+      export function onlyXs(box: Box): number {
+        return box.xs.length
+      }
+    `)
+    // box is never touched, so neither array prints a line; flag is returned, and the
+    // boolean ensures rests on its trust, so its line stays.
+    const untouched = analyzedFunction(report, 'noArrays')
+    expect(untouched.assumptions).toEqual(['flag is a boolean'])
+    expect(untouched.ensures).toEqual(['return is boolean'])
+    // A read at or below box.xs keeps ALL of box.xs's lines (path-level granularity: the
+    // length read keeps the element line too); the unread sibling box.ys keeps none.
+    expect(analyzedFunction(report, 'onlyXs').assumptions).toEqual([
+      'box.xs is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every box.xs element is finite and not NaN',
+    ])
+  })
+
+  test('escaped values keep their lines: call arguments, returns, and module writes', () => {
+    // The filter drops a line only when the path is provably untouched. A value that
+    // escapes may be read anywhere the walk cannot see — a callee evaluated inline can
+    // read anything under an argument, the ensures lines describe a returned value, and
+    // module state outlives the call — so an escape keeps every line at and below the
+    // escaping path.
+    const report = analyzeSource('read-filter-escapes.ts', `
+      type Box = {xs: number[]; ys: number[]}
+      function ignore(box: Box): number {
+        return 0
+      }
+      export function passesWhole(box: Box): number {
+        return ignore(box)
+      }
+      export function returnsWhole(box: Box): Box {
+        return box
+      }
+      let stash: Box | null = null
+      export function stores(box: Box): number {
+        stash = box
+        return 0
+      }
+    `)
+    const allBoxLines = [
+      'box.xs is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every box.xs element is finite and not NaN',
+      'box.ys is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every box.ys element is finite and not NaN',
+    ]
+    expect(analyzedFunction(report, 'passesWhole').assumptions).toEqual(allBoxLines)
+    expect(analyzedFunction(report, 'returnsWhole').assumptions).toEqual(allBoxLines)
+    expect(analyzedFunction(report, 'stores').assumptions).toEqual(allBoxLines)
+  })
+
+  test('the read filter preserves the plain-array honesty story where it is load-bearing', () => {
+    // The filter only removes lines nothing rests on. An element read rests on the
+    // density clause the honesty batch added — an in-range read is trusted to find a
+    // present element — so a function reading values[index] still prints the plain-array
+    // line a sparse caller ([1, , 3], new Array(5), a lying-length Proxy) violates.
+    const report = analyzeSource('read-filter-honesty.ts', `
+      export function elementAt(values: number[], index: number): number {
+        return values[index] ?? 0
+      }
+    `)
+    expect(analyzedFunction(report, 'elementAt').assumptions).toEqual([
+      'values is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every values element is finite and not NaN',
+      'index is finite and not NaN',
+    ])
+  })
+
+  test('a fold prints only when every position its sentence covers was read', () => {
+    // The folded sentence quantifies over the DECLARED properties, so printing it while
+    // one is unread would claim trust nothing rests on — and re-restrict a legal caller
+    // at the unread position, the over-restriction the read filter removes. With one of
+    // three arrays unread, the two read ones print per-property and the third stays
+    // silent.
+    const report = analyzeSource('read-filter-fold.ts', `
+      type Bands = {widths: number[]; gaps: number[]; margins: number[]}
+      export function twoOfThree(bands: Bands): number {
+        return bands.widths.length + bands.gaps.length
+      }
+    `)
+    const filtered = analyzedFunction(report, 'twoOfThree')
+    expect(filtered.assumptions).toEqual([
+      'bands.widths is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every bands.widths element is finite and not NaN',
+      'bands.gaps is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every bands.gaps element is finite and not NaN',
     ])
   })
 

@@ -202,8 +202,9 @@ describe('module state and nullability', () => {
     `)
     expect(analyzedFunction(report, 'effectiveVolume').ensures)
       .toEqual(['return is a finite integer number from 1 through 1'])
+    // readOptional never reads config.gain, so no gain line prints; the optional
+    // property it does read carries the honest undefined disjunct.
     expect(analyzedFunction(report, 'readOptional').assumptions).toEqual([
-      'config.gain is finite and not NaN',
       'config.volume is undefined or a finite non-NaN number',
     ])
     expect(analyzedFunction(report, 'readOptional').ensures).toEqual(['return is a finite number'])
@@ -524,6 +525,31 @@ describe('module state and nullability', () => {
     const reader = analyzedFunction(report, 'readIt')
     expect(reader.assumptions).toEqual(['animatedUntilTime is null or a finite non-NaN number'])
     expect(reader.ensures).toEqual(['return is a finite number'])
+  })
+
+  test('a read module binding keeps all its lines; an unread one contributes nothing', () => {
+    // Module bindings filter at whole-binding granularity: a callee's reads reach the
+    // caller as a binding ID with no path detail, so a read binding keeps every line —
+    // ratioOnly reads only viewport.ratio yet prints the width line too. An unread
+    // binding supports no claim and prints nothing, like an unread parameter.
+    const report = analyzeSource('binding-read-filter.ts', `
+      let viewport = {width: 800, ratio: 2}
+      export function resize(width: number): void {
+        viewport = {width, ratio: 2}
+      }
+      export function ratioOnly(x: number): number {
+        return x * viewport.ratio
+      }
+      export function ignoresViewport(x: number): number {
+        return x * 2
+      }
+    `)
+    expect(analyzedFunction(report, 'ratioOnly').assumptions).toEqual([
+      'x is finite and not NaN',
+      'viewport.width is finite and not NaN',
+      'viewport.ratio is finite and not NaN',
+    ])
+    expect(analyzedFunction(report, 'ignoresViewport').assumptions).toEqual(['x is finite and not NaN'])
   })
 
 })

@@ -83,7 +83,7 @@ describe('tagged unions and narrowing', () => {
       type Lightbox = {type: 'lightbox'; index: number; owner: null | Owner}
       export function ownerPage(box: Lightbox): number {
         const owner = box.owner
-        if (owner === null) { return 0 }
+        if (owner === null) { return box.index }
         if (owner.type === 'explore') { return owner.page }
         return owner.count
       }
@@ -131,9 +131,10 @@ describe('tagged unions and narrowing', () => {
         }
       }
     `)
+    // unwrapOr reads result.value but never result.code, so only the value line prints;
+    // the tag property contributes no line of its own either way.
     expect(analyzedFunction(report, 'unwrapOr').assumptions).toEqual([
       'result.value is finite and not NaN (when result.ok is true)',
-      'result.code is finite and not NaN (when result.ok is false)',
       'fallback is finite and not NaN',
     ])
     expect(analyzedFunction(report, 'negated').ensures).toEqual(['return is a finite number'])
@@ -593,6 +594,30 @@ describe('tagged unions and narrowing', () => {
     expect(analyzedFunction(report, 'subtle').ensures).toEqual(['return is a finite number'])
     expect(analyzedFunction(report, 'viaNullJoin').ensures).toEqual(['return is a finite integer number from -1 through 0'])
     expect(analyzedFunction(report, 'direct').ensures).toEqual(['return is a finite integer number from -1 through 0'])
+  })
+
+  test('a function that only switches on a union tag prints an empty assumes block', () => {
+    // The real specimen behind the read filter: mj-gallery's submissionCreatesVideo
+    // switches on submissionType.type and returns a boolean, reading exactly one
+    // property — yet it used to print dozens of per-variant array and number lines about
+    // properties it never touched. The boolean ensures rests on nothing in any variant's
+    // slots (a smuggled non-boolean cannot reach the return through the tag dispatch),
+    // so the honest assumes block is empty. The tag read itself keeps nothing: a string
+    // tag is opaque and prints no line anyway.
+    const report = analyzeSource('tag-switch-only.ts', `
+      type SubmitJob =
+        | {type: 'image'; imagePrompts: string[]; weights: number[]}
+        | {type: 'video'; frames: number[]; durationMs: number}
+      export function createsVideo(job: SubmitJob): boolean {
+        switch (job.type) {
+          case 'image': return false
+          case 'video': return true
+        }
+      }
+    `)
+    const specimen = analyzedFunction(report, 'createsVideo')
+    expect(specimen.assumptions).toEqual([])
+    expect(specimen.ensures).toEqual(['return is boolean'])
   })
 
 })

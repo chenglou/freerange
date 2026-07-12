@@ -1,8 +1,9 @@
 import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
-import type {FunctionID} from '../ir/ids.ts'
+import type {FunctionID, ValueID} from '../ir/ids.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
+import {forEachOperand} from '../ir/instructions.ts'
 import {declaredKindOf, formatSite, reportPath, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
@@ -162,6 +163,121 @@ function formatTagValue(tagValue: string | boolean): string {
   return typeof tagValue === 'string' ? `'${tagValue}'` : String(tagValue)
 }
 
+// A parameter path the body read, as property-name segments from the parameter root ([]
+// is the root itself). Reads never descend below an array or tuple: an element read marks
+// the container's path, so every line inside the container prints or drops with it.
+type ParameterRead = {parameter: number; segments: string[]}
+
+// Which declared paths of each parameter the body touched, from a walk over the lowered
+// IR. A declared-type assumes line prints only when its path was touched: a path no
+// instruction ever read derived no value, so no printed requires/ensures can rest on its
+// trust, and dropping its line removes no load-bearing condition. The soundness direction
+// is asymmetric — printing an extra line is harmless, dropping a line a claim rests on is
+// the hole the honesty work closed — so every approximation errs toward marking MORE
+// paths as read:
+// - Escapes keep everything at and below the escaping path: a value passed as a call
+//   argument (the callee may read anything under it), returned (the ensures describe
+//   it), written into module state, or consumed by any instruction the walk does not
+//   treat specially, marks its whole path as read.
+// - Property reads are projections: `box.xs` extends the tracked path without marking
+//   `box` itself read, which is what lets an unread sibling property drop.
+// - Values the walk loses sight of are marked at the point of loss: a tracked value
+//   passed as a block argument (a ternary or loop join) marks its path, because the
+//   block parameter it feeds is not tracked and anything read through it later sits at
+//   or below that path.
+// - A tag check consumes the union directly and marks nothing: the tag property prints
+//   no line (a string tag is opaque, a boolean tag would restate the qualifier), so
+//   there is no line for the check to keep — this is what makes a function that only
+//   switches on a union tag print an empty assumes block.
+// Any future instruction kind lands in the default arm, which marks every tracked
+// operand read — over-printing, never under.
+function parameterReadPaths(fn: FunctionIR): string[][][] {
+  const tracked = new Map<ValueID, ParameterRead>()
+  for (let index = 0; index < fn.parameters.length; index++) {
+    tracked.set(fn.parameters[index]!.value, {parameter: index, segments: []})
+  }
+  // Property chains (box.inner.w) can span blocks; repeat until no projection is new so
+  // block order cannot hide a chain link. Chains are finite (declared types are trees),
+  // so this converges.
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const block of fn.blocks) {
+      for (const instruction of block.instructions) {
+        if (instruction.kind !== 'property' || tracked.has(instruction.result)) continue
+        const base = tracked.get(instruction.object)
+        if (base == null) continue
+        tracked.set(instruction.result, {parameter: base.parameter, segments: [...base.segments, instruction.property]})
+        changed = true
+      }
+    }
+  }
+  const reads: string[][][] = fn.parameters.map(() => [])
+  const markOperand = (operand: ValueID): void => {
+    const path = tracked.get(operand)
+    if (path != null) reads[path.parameter]!.push(path.segments)
+  }
+  for (const block of fn.blocks) {
+    for (const instruction of block.instructions) {
+      switch (instruction.kind) {
+        // A projection, not a consumption: the derived value is tracked above, and
+        // whichever instruction consumes it marks the extended path then.
+        case 'property': break
+        // The tag read keeps nothing — see the rationale above.
+        case 'tagCheck': break
+        // A presence check ('tab' in route) narrows by the checked property, so that
+        // property's presence-qualified lines stay.
+        case 'inCheck': {
+          const base = tracked.get(instruction.union)
+          if (base != null) reads[base.parameter]!.push([...base.segments, instruction.property])
+          break
+        }
+        default: forEachOperand(instruction, markOperand)
+      }
+    }
+    const terminator = block.terminator
+    switch (terminator.kind) {
+      case 'return': {
+        if (terminator.value != null) markOperand(terminator.value)
+        break
+      }
+      case 'jump': {
+        for (const argument of terminator.target.arguments) markOperand(argument)
+        break
+      }
+      case 'branch': {
+        markOperand(terminator.condition)
+        for (const argument of terminator.whenTrue.arguments) markOperand(argument)
+        for (const argument of terminator.whenFalse.arguments) markOperand(argument)
+        break
+      }
+      case 'stop':
+      case 'thrown':
+        break
+    }
+  }
+  return reads
+}
+
+// Whether a line about the declared path `segments` prints, given the paths the body
+// read: yes when some read sits at, below, or above the line's path (one is a prefix of
+// the other). A read below keeps the lines above it that its trust chains through
+// (reading values[i] keeps the plain-array line on values), and a read at or above keeps
+// everything under it (an escaped record keeps its whole subtree).
+type KeepPath = (segments: string[]) => boolean
+
+function keepFromReads(reads: string[][]): KeepPath {
+  return segments => reads.some(read => {
+    const shared = Math.min(read.length, segments.length)
+    for (let index = 0; index < shared; index++) {
+      if (read[index] !== segments[index]) return false
+    }
+    return true
+  })
+}
+
+const keepEverything: KeepPath = () => true
+
 function assumptionLines(
   fn: FunctionIR,
   program: ProgramIR,
@@ -169,15 +285,20 @@ function assumptionLines(
   boundsAssumptions: BoundsAssumption[],
 ): string[] {
   const assumptions: string[] = []
-  for (const parameter of fn.parameters) {
-    pushRootAssumptions(parameter.name, parameter.type, assumptions)
+  const reads = parameterReadPaths(fn)
+  for (let index = 0; index < fn.parameters.length; index++) {
+    const parameter = fn.parameters[index]!
+    pushRootAssumptions(parameter.name, parameter.type, assumptions, keepFromReads(reads[index]!))
   }
+  // Module bindings filter at whole-binding granularity: assumedBindings already contains
+  // only the bindings this function (or a callee) reads, and a callee's reads arrive as a
+  // binding ID with no path detail, so a read binding keeps all its lines.
   for (let bindingID = 0; bindingID < program.moduleBindings.length; bindingID++) {
     if (assumedBindings[bindingID] !== true) continue
     const binding = program.moduleBindings[bindingID]!
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) throw new Error(`Module binding ${binding.name} has no declared kind to assume`)
-    pushRootAssumptions(binding.name, declaredKind, assumptions)
+    pushRootAssumptions(binding.name, declaredKind, assumptions, keepEverything)
   }
   for (const assumption of boundsAssumptions) {
     // The engine could not prove the asserted element read in bounds; the entry's
@@ -241,40 +362,59 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // lying inner row through with every printed line holding, and the unconditional
 // 'holds' was violated by a legal null behind a nullable record, so the whole report
 // stopped applying to legitimate callers.
-function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
-  const folds = numberLeafCount(declared) >= 3 && declared.kind !== 'number'
+// Either fold prints only when the read filter keeps EVERY position its sentence covers:
+// the sentence quantifies over the DECLARED properties ("every property declared as a
+// number in prepared"), so printing it while a covered position is unread would claim
+// trust nothing rests on — and re-restrict legal callers at the unread position, the
+// exact over-restriction the read filter removes. When any covered position is unread,
+// the kept positions print per-property and the unread ones stay silent.
+function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[], keep: KeepPath): void {
+  const numberLeaves = numberLeafCount(declared, [], keep)
+  const folds = numberLeaves.total >= 3 && numberLeaves.kept === numberLeaves.total && declared.kind !== 'number'
   if (folds) assumptions.push(`every property declared as a number in ${path} holds a finite non-NaN number`)
-  if (declared.kind === 'record'
-    && declared.properties.filter(property => property.declared.kind === 'array').length >= 3) {
-    assumptions.push(`every property declared as an array in ${path} holds a plain array — its length counts its elements, and every index below the length holds an element`)
-    for (const property of declared.properties) {
-      pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, assumptions, {
-        skipNumberLeaves: folds,
-        skipOwnArrayLine: property.declared.kind === 'array',
-      })
+  if (declared.kind === 'record') {
+    const arrayProperties = declared.properties.filter(property => property.declared.kind === 'array')
+    const keptArrayProperties = arrayProperties.filter(property => keep([property.name]))
+    if (arrayProperties.length >= 3 && keptArrayProperties.length === arrayProperties.length) {
+      assumptions.push(`every property declared as an array in ${path} holds a plain array — its length counts its elements, and every index below the length holds an element`)
+      for (const property of declared.properties) {
+        pushDeclaredAssumptions(`${path}.${property.name}`, [property.name], property.declared, assumptions, keep, {
+          skipNumberLeaves: folds,
+          skipOwnArrayLine: property.declared.kind === 'array',
+        })
+      }
+      return
     }
-    return
   }
-  pushDeclaredAssumptions(path, declared, assumptions, {skipNumberLeaves: folds, skipOwnArrayLine: false})
+  pushDeclaredAssumptions(path, [], declared, assumptions, keep, {skipNumberLeaves: folds, skipOwnArrayLine: false})
 }
 
-// Counts the number leaves the fold may cover. Nullish subtrees count zero: their leaves
-// keep exact per-leaf lines whether or not the root folds.
-function numberLeafCount(declared: DeclaredKind): number {
+// Counts the number leaves the fold may cover, and how many of them the read filter
+// keeps. Nullish subtrees count zero: their leaves keep exact per-leaf lines whether or
+// not the root folds.
+function numberLeafCount(declared: DeclaredKind, segments: string[], keep: KeepPath): {total: number; kept: number} {
   switch (declared.kind) {
-    case 'number': return 1
-    case 'boolean': return 0
-    case 'opaque': return 0
-    case 'nullish': return 0
-    case 'array': return numberLeafCount(declared.element)
+    case 'number': return {total: 1, kept: keep(segments) ? 1 : 0}
+    case 'boolean': return {total: 0, kept: 0}
+    case 'opaque': return {total: 0, kept: 0}
+    case 'nullish': return {total: 0, kept: 0}
+    case 'array': return numberLeafCount(declared.element, [...segments, '[each]'], keep)
     case 'tuple': {
-      let count = 0
-      for (const element of declared.elements) count += numberLeafCount(element)
+      const count = {total: 0, kept: 0}
+      for (let index = 0; index < declared.elements.length; index++) {
+        const element = numberLeafCount(declared.elements[index]!, [...segments, String(index)], keep)
+        count.total += element.total
+        count.kept += element.kept
+      }
       return count
     }
     case 'record': {
-      let count = 0
-      for (const property of declared.properties) count += numberLeafCount(property.declared)
+      const count = {total: 0, kept: 0}
+      for (const property of declared.properties) {
+        const inner = numberLeafCount(property.declared, [...segments, property.name], keep)
+        count.total += inner.total
+        count.kept += inner.kept
+      }
       return count
     }
     // Tagged unions never fold: their per-leaf lines carry the `(when route.type is ...)`
@@ -283,7 +423,7 @@ function numberLeafCount(declared: DeclaredKind): number {
     // so an unqualified declaration-wide assertion is violated by every legal value,
     // while a presence-scoped one is vacuous for a wrong-shape smuggle (a review round
     // ran both failures).
-    case 'taggedUnion': return 0
+    case 'taggedUnion': return {total: 0, kept: 0}
   }
 }
 
@@ -302,14 +442,19 @@ type AssumptionOptions = {
 const exactLeaves: AssumptionOptions = {skipNumberLeaves: false, skipOwnArrayLine: false}
 
 // One assumption line per leaf of the declared kind: a record binding's condition is a
-// condition on each of its properties, e.g. `pointer.x is finite and not NaN`.
-function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptions: string[], options: AssumptionOptions = exactLeaves): void {
+// condition on each of its properties, e.g. `pointer.x is finite and not NaN`. `segments`
+// is the same path as `path` in property-name segments, checked against the read filter
+// at every line-emitting arm; a line whose path the body never touched stays silent.
+function pushDeclaredAssumptions(path: string, segments: string[], declared: DeclaredKind, assumptions: string[], keep: KeepPath, options: AssumptionOptions = exactLeaves): void {
   switch (declared.kind) {
     case 'number': {
-      if (!options.skipNumberLeaves) assumptions.push(`${path} is finite and not NaN`)
+      if (!options.skipNumberLeaves && keep(segments)) assumptions.push(`${path} is finite and not NaN`)
       break
     }
-    case 'boolean': assumptions.push(`${path} is a boolean`); break
+    case 'boolean': {
+      if (keep(segments)) assumptions.push(`${path} is a boolean`)
+      break
+    }
     case 'tuple': {
       // The engine reads a declared tuple's length as its position count and every slot
       // as present (a [number, number] parameter's .length is seeded as exactly 2) —
@@ -324,9 +469,11 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       // never join the plain-array fold: the folded sentence cannot state a different
       // element count per property, and the count is the clause a grown tuple violates.
       const count = declared.elements.length
-      assumptions.push(`${path} is a plain array of exactly ${count} element${count === 1 ? '' : 's'} — its length counts its elements, and every index below the length holds an element`)
+      if (keep(segments)) {
+        assumptions.push(`${path} is a plain array of exactly ${count} element${count === 1 ? '' : 's'} — its length counts its elements, and every index below the length holds an element`)
+      }
       for (let index = 0; index < declared.elements.length; index++) {
-        pushDeclaredAssumptions(`${path}[${index}]`, declared.elements[index]!, assumptions, options)
+        pushDeclaredAssumptions(`${path}[${index}]`, [...segments, String(index)], declared.elements[index]!, assumptions, keep, options)
       }
       break
     }
@@ -341,7 +488,7 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       // Element lines alone cannot carry it: `every grid[each] element is finite and not
       // NaN` quantifies over the elements an array actually holds, so a lied-about length
       // adds no elements and violates nothing on that line.
-      if (!options.skipOwnArrayLine) {
+      if (!options.skipOwnArrayLine && keep(segments)) {
         assumptions.push(`${path} is a plain array — its length counts its elements, and every index below the length holds an element`)
       }
       // E.g. `every values element is finite and not NaN`. The recursion path uses
@@ -350,7 +497,7 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       // its property path, e.g. `points[each].x is finite and not NaN`. The nested
       // plain-array line rides the same sugar: `every grid element is a plain array — ...`.
       const leaf: string[] = []
-      pushDeclaredAssumptions(`${path}[each]`, declared.element, leaf, {skipNumberLeaves: options.skipNumberLeaves, skipOwnArrayLine: false})
+      pushDeclaredAssumptions(`${path}[each]`, [...segments, '[each]'], declared.element, leaf, keep, {skipNumberLeaves: options.skipNumberLeaves, skipOwnArrayLine: false})
       for (const line of leaf) {
         const prefix = `${path}[each] is `
         // The `every X element is` sugar only reads right when the element path appears
@@ -367,6 +514,7 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
     // No claims are made about an opaque leaf, so there is nothing to assume.
     case 'opaque': break
     case 'nullish': {
+      if (!keep(segments)) break
       const sentinelWords = declared.sentinels === 'both' ? 'null or undefined' : declared.sentinels
       if (declared.inner.kind === 'number') {
         // E.g. `animatedUntilTime is null or a finite non-NaN number`. Never folded: the
@@ -385,14 +533,14 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
         // overrides is a plain array — ...`, whose named sentinel is the one the engine
         // seeds and narrows by; a wrong-sentinel smuggle violates the disjunct.
         const leaf: string[] = []
-        pushDeclaredAssumptions(path, declared.inner, leaf, exactLeaves)
+        pushDeclaredAssumptions(path, segments, declared.inner, leaf, keep, exactLeaves)
         for (const line of leaf) assumptions.push(`${path} is ${sentinelWords} or ${line}`)
       }
       break
     }
     case 'record': {
       for (const property of declared.properties) {
-        pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, assumptions, options)
+        pushDeclaredAssumptions(`${path}.${property.name}`, [...segments, property.name], property.declared, assumptions, keep, options)
       }
       break
     }
@@ -405,6 +553,9 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       // plain-boolean tag), the tag alone does not pin the shape, so each line adds a
       // presence qualifier — the assumption then speaks only about values that actually
       // carry the property.
+      // Reads mark a variant property's path with no variant attached (the narrow that
+      // preceded the read is not tracked), so a read of one variant's property keeps the
+      // same-named property's lines in every variant that declares it.
       for (const variant of declared.variants) {
         const sharedTag = declared.variants.filter(candidate => candidate.tagValue === variant.tagValue).length > 1
         const leaf: string[] = []
@@ -414,7 +565,7 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
             ? `when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)} and ${path}.${property.name} is present`
             : `when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)}`
           const perProperty: string[] = []
-          pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, perProperty, exactLeaves)
+          pushDeclaredAssumptions(`${path}.${property.name}`, [...segments, property.name], property.declared, perProperty, keep, exactLeaves)
           for (const line of perProperty) leaf.push(`${line} (${qualifier})`)
         }
         for (const line of leaf) {

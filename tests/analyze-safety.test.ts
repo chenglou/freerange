@@ -344,10 +344,12 @@ describe('acceptance and module safety', () => {
       }
     `)
     const file = 'ternary-spin.ts'
+    // The width parameter is never read, so no assumes line prints for it: nothing the
+    // entry states rests on its trust.
     expect(report.functions).toEqual([{
       kind: 'partial',
       name: 'spin',
-      assumptions: ['width is finite and not NaN'],
+      assumptions: [],
       stopped: [`the loop at ${file}:3:9 never exits on any analyzed path`],
       observed: [],
     }])
