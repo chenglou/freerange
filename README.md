@@ -92,7 +92,7 @@ An `ensures` line assumes its `requires` and `assumes`. A `requires` line may be
 
 ## Audits
 
-`bun fr.ts --audit` is the quick project view intended for agents. It lists files and locations where Freerange recognizes a useful refactoring pattern. Run `bun fr.ts --audit <file>` for the detailed view: coverage, ordinary contracts, and the checked examples relevant to that file.
+`bun fr.ts --audit` is the deep view intended for agents. For each file it prints coverage, every function's contracts, and the locations where Freerange recognizes a useful refactoring pattern. Run `bun fr.ts --audit <file>` for the same output narrowed to one file.
 
 Each pattern says when the rewrite applies and what behavior it may change. The catalog's before and after snippets are run through Freerange in the test suite, and behavior-sensitive examples also have runtime tests. To keep the output short, the audit prints one primary example for each cause and describes secondary options without repeating their code. The audit deliberately gives no recommendation when the syntax alone is not enough to choose a safe rewrite. For example, an unknown function call does not prove that the function contains numeric work worth extracting. The audit does not edit source code.
 
