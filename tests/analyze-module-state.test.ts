@@ -108,7 +108,10 @@ describe('module state and nullability', () => {
     `)
     const reader = hedged.functions.find(fn => fn.name === 'itemCount')
     expect(reader?.kind).toBe('analyzed')
-    expect(reader?.kind === 'analyzed' ? reader.assumptions : []).toEqual(['every items element is finite and not NaN'])
+    expect(reader?.kind === 'analyzed' ? reader.assumptions : []).toEqual([
+      'items is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every items element is finite and not NaN',
+    ])
   })
 
   test('exact record publishing requires a fully analyzed file', () => {

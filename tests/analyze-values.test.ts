@@ -114,7 +114,10 @@ describe('arrays and declared values', () => {
     // stays finite because widening saturates at MAX_VALUE and adding a clamped step
     // cannot leave it.
     const fn = analyzedFunction(report, 'total')
-    expect(fn.assumptions).toEqual(['every values element is finite and not NaN'])
+    expect(fn.assumptions).toEqual([
+      'values is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every values element is finite and not NaN',
+    ])
     expect(fn.ensures).toEqual(['return is a finite number at least 0'])
     // The empty array's length is exactly 0, so the header comparison prunes the body.
     expect(analyzedFunction(report, 'sumEmpty').ensures)
@@ -135,6 +138,7 @@ describe('arrays and declared values', () => {
     // The bare read's ?? handles the miss, so no assumption is needed.
     const bare = analyzedFunction(report, 'bareRead')
     expect(bare.assumptions).toEqual([
+      'values is a plain array — its length counts its elements, and every index below the length holds an element',
       'every values element is finite and not NaN',
       'index is finite and not NaN',
     ])
@@ -144,6 +148,7 @@ describe('arrays and declared values', () => {
     // the entry merely rests on.
     const asserted = analyzedFunction(report, 'assertedRead')
     expect(asserted.assumptions).toEqual([
+      'values is a plain array — its length counts its elements, and every index below the length holds an element',
       'every values element is finite and not NaN',
       'index is finite and not NaN',
     ])
@@ -212,8 +217,10 @@ describe('arrays and declared values', () => {
     expect(mixed?.kind).toBe('unsupported')
     // The length guard narrows through the arrayLength producer into the array value, so
     // the asserted read is proven — no assumption line.
-    expect(analyzedFunction(report, 'firstOrZero').assumptions)
-      .toEqual(['every values element is finite and not NaN'])
+    expect(analyzedFunction(report, 'firstOrZero').assumptions).toEqual([
+      'values is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every values element is finite and not NaN',
+    ])
     const oob = report.functions.find(fn => fn.name === 'outOfBounds')
     expect(oob?.kind).toBe('partial')
     expect(formatReport(report)).toContain(`reads an element provably outside the array (at ${file}:21:16)`)
@@ -368,8 +375,10 @@ describe('arrays and declared values', () => {
     expect(report.functions.find(fn => fn.name === 'groupCount')?.kind).toBe('unsupported')
     expect(report.functions.find(fn => fn.name === 'nullableGroupCount')?.kind).toBe('unsupported')
     expect(report.functions.find(fn => fn.name === 'makeBox')?.kind).toBe('unsupported')
-    expect(analyzedFunction(report, 'freshThenStale').assumptions)
-      .toEqual(['every values element is finite and not NaN'])
+    expect(analyzedFunction(report, 'freshThenStale').assumptions).toEqual([
+      'values is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every values element is finite and not NaN',
+    ])
     expect(analyzedFunction(report, 'sizeAtConst').ensures)
       .toEqual(['return is a finite integer number from 0 through 24'])
     expect(analyzedFunction(report, 'typeofNumber').ensures).toEqual(['return is a finite number'])
@@ -480,8 +489,11 @@ describe('arrays and declared values', () => {
     `)
     const reader = analyzedFunction(report, 'hasQueue')
     // No exact claims about the initializer value survive; the read rests on the
-    // declared-kind hedge, printed with its inner leaf condition.
-    expect(reader.assumptions).toEqual(['queue is null or every queue element is finite and not NaN'])
+    // declared-kind hedge, printed with its inner leaf conditions.
+    expect(reader.assumptions).toEqual([
+      'queue is null or queue is a plain array — its length counts its elements, and every index below the length holds an element',
+      'queue is null or every queue element is finite and not NaN',
+    ])
   })
 
   test('nullable structural parameters print their inner leaf assumptions', () => {
@@ -501,10 +513,13 @@ describe('arrays and declared values', () => {
       }
     `)
     expect(analyzedFunction(report, 'firstOr').assumptions).toEqual([
+      'values is null or values is a plain array — its length counts its elements, and every index below the length holds an element',
       'values is null or every values element is finite and not NaN',
       'fallback is finite and not NaN',
     ])
     expect(analyzedFunction(report, 'gridSum').assumptions).toEqual([
+      'grid is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every grid element is a plain array — its length counts its elements, and every index below the length holds an element',
       'every grid[each] element is finite and not NaN',
       'config is null or config.width is finite and not NaN',
     ])
@@ -554,6 +569,246 @@ describe('arrays and declared values', () => {
     expect(analyzedFunction(report, 'pickWidth').ensures).toEqual(['return is a finite number'])
   })
 
+  test('every external array prints the plain-array trust it is analyzed under', () => {
+    // The engine trusts two things about an external array that its element lines never
+    // said: each length read is a genuine element count (seeded as an integer from 0
+    // through 2^32 - 1), and an in-range read finds a present value of the declared
+    // element type (the valid-index discharge drops the undefined arm). A review round
+    // falsified three printed contracts through that silent trust with type-conforming
+    // callers — a Proxy<string[][]> whose length trap answers 10 over 3 rows makes
+    // groupOrMiss return 999 while the sole printed assumes line (index finite) holds; a
+    // Proxy<number[][]> steers an in-range row read to undefined without violating
+    // 'every grid[each] element is finite and not NaN' (an absent row contributes no
+    // elements); and a length trap answering 1e18, 2.5, or NaN falsifies
+    // 'return is a finite integer number from 0 through 4294967295' for a bare
+    // values.length return. Legal plain-data callers can break the presence clause too:
+    // [1, , 3] and new Array(5) are type-clean number[] values with truthful lengths and
+    // missing elements. The plain-array line is the printed condition each of those
+    // callers now violates: a lying length fails 'its length counts its elements', and a
+    // hole or steered undefined fails 'every index below the length holds an element' on
+    // the level above it. One line prints per nesting level, so string[][] — whose opaque
+    // leaves used to print NOTHING for the whole subtree — covers both the outer array
+    // and each row.
+    const report = analyzeSource('plain-array-trust.ts', `
+      export function groupOrMiss(groups: string[][], index: number): number {
+        if (Number.isInteger(index) && index >= 0 && index < groups.length) {
+          const group = groups[index]
+          if (group === undefined) return 999
+          return 1
+        }
+        return 0
+      }
+      export function count(values: number[]): number {
+        return values.length
+      }
+    `)
+    const grouped = analyzedFunction(report, 'groupOrMiss')
+    // The proven-dead undefined arm keeps 999 out of the range; that fold now rests on
+    // the printed presence claim, like every other assumes-backed fold.
+    expect(grouped.ensures).toEqual(['return is a finite integer number from 0 through 1'])
+    expect(grouped.assumptions).toEqual([
+      'groups is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every groups element is a plain array — its length counts its elements, and every index below the length holds an element',
+      'index is finite and not NaN',
+    ])
+    const counted = analyzedFunction(report, 'count')
+    expect(counted.ensures).toEqual(['return is a finite integer number from 0 through 4294967295'])
+    expect(counted.assumptions).toEqual([
+      'values is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every values element is finite and not NaN',
+    ])
+  })
+
+  test('tuple parameters print the exact-count plain-array trust their reads rest on', () => {
+    // A [number, number] parameter's length is seeded as exactly 2 and both slots as
+    // present — stronger trust than the plain-array default, and previously unprinted. A
+    // review round falsified printed contracts through the silent trust, every printed
+    // line holding: a Proxy over a genuine [1, 2] whose length trap answers 7 makes
+    // pairLength return 7 against 'return is a finite integer number from 2 through 2',
+    // and steers lastOfPair's pair[pair.length - 1]! read to the absent pair[6] against
+    // 'return is a finite number'; ordinary push-grown code — `const grown: [number,
+    // number] = [1, 2]; grown.push(3)` type-checks under strict tsc — makes pairLength
+    // return 3. The exact-count line is the printed condition each caller violates on
+    // its surface reading: a lying length fails 'its length counts its elements', a
+    // grown tuple fails 'exactly 2 elements', and the steered undefined fails 'every
+    // index below the length holds an element'.
+    const report = analyzeSource('tuple-trust.ts', `
+      export function pairLength(pair: [number, number]): number {
+        return pair.length
+      }
+      export function lastOfPair(pair: [number, number]): number {
+        return pair[pair.length - 1]!
+      }
+    `)
+    const tupleLine = 'pair is a plain array of exactly 2 elements — its length counts its elements, and every index below the length holds an element'
+    const slotLines = ['pair[0] is finite and not NaN', 'pair[1] is finite and not NaN']
+    const length = analyzedFunction(report, 'pairLength')
+    expect(length.ensures).toEqual(['return is a finite integer number from 2 through 2'])
+    expect(length.assumptions).toEqual([tupleLine, ...slotLines])
+    expect(analyzedFunction(report, 'lastOfPair').assumptions).toEqual([tupleLine, ...slotLines])
+  })
+
+  test('three or more direct non-nullable array properties of a record fold into one plain-array line', () => {
+    // A layout record with several array properties would repeat the plain-array line
+    // once per array, the same bloat the number fold exists for. Fold membership is
+    // exactly what the folded sentence states on its surface reading: the DIRECT
+    // NON-NULLABLE properties of a non-nullable record root declared as arrays.
+    // Nullable array members used to fold too, covered by a parenthetical '(a nullable
+    // array property may hold null or undefined instead)' — but the parenthetical
+    // blessed BOTH sentinels for every such member, while the engine seeds each member
+    // with only its DECLARED sentinel and prunes a branch testing the other. A review
+    // round ran the smuggle in both directions, strict-tsc-clean each time: undefined
+    // pushed through `any` into `overrides: number[] | null`, and null into `extras?:
+    // number[]` — which any JSON-derived value does, since serializers write null for
+    // absent fields — satisfied every printed line while the engine proved the
+    // wrong-sentinel branch dead and published a false ensures. The member's own
+    // disjunct line is sentinel-precise and condemns exactly that smuggle, so nullable
+    // members always print it, the fold never counts them, and the folded sentence needs
+    // no parenthetical — nothing it quantifies over may be nullish. Everything else the
+    // sentence does not restate keeps its own line even when the fold triggers — nested
+    // element levels, arrays behind a nullable record, nullable roots — pinned by the
+    // tests below.
+    const report = analyzeSource('plain-array-fold.ts', `
+      type Prepared = {
+        widths: number[]
+        gaps: number[]
+        labels: string[]
+        overrides: number[] | null
+        extras?: number[]
+      }
+      export function firstWidth(prepared: Prepared): number {
+        return prepared.widths[0] ?? 0
+      }
+    `)
+    expect(analyzedFunction(report, 'firstWidth').assumptions).toEqual([
+      'every property declared as an array in prepared holds a plain array — its length counts its elements, and every index below the length holds an element',
+      'every prepared.widths element is finite and not NaN',
+      'every prepared.gaps element is finite and not NaN',
+      // Each nullable member names its own declared sentinel and only that one: a legal
+      // null in overrides satisfies its lines, while an undefined there — which the
+      // dropped parenthetical used to permit — violates them, keeping the ensures
+      // vacuous for the smuggle instead of false. The optional member reads the same
+      // way with the sentinels swapped.
+      'prepared.overrides is null or prepared.overrides is a plain array — its length counts its elements, and every index below the length holds an element',
+      'prepared.overrides is null or every prepared.overrides element is finite and not NaN',
+      'prepared.extras is undefined or prepared.extras is a plain array — its length counts its elements, and every index below the length holds an element',
+      'prepared.extras is undefined or every prepared.extras element is finite and not NaN',
+    ])
+  })
+
+  test('a mixed root prints the number fold and the array fold with disjoint membership', () => {
+    // Three or more number leaves and three or more direct array properties on one
+    // record: both folded sentences print, and each covers only what it names — the
+    // number line quantifies the number-declared positions (array element leaves
+    // included, as index properties), the array line the array-declared properties. No
+    // per-leaf or per-array residue line remains, and nothing is double-stated.
+    const report = analyzeSource('mixed-fold.ts', `
+      type Panel = {
+        width: number
+        height: number
+        gap: number
+        widths: number[]
+        gaps: number[]
+        margins: number[]
+      }
+      export function panelWidth(panel: Panel): number {
+        return panel.width + (panel.widths[0] ?? 0)
+      }
+    `)
+    expect(analyzedFunction(report, 'panelWidth').assumptions).toEqual([
+      'every property declared as a number in panel holds a finite non-NaN number',
+      'every property declared as an array in panel holds a plain array — its length counts its elements, and every index below the length holds an element',
+    ])
+  })
+
+  test('a nullable root never folds: its own plain-array disjuncts print', () => {
+    // `grid: number[][][] | null` has kind nullish, and a fold guard keyed on the root's
+    // kind alone would let the nullable root fold — yet the folded sentence ('every
+    // property declared as an array IN grid') quantifies over the root's properties,
+    // saying nothing about grid itself, and the fold would suppress the root's own
+    // disjunct lines. A review round ran the falsification: a Proxy whose length trap
+    // answers 0.5 made a strict-tsc-clean caller get 0.5 back against 'return is a
+    // finite integer number from 0 through 4294967295' with every printed line holding.
+    // The root's disjunct lines must print whether or not a fold triggers elsewhere in
+    // the entry (frame folds here). A nullable RECORD root with three array properties
+    // stays out of the fold the same way: its per-property lines all carry the null
+    // disjunct, so a legal null caller violates nothing.
+    const report = analyzeSource('nullable-array-root.ts', `
+      type Frame = {rows: number[]; columns: string[]; labels: string[]}
+      export function rowCount(grid: number[][][] | null, frame: Frame): number {
+        if (grid === null) return frame.rows.length
+        return grid.length
+      }
+      type Bands = {widths: number[]; gaps: number[]; margins: number[]}
+      export function bandCount(bands: Bands | null): number {
+        if (bands === null) return 0
+        return bands.widths.length
+      }
+    `)
+    expect(analyzedFunction(report, 'rowCount').assumptions).toEqual([
+      'grid is null or grid is a plain array — its length counts its elements, and every index below the length holds an element',
+      'grid is null or every grid element is a plain array — its length counts its elements, and every index below the length holds an element',
+      'grid is null or every grid[each] element is a plain array — its length counts its elements, and every index below the length holds an element',
+      'grid is null or every grid[each][each] element is finite and not NaN',
+      'every property declared as an array in frame holds a plain array — its length counts its elements, and every index below the length holds an element',
+      'every frame.rows element is finite and not NaN',
+    ])
+    expect(analyzedFunction(report, 'bandCount').assumptions).toEqual([
+      'bands is null or bands.widths is a plain array — its length counts its elements, and every index below the length holds an element',
+      'bands is null or every bands.widths element is finite and not NaN',
+      'bands is null or bands.gaps is a plain array — its length counts its elements, and every index below the length holds an element',
+      'bands is null or every bands.gaps element is finite and not NaN',
+      'bands is null or bands.margins is a plain array — its length counts its elements, and every index below the length holds an element',
+      'bands is null or every bands.margins element is finite and not NaN',
+    ])
+  })
+
+  test('nested per-level lines survive an active fold', () => {
+    // The folded sentence quantifies over chart's own properties, so it says nothing
+    // about the rows INSIDE chart.series. A fold that suppressed the nested line would
+    // let a caller through whose outer array is a genuine plain array holding one Proxy
+    // row with a lying length (2.5): every printed line holds on its surface reading
+    // while the row-length read returns 2.5 against 'return is a finite integer number
+    // from 0 through 4294967295'. The nested line is the printed condition that caller
+    // violates — the row's length does not count its elements — so it prints fold or no
+    // fold.
+    const report = analyzeSource('nested-under-fold.ts', `
+      type Chart = {labels: string[]; legends: string[]; series: number[][]}
+      export function seriesCount(chart: Chart): number {
+        return chart.series.length
+      }
+    `)
+    expect(analyzedFunction(report, 'seriesCount').assumptions).toEqual([
+      'every property declared as an array in chart holds a plain array — its length counts its elements, and every index below the length holds an element',
+      'every chart.series element is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every chart.series[each] element is finite and not NaN',
+    ])
+  })
+
+  test('an array behind a nullable record keeps its null disjunct under an active fold', () => {
+    // layout.config.grid is not a property IN layout, and its unfolded spelling is a
+    // disjunction: 'layout.config is null or layout.config.grid is a plain array — ...'.
+    // A fold that counted it as a member and suppressed the disjunct line would leave
+    // the folded sentence's unconditional 'holds a plain array' as the only claim about
+    // the position — under the pinned reading ('holds' demands a value), a LEGAL caller
+    // passing config: null violates the printed line, vacating the whole report for
+    // legitimate callers. Arrays behind a nullable record never join the fold; the
+    // disjunct line survives, and a legal null violates no printed line.
+    const report = analyzeSource('nullable-ancestor-fold.ts', `
+      type Layout = {widths: number[]; gaps: number[]; labels: string[]; config: {grid: number[]} | null}
+      export function totalBands(layout: Layout): number {
+        return layout.widths.length + layout.gaps.length
+      }
+    `)
+    expect(analyzedFunction(report, 'totalBands').assumptions).toEqual([
+      'every property declared as an array in layout holds a plain array — its length counts its elements, and every index below the length holds an element',
+      'every layout.widths element is finite and not NaN',
+      'every layout.gaps element is finite and not NaN',
+      'layout.config is null or layout.config.grid is a plain array — its length counts its elements, and every index below the length holds an element',
+      'layout.config is null or every layout.config.grid element is finite and not NaN',
+    ])
+  })
+
   test('arrays of nullish records keep the [each] assumption wording', () => {
     // The `every X element is` sugar only reads right when the element path appears once;
     // a nullish element's disjunction mentions it twice, so the line stays in [each] form.
@@ -564,8 +819,10 @@ describe('arrays and declared values', () => {
         return first.x
       }
     `)
-    expect(analyzedFunction(report, 'slotSum').assumptions)
-      .toEqual(['slots[each] is null or slots[each].x is finite and not NaN'])
+    expect(analyzedFunction(report, 'slotSum').assumptions).toEqual([
+      'slots is a plain array — its length counts its elements, and every index below the length holds an element',
+      'slots[each] is null or slots[each].x is finite and not NaN',
+    ])
   })
 
   test('the number default folds per value at three plain leaves; nullish and tagged-union leaves stay exact', () => {
@@ -610,8 +867,13 @@ describe('arrays and declared values', () => {
       'range.low is finite and not NaN',
       'range.high is finite and not NaN',
     ])
+    // Both folds coexist on one value: the number fold covers the element leaves (array
+    // elements are index properties), and the array-root value still prints its own
+    // plain-array line — the root is not a record property, so the array fold's sentence
+    // never covers it.
     expect(analyzedFunction(report, 'pathTotal').assumptions).toEqual([
       'every property declared as a number in points holds a finite non-NaN number',
+      'points is a plain array — its length counts its elements, and every index below the length holds an element',
     ])
     expect(analyzedFunction(report, 'zoomedX').assumptions).toEqual([
       'offset is finite and not NaN',

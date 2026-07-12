@@ -58,6 +58,7 @@ describe('tagged unions and narrowing', () => {
       "return.scale is a finite number from 0.5 through 0.5 (when return.type is 'mobile')",
     ])
     expect(analyzedFunction(report, 'total').assumptions).toEqual([
+      'frames is a plain array — its length counts its elements, and every index below the length holds an element',
       "frames[each].width is finite and not NaN (when frames[each].type is 'sidebar')",
       "frames[each].scale is finite and not NaN (when frames[each].type is 'mobile')",
     ])

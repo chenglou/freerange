@@ -41,8 +41,11 @@ describe('control flow and contracts', () => {
       .toEqual(['return is a finite integer number from 24 through 24'])
     expect(analyzedFunction(report, 'totalClamped').ensures)
       .toEqual(['return is a finite number at least 0'])
-    expect(analyzedFunction(report, 'headOr').assumptions)
-      .toEqual(['every values element is finite and not NaN', 'fallback is finite and not NaN'])
+    expect(analyzedFunction(report, 'headOr').assumptions).toEqual([
+      'values is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every values element is finite and not NaN',
+      'fallback is finite and not NaN',
+    ])
     expect(analyzedFunction(report, 'widthPerColumn').requires)
       .toEqual([`grid.columnCount is nonzero (division at ${showcaseReportPath}:78:10)`])
   })

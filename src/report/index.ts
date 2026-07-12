@@ -213,10 +213,49 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // Tagged-union leaves stay out too (see numberLeafCount's taggedUnion arm). Small
 // values (one or two number leaves) keep their per-leaf lines, and non-number leaves
 // (booleans, tagged-union qualifiers) always print exactly.
+//
+// Plain-array lines fold the same way, but membership is exactly the set the folded
+// sentence names on its surface reading: the DIRECT NON-NULLABLE properties of a
+// non-nullable record root whose declared type is an array. Three or more such
+// properties fold into one quantified line, and only those properties' own plain-array
+// lines are suppressed — nothing the folded sentence does not restate may be. Every
+// other array position keeps its per-level line even when the fold triggers: a root
+// that is itself an array or a nullable root (the sentence quantifies over properties
+// IN the root, saying nothing about the root itself), nested element levels (`every
+// prepared.grid element is a plain array — ...` — a genuine outer array can hold a
+// lying inner row, and only the nested line condemns the row), arrays behind a nullable
+// record (`options.config is null or options.config.grid is a plain array — ...` — the
+// folded line's unconditional 'holds' would forbid the legal null at config), tuples
+// (see the tuple arm below), and nullable array members themselves. Nullable members
+// were the last to leave the fold: their folded coverage was a parenthetical blessing
+// null AND undefined for every such member, while the engine seeds each member with
+// only its DECLARED sentinel and prunes a branch testing the other — so a caller
+// smuggling undefined into `overrides: number[] | null` (or null into `overrides?:
+// number[]`, which any JSON-derived value does, since serializers write null for
+// absent) satisfied every printed line while a printed ensures was false at runtime.
+// The member's own disjunct line is sentinel-precise — `prepared.overrides is null or
+// prepared.overrides is a plain array — ...` — and condemns the wrong-sentinel smuggle,
+// so it always prints, and with no nullable member folded the parenthetical is gone.
+// Review rounds falsified each looser membership the same way: a nullable root folded
+// into a sentence that said nothing about the root, a suppressed nested line let a
+// lying inner row through with every printed line holding, and the unconditional
+// 'holds' condemned a legal null behind a nullable record, vacating the report for
+// legitimate callers.
 function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
   const folds = numberLeafCount(declared) >= 3 && declared.kind !== 'number'
   if (folds) assumptions.push(`every property declared as a number in ${path} holds a finite non-NaN number`)
-  pushDeclaredAssumptions(path, declared, assumptions, {skipNumberLeaves: folds})
+  if (declared.kind === 'record'
+    && declared.properties.filter(property => property.declared.kind === 'array').length >= 3) {
+    assumptions.push(`every property declared as an array in ${path} holds a plain array — its length counts its elements, and every index below the length holds an element`)
+    for (const property of declared.properties) {
+      pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, assumptions, {
+        skipNumberLeaves: folds,
+        skipOwnArrayLine: property.declared.kind === 'array',
+      })
+    }
+    return
+  }
+  pushDeclaredAssumptions(path, declared, assumptions, {skipNumberLeaves: folds, skipOwnArrayLine: false})
 }
 
 // Counts the number leaves the fold may cover. Nullish subtrees count zero: their leaves
@@ -252,9 +291,15 @@ type AssumptionOptions = {
   // True when the root already printed the folded number line; number leaves then add
   // nothing, while boolean and qualified lines still print per leaf.
   skipNumberLeaves: boolean
+  // True when the folded plain-array line already restates this value's own plain-array
+  // claim — set only on the direct non-nullable array properties of a folding record
+  // root. The suppression covers exactly one line: nested levels below the value still
+  // print theirs, because the folded sentence quantifies over the root's direct
+  // properties only.
+  skipOwnArrayLine: boolean
 }
 
-const exactLeaves: AssumptionOptions = {skipNumberLeaves: false}
+const exactLeaves: AssumptionOptions = {skipNumberLeaves: false, skipOwnArrayLine: false}
 
 // One assumption line per leaf of the declared kind: a record binding's condition is a
 // condition on each of its properties, e.g. `pointer.x is finite and not NaN`.
@@ -266,18 +311,46 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
     }
     case 'boolean': assumptions.push(`${path} is a boolean`); break
     case 'tuple': {
+      // The engine reads a declared tuple's length as its position count and every slot
+      // as present (a [number, number] parameter's .length is seeded as exactly 2) —
+      // boundary trust in a value the caller controls, stronger than the plain-array
+      // line, and previously unprinted. Type-checked callers can break it: strict tsc
+      // allows push on tuples, so `const grown: [number, number] = [1, 2]; grown.push(3)`
+      // legally builds a three-element value, and a Proxy over a genuine pair can answer
+      // 7 to a length read. The exact-count clause is what those callers violate; the
+      // trailing clauses carry the same length-vs-elements and presence trust as the
+      // array line. Only all-required tuples classify (optional and rest positions leave
+      // the subset at classification), so the count is always the position count. Tuples
+      // never join the plain-array fold: the folded sentence cannot state a different
+      // element count per property, and the count is the clause a grown tuple violates.
+      const count = declared.elements.length
+      assumptions.push(`${path} is a plain array of exactly ${count} element${count === 1 ? '' : 's'} — its length counts its elements, and every index below the length holds an element`)
       for (let index = 0; index < declared.elements.length; index++) {
         pushDeclaredAssumptions(`${path}[${index}]`, declared.elements[index]!, assumptions, options)
       }
       break
     }
     case 'array': {
+      // The plain-array line is the trust the element reads and length reads rest on: the
+      // engine treats an in-range read as finding a present value of the declared element
+      // type, and each length read as a genuine element count (an integer from 0 through
+      // 2^32 - 1). Both are boundary trust in a value the caller controls — a Proxy with a
+      // lying length trap, an array with holes, or an undefined smuggled into a nested row
+      // each violate this line, which is exactly what keeps the ensures lines honest (a
+      // review round ran all three falsifications against the previously silent trust).
+      // Element lines alone cannot carry it: `every grid[each] element is finite and not
+      // NaN` quantifies over the elements an array actually holds, so a lied-about length
+      // adds no elements and violates nothing on that line.
+      if (!options.skipOwnArrayLine) {
+        assumptions.push(`${path} is a plain array — its length counts its elements, and every index below the length holds an element`)
+      }
       // E.g. `every values element is finite and not NaN`. The recursion path uses
       // `[each]` so nesting stays readable: a number[][] parameter prints
       // `every grid[each] element is finite and not NaN`, and a record element prints
-      // its property path, e.g. `points[each].x is finite and not NaN`.
+      // its property path, e.g. `points[each].x is finite and not NaN`. The nested
+      // plain-array line rides the same sugar: `every grid element is a plain array — ...`.
       const leaf: string[] = []
-      pushDeclaredAssumptions(`${path}[each]`, declared.element, leaf, options)
+      pushDeclaredAssumptions(`${path}[each]`, declared.element, leaf, {skipNumberLeaves: options.skipNumberLeaves, skipOwnArrayLine: false})
       for (const line of leaf) {
         const prefix = `${path}[each] is `
         // The `every X element is` sugar only reads right when the element path appears
@@ -306,8 +379,11 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
         // `Config | null` parameter prints `config is null or config.width is finite and
         // not NaN`. The seeded finiteness of every leaf must reach the report: the
         // ensures lines rest on it. An opaque inner (`string | null`) contributes no
-        // line, because nothing is claimed about the string either way. The whole
-        // nullish subtree prints exactly even under a folding root (see numberLeafCount).
+        // line, because nothing is claimed about the string either way. A nullish
+        // subtree never joins either fold, so every inner line prints exactly — in
+        // particular a nullable array member's own disjunct, `overrides is null or
+        // overrides is a plain array — ...`, whose named sentinel is the one the engine
+        // seeds and narrows by; the disjunct is what condemns a wrong-sentinel smuggle.
         const leaf: string[] = []
         pushDeclaredAssumptions(path, declared.inner, leaf, exactLeaves)
         for (const line of leaf) assumptions.push(`${path} is ${sentinelWords} or ${line}`)
