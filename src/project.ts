@@ -10,9 +10,10 @@ import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
 import {auditPreamble, createFileAudit, formatFileAuditUnit} from './audit.ts'
-import type {FunctionAnalysis} from './engine/outcome.ts'
+import type {AssertionVerdict, FunctionAnalysis} from './engine/outcome.ts'
 import type {SiteID} from './ir/ids.ts'
 import {reportPath, siteLocation} from './ir/program.ts'
+import {formatUnsupportedReason} from './report/index.ts'
 import {describePrecondition, type PreconditionOperation} from './report/format-requirement.ts'
 import {checkFile} from './typescript/check.ts'
 import {formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
@@ -45,7 +46,20 @@ type CallerContractFinding = {
   additionalLocations: Array<{line: number; column: number}>
 }
 
-type LintFinding = SimpleLintFinding | CallerContractFinding
+type ErrorLintFinding = {
+  kind: 'error'
+  file: string
+  line: number
+  column: number
+  rule: 'console-assert' | 'declared-requirement'
+  message: string
+  related?: {label: string; line: number; column: number}
+}
+
+type LintFinding =
+  | SimpleLintFinding
+  | CallerContractFinding
+  | ErrorLintFinding
 
 export type ProjectCoverage = {
   files: number
@@ -167,29 +181,122 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
   const file = reportPath(program)
   const findings: LintFinding[] = []
   const callerContractsBySite = new Map<SiteID, CallerContractFinding>()
+  const addError = (
+    site: SiteID,
+    rule: ErrorLintFinding['rule'],
+    message: string,
+    related?: ErrorLintFinding['related'],
+  ): void => {
+    const location = siteLocation(program, site)
+    findings.push({kind: 'error', file, ...location, rule, message, ...(related == null ? {} : {related})})
+  }
 
   const collectStops = (fn: FunctionAnalysis): void => {
     if (fn.kind !== 'partial') return
     for (const stop of fn.stops) {
-      if (stop.reason.kind !== 'outOfBoundsRead' && stop.reason.kind !== 'nonExitingLoop') continue
-      const location = siteLocation(program, stop.site)
-      findings.push({
-        kind: 'simple',
-        file,
-        line: location.line,
-        column: location.column,
-        functionName: fn.lowering.name,
-        stop: stop.reason.kind,
-      })
+      const reason = stop.reason
+      switch (reason.kind) {
+        case 'outOfBoundsRead':
+        case 'nonExitingLoop': {
+          const location = siteLocation(program, stop.site)
+          findings.push({
+            kind: 'simple',
+            file,
+            line: location.line,
+            column: location.column,
+            functionName: fn.lowering.name,
+            stop: reason.kind,
+          })
+          break
+        }
+        case 'refutedRequirement':
+        case 'unrefinableRequirement': {
+          addError(
+            stop.site,
+            'declared-requirement',
+            reason.kind === 'refutedRequirement'
+              ? `declared console.assert requirement is false in ${fn.lowering.name}`
+              : `could not express or prove the declared console.assert requirement in ${fn.lowering.name}`,
+          )
+          break
+        }
+        case 'callRequirement': {
+          const callee = program.functions[reason.callee]
+          if (callee == null) throw new Error(`Unknown function ${reason.callee}`)
+          const declaration = siteLocation(program, reason.declarationSite)
+          addError(
+            stop.site,
+            'declared-requirement',
+            reason.status === 'refuted'
+              ? `call to ${callee.name} makes its declared requirement definitely false`
+              : `could not express or prove ${callee.name}'s declared requirement at this call`,
+            {label: 'declared at', ...declaration},
+          )
+          break
+        }
+        case 'recursion':
+        case 'calleeStopped':
+        case 'loopLimit':
+        case 'unsupportedCode':
+        case 'moduleRead':
+        case 'kindMismatch':
+        case 'possiblyMissingElement': break
+      }
+    }
+  }
+
+  const collectAssertions = (fn: FunctionAnalysis): void => {
+    if (fn.kind === 'notLowered') return
+    for (const assertion of fn.assertions) {
+      const message = assertionErrorMessage(fn.lowering.name, assertion)
+      if (message != null) addError(assertion.site, 'console-assert', message)
+    }
+    // Leading calls are requirements rather than interior assertion records. A function
+    // containing only requirements must still satisfy the same complete-function gate.
+    if (fn.assertions.length > 0) return
+    const requirementSite = firstStaticRequirementSite(fn.lowering)
+    if (requirementSite == null) return
+    const incomplete = fn.kind === 'partial' || fn.boundsAssumptions.length > 0
+    if (!incomplete) return
+    const ownRequirementFailure = fn.kind === 'partial' && fn.stops.some(stop =>
+      stop.reason.kind === 'refutedRequirement' || stop.reason.kind === 'unrefinableRequirement')
+    if (!ownRequirementFailure) {
+      addError(
+        requirementSite,
+        'console-assert',
+        `console.assert requirements in ${fn.lowering.name} were not checked because the function did not finish analysis without site-specific assumptions`,
+      )
     }
   }
 
   // The module initializer is analyzed through the same engine but stored separately
   // because no function can call it. Its failures are still project lint findings.
   collectStops(analysis.initializer)
+  collectAssertions(analysis.initializer)
+  for (const issue of program.staticAnnotationIssues) {
+    addError(
+      issue.site,
+      'console-assert',
+      'console.assert is only supported inside a named top-level function declaration',
+    )
+  }
   for (const fn of analysis.functions) {
     collectStops(fn)
-    if (fn.kind !== 'analyzed') continue
+    collectAssertions(fn)
+    if (fn.kind === 'notLowered') {
+      if (fn.lowering.hasStaticAnnotations) {
+        const reason = formatUnsupportedReason(fn.lowering.reason)
+        addError(
+          fn.lowering.site,
+          'console-assert',
+          fn.lowering.reason.kind === 'staticAssertionForm'
+            ? `${reason} in ${fn.lowering.name}`
+            : `console.assert in ${fn.lowering.name} was not checked because ${reason}`,
+        )
+      }
+      continue
+    }
+    if (fn.kind === 'partial') continue
 
     const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
     for (const precondition of fn.preconditions) {
@@ -229,6 +336,25 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
   return findings
 }
 
+function firstStaticRequirementSite(fn: Exclude<FunctionAnalysis, {kind: 'notLowered'}>['lowering']): SiteID | null {
+  for (const block of fn.blocks) {
+    for (const instruction of block.instructions) {
+      if (instruction.kind === 'staticRequire') return instruction.site
+    }
+  }
+  return null
+}
+
+function assertionErrorMessage(functionName: string, assertion: AssertionVerdict): string | null {
+  switch (assertion.verdict) {
+    case 'proven': return null
+    case 'refuted': return `console.assert condition can be false in ${functionName}: ${assertion.text}`
+    case 'unproven': return `could not prove console.assert condition in ${functionName}: ${assertion.text}`
+    case 'dead': return `console.assert is unreachable in ${functionName}: ${assertion.text}`
+    case 'blocked': return `could not check console.assert condition in ${functionName}; the function did not finish analysis without site-specific assumptions: ${assertion.text}`
+  }
+}
+
 // Project and file findings share this format: with a file argument, the output is the
 // project output narrowed to the file, so only the coverage counts differ.
 function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pretty: boolean): string {
@@ -243,7 +369,7 @@ function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pret
     '',
     `${findings.length} finding${findings.length === 1 ? '' : 's'} (${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'}, ${notes} note${notes === 1 ? '' : 's'}).`,
     formatCoverage(coverage),
-    'Lint findings come only from analyzed paths. Run `fr --audit [file]` for every function\'s contracts and refactoring suggestions.',
+    'Run `fr --audit [file]` for every function\'s contracts and refactoring suggestions.',
   )
   return lines.join('\n')
 }
@@ -270,12 +396,27 @@ function fileCoverage(detailed: DetailedAnalysis): ProjectCoverage {
 }
 
 function formatLintFinding(finding: LintFinding, pretty: boolean): string[] {
-  const location = formatDiagnosticLocation(finding.file, finding.line, finding.column, pretty)
-  if (finding.kind === 'simple') {
-    return [finding.stop === 'outOfBoundsRead'
+  switch (finding.kind) {
+    case 'simple': return [finding.stop === 'outOfBoundsRead'
       ? `${formatLintPrefix(finding, 'out-of-bounds-read', pretty)}asserted element read (arr[i]!) is provably out of bounds in ${finding.functionName}`
       : `${formatLintPrefix(finding, 'non-exiting-loop', pretty)}loop in ${finding.functionName} has no analyzable exit; it may never terminate`]
+    case 'error': {
+      const related = finding.related == null
+        ? ''
+        : ` (${finding.related.label} ${formatDiagnosticLocation(
+          finding.file,
+          finding.related.line,
+          finding.related.column,
+          pretty,
+        )})`
+      return [`${formatLintPrefix(finding, finding.rule, pretty)}${finding.message}${related}`]
+    }
+    case 'callerContracts': return formatCallerContractFinding(finding, pretty)
   }
+}
+
+function formatCallerContractFinding(finding: CallerContractFinding, pretty: boolean): string[] {
+  const location = formatDiagnosticLocation(finding.file, finding.line, finding.column, pretty)
   const operationCount = finding.additionalLocations.length + 1
   if (operationCount === 1 && finding.contracts.length === 1) {
     const contract = finding.contracts[0]!
@@ -304,8 +445,11 @@ function formatLintFinding(finding: LintFinding, pretty: boolean): string[] {
 }
 
 function lintLevel(finding: LintFinding): 'error' | 'warning' | 'note' {
-  if (finding.kind === 'callerContracts') return 'note'
-  return finding.stop === 'outOfBoundsRead' ? 'error' : 'warning'
+  switch (finding.kind) {
+    case 'callerContracts': return 'note'
+    case 'simple': return finding.stop === 'outOfBoundsRead' ? 'error' : 'warning'
+    case 'error': return 'error'
+  }
 }
 
 function formatLintPrefix(finding: LintFinding, rule: string, pretty: boolean): string {
@@ -418,7 +562,10 @@ function collectProjectDiagnostics(project: LoadedTypeScriptProject): CollectedP
   return {all, global, byFile}
 }
 
-function analyzeProjectSource(source: ProjectSource, reportBaseDirectory: string): DetailedAnalysis {
+function analyzeProjectSource(
+  source: ProjectSource,
+  reportBaseDirectory: string,
+): DetailedAnalysis {
   return analyzeCheckedSource({
     sourceFile: source.sourceFile,
     checker: source.project.program.getTypeChecker(),

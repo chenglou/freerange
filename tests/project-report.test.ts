@@ -293,6 +293,91 @@ test('error-level findings gate the exit code while the audit stays informationa
   }
 })
 
+test('console.assert failures gate lint while the audit also shows successful checks', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-console-assert-'))
+  try {
+    writeProject(projectDirectory, {'assertions.ts': `function unsupported(value: number): number {
+  return [value].reduce((total, item) => total + item, 0)
+}
+
+function requiresNonnegative(value: number): number {
+  console.assert(value >= 0)
+  return value
+}
+
+export function badCall(): number {
+  return requiresNonnegative(-1)
+}
+
+export function proven(value: number): number {
+  const bounded = Math.max(0, value)
+  console.assert(bounded >= 0)
+  return bounded
+}
+
+export function unproven(value: number): number {
+  const result = value
+  console.assert(result >= 0)
+  return result
+}
+
+export function refuted(value: number): number {
+  const positive = Math.max(1, value)
+  console.assert(positive < 0)
+  return positive
+}
+
+export function blocked(value: number): number {
+  const result = unsupported(value)
+  console.assert(result >= 0)
+  return result
+}
+
+export function blockedRequirement(value: number): number {
+  console.assert(value >= 0)
+  return unsupported(value)
+}
+
+export function dead(value: number): number {
+  const positive = Math.max(1, value)
+  if (positive < 0) console.assert(value >= 0)
+  return value
+}
+
+export function invalid(value: number): number {
+  console.assert(value >= 0, 'nonnegative')
+  return value
+}
+
+console.assert(true)
+`})
+
+    const lint = runCli(projectDirectory)
+    expect(lint.exitCode).toBe(1)
+    expect(lint.stderr).toBe('')
+    expect(lint.stdout).toContain('error [declared-requirement]: call to requiresNonnegative makes its declared requirement definitely false')
+    expect(lint.stdout).toContain('error [console-assert]: could not prove console.assert condition in unproven: result >= 0')
+    expect(lint.stdout).toContain('error [console-assert]: console.assert condition can be false in refuted: positive < 0')
+    expect(lint.stdout).toContain('error [console-assert]: could not check console.assert condition in blocked; the function did not finish analysis without site-specific assumptions: result >= 0')
+    expect(lint.stdout).toContain('error [console-assert]: console.assert requirements in blockedRequirement were not checked because the function did not finish analysis without site-specific assumptions')
+    expect(lint.stdout).toContain('error [console-assert]: console.assert is unreachable in dead: value >= 0')
+    expect(lint.stdout).toContain('console.assert must have exactly one condition argument in invalid')
+    expect(lint.stdout).toContain('console.assert is only supported inside a named top-level function declaration')
+    expect(lint.stdout).not.toContain('bounded >= 0')
+
+    const audit = runCli(projectDirectory, '--audit')
+    expect(audit.exitCode).toBe(0)
+    expect(audit.stderr).toBe('')
+    expect(audit.stdout).toContain('proves: bounded >= 0')
+    expect(audit.stdout).toContain('assertion unproven: could not prove result >= 0')
+    expect(audit.stdout).toContain('assertion can fail: positive < 0')
+    expect(audit.stdout).toContain('assertion blocked: the function did not finish analysis without site-specific assumptions: result >= 0')
+    expect(audit.stdout).toContain('unreachable assertion: value >= 0')
+  } finally {
+    rmSync(projectDirectory, {recursive: true, force: true})
+  }
+})
+
 test('project mode requires strict null checks but respects other project options', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-options-'))
   try {

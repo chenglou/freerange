@@ -1,5 +1,5 @@
 import type {SiteID} from '../ir/ids.ts'
-import type {ArithmeticOperator} from '../ir/instructions.ts'
+import type {ArithmeticOperator, ComparisonOperator} from '../ir/instructions.ts'
 
 export type NumericExpression =
   | {kind: 'parameter'; index: number}
@@ -57,5 +57,20 @@ export type InferredPrecondition =
       expression: NumericExpression
       value: number
       operation: 'division' | 'remainder'
+      site: SiteID
+    }
+  // A leading console.assert requirement after substituting the current caller's
+  // expressions. Structured operands keep propagation independent of source text.
+  | {
+      kind: 'declaredComparison'
+      operator: ComparisonOperator
+      left: NumericExpression
+      right: NumericExpression
+      site: SiteID
+    }
+  | {
+      kind: 'declaredNumberCheck'
+      predicate: 'integer' | 'finite' | 'nan'
+      expression: NumericExpression
       site: SiteID
     }

@@ -5,6 +5,7 @@ import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept
 import {addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {valueKind} from './expression.ts'
 import {declaredKind, lowerModuleInitializer, scanModuleBindings, tupleHasOptionalOrRestPositions, type ModuleScan} from './module.ts'
+import {scanStaticAnnotations, type StaticAnnotation} from './static-intrinsics.ts'
 import {lowerStatements} from './statements.ts'
 
 export function lowerSource(checked: CheckedSource, baseDirectory: string = process.cwd()): ProgramIR {
@@ -13,32 +14,45 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name != null) declarations.push(statement)
   }
+  const staticScan = scanStaticAnnotations(sourceFile, declarations, checker)
+  const recordStaticAnnotationIssues = (sites: SourceSpan[]): ProgramIR['staticAnnotationIssues'] =>
+    staticScan.outsideTopLevelFunctions.map(call => {
+      sites.push(nodeSpan(sourceFile, call))
+      return {kind: 'outsideTopLevelFunction', site: sites.length - 1}
+    })
   // The two file-wide rejections. An eval string can rewrite bindings that every
   // function's report depends on, and a type-check suppression comment voids the checker's
   // word that every guarantee is built on — in both cases, no function in the file is
   // analyzed.
-  const rejectFile = (span: SourceSpan, reason: UnsupportedReason): ProgramIR => ({
-    file: sourceFile.fileName,
-    baseDirectory,
-    lineStarts: [...sourceFile.getLineStarts()],
-    sites: [span],
-    functions: declarations.map(declaration => ({
-      kind: 'unsupported',
-      name: declaration.name!.text,
-      site: 0,
-      reason,
-    })),
-    moduleBindings: [],
-    initializer: {
-      kind: 'lowered',
-      name: moduleInitializerName,
-      parameters: [],
-      returnPropertyNames: null,
-      entry: 0,
-      blocks: [{loopHeader: null, parameters: [], instructions: [], terminator: {kind: 'stop', site: 0, reason}}],
-    },
-    initializerSkips: [],
-  })
+  const rejectFile = (span: SourceSpan, reason: UnsupportedReason): ProgramIR => {
+    const sites = [span]
+    const staticAnnotationIssues = recordStaticAnnotationIssues(sites)
+    return {
+      file: sourceFile.fileName,
+      baseDirectory,
+      lineStarts: [...sourceFile.getLineStarts()],
+      sites,
+      functions: declarations.map((declaration, index) => ({
+        kind: 'unsupported',
+        name: declaration.name!.text,
+        hasStaticAnnotations: staticScan.functions[index]!.length > 0,
+        site: 0,
+        reason,
+      })),
+      staticAnnotationIssues,
+      moduleBindings: [],
+      initializer: {
+        kind: 'lowered',
+        name: moduleInitializerName,
+        assertions: [],
+        parameters: [],
+        returnPropertyNames: null,
+        entry: 0,
+        blocks: [{loopHeader: null, parameters: [], instructions: [], terminator: {kind: 'stop', site: 0, reason}}],
+      },
+      initializerSkips: [],
+    }
+  }
   const suppression = typeCheckSuppressionMention(sourceFile)
   if (suppression != null) return rejectFile(suppression, {kind: 'typeCheckSuppressed'})
   const evalNode = evalMention(sourceFile)
@@ -57,16 +71,25 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
   }
   const scan = scanModuleBindings(sourceFile, checker)
   const sites: SourceSpan[] = []
+  const staticAnnotationIssues = recordStaticAnnotationIssues(sites)
   const functions: FunctionLowering[] = []
-  for (const declaration of declarations) {
+  for (let index = 0; index < declarations.length; index++) {
+    const declaration = declarations[index]!
+    const staticAnnotations = staticScan.functions[index]!
     // A failed function lowering discards the half-built FunctionContext wholesale; only
-    // the name, the offending node's site, and the tagged reason survive.
+    // the name, annotation presence, offending node's site, and tagged reason survive.
     try {
-      functions.push(lowerFunction(declaration, sourceFile, checker, functionsBySymbol, scan, sites))
+      functions.push(lowerFunction(declaration, staticAnnotations, sourceFile, checker, functionsBySymbol, scan, sites))
     } catch (error) {
       if (!(error instanceof LoweringStop)) throw error
       sites.push(nodeSpan(sourceFile, error.node))
-      functions.push({kind: 'unsupported', name: declaration.name!.text, site: sites.length - 1, reason: error.reason})
+      functions.push({
+        kind: 'unsupported',
+        name: declaration.name!.text,
+        hasStaticAnnotations: staticAnnotations.length > 0,
+        site: sites.length - 1,
+        reason: error.reason,
+      })
     }
   }
   const {initializer, skips} = lowerModuleInitializer(sourceFile, checker, functionsBySymbol, scan, sites)
@@ -76,6 +99,7 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
     lineStarts: [...sourceFile.getLineStarts()],
     sites,
     functions,
+    staticAnnotationIssues,
     moduleBindings: scan.bindings,
     initializer,
     initializerSkips: skips,
@@ -84,12 +108,18 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
 
 function lowerFunction(
   declaration: ts.FunctionDeclaration,
+  staticAnnotations: StaticAnnotation[],
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
   scan: ModuleScan,
   sites: SourceSpan[],
 ): FunctionIR {
+  for (const annotation of staticAnnotations) {
+    if (annotation.kind === 'invalid') {
+      throw unsupported(annotation.node, {kind: 'staticAssertionForm', problem: annotation.problem})
+    }
+  }
   if (declaration.body == null) throw unsupported(declaration, {kind: 'functionWithoutBody'})
   // An async body returns a Promise and a generator returns an iterator; lowering either
   // as if it ran synchronously would publish the body's values as the caller-visible
@@ -115,7 +145,14 @@ function lowerFunction(
   if (!returnsVoid && valueKind(returnType, checker) == null) {
     throw unsupported(declaration.type ?? declaration, {kind: 'valueType', typeText: checker.typeToString(returnType)})
   }
-  const context = createFunctionContext(sourceFile, checker, functionsBySymbol, scan.bindingsBySymbol, sites)
+  const context = createFunctionContext(
+    sourceFile,
+    checker,
+    functionsBySymbol,
+    scan.bindingsBySymbol,
+    sites,
+    staticAnnotations,
+  )
   const entry = context.currentBlock
   for (const parameter of declaration.parameters) {
     // `function area({width, height}: Size)` lowers as a synthetic record parameter plus
@@ -191,6 +228,7 @@ function lowerFunction(
   return {
     kind: 'lowered',
     name: declaration.name!.text,
+    assertions: context.assertions,
     parameters: context.parameters,
     returnPropertyNames: declaredRecordReturnNames(returnType, checker),
     entry: 0,

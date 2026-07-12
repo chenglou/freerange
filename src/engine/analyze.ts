@@ -1,12 +1,13 @@
 import {constantNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
-import type {BlockID, FunctionID, ModuleBindingID} from '../ir/ids.ts'
+import type {BlockID, FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
 import {declaredKindOf, declaredKindValue, holdsMutableStructure, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {
   completedEvaluation,
+  type AssertionVerdict,
   type FunctionAnalysis,
   type FunctionEvaluation,
   type LoweredFunctionAnalysis,
@@ -102,6 +103,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
       preconditions: completed.preconditions,
       boundsAssumptions: completed.boundsAssumptions,
       returnValue: completed.returnValue,
+      assertions: evaluation.assertions,
     }
   }
   const [firstStop, ...laterStops] = evaluation.stops
@@ -114,6 +116,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
       preconditions: evaluation.preconditions,
       boundsAssumptions: evaluation.boundsAssumptions,
       returnValue: {kind: 'void'},
+      assertions: evaluation.assertions,
     }
   }
   if (firstStop == null) throw new Error(`Function ${fn.name} has no reachable return`)
@@ -124,6 +127,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
     observedReturn: evaluation.normal == null ? null : {value: evaluation.normal.returnValue},
     observedNeeds: evaluation.preconditions,
     observedBoundsAssumptions: evaluation.boundsAssumptions,
+    assertions: evaluation.assertions,
   }
 }
 
@@ -226,6 +230,12 @@ type BlockRun = {
   pendingReturn: {value: AbstractValue; shared: SharedState} | null
 }
 
+type AssertionObservation = {
+  sawDefinitelyTrue: boolean
+  sawDefinitelyFalse: boolean
+  sawMaybeFalse: boolean
+}
+
 // Everything one evaluation accumulates; created and discarded together.
 type EvaluationRun = {
   fn: FunctionIR
@@ -233,6 +243,8 @@ type EvaluationRun = {
   blocks: BlockRun[]
   queue: BlockID[]
   stops: Stop[]
+  // Dense by FunctionIR.assertions index when present.
+  assertionObservations: Array<AssertionObservation | undefined>
   // Module slots joined across every stop, then with the normal end by the publish rule.
   moduleEnd: ModuleSlot[] | null
 }
@@ -262,11 +274,13 @@ function runEvaluation(
   const expressionContext = createExpressionContext(fn, argumentExpressions)
   const preconditions: InferredPrecondition[] = []
   const boundsAssumptions: BoundsAssumption[] = []
+  const successors = blockSuccessors(fn)
   const run: EvaluationRun = {
     fn,
     blocks: fn.blocks.map(() => ({incoming: null, stopIndex: null, failedHeader: false, pendingReturn: null})),
     queue: [fn.entry],
     stops: [],
+    assertionObservations: [],
     moduleEnd: null,
   }
   run.blocks[fn.entry]!.incoming = {state: initial, updateCount: 0}
@@ -302,24 +316,37 @@ function runEvaluation(
     if (block == null || entry == null) throw new Error(`Missing block ${blockID} in ${fn.name}`)
     const state = cloneState(entry.state)
     let stopped = false
+    instructionLoop:
     for (let index = 0; index < block.instructions.length; index++) {
       const instruction = block.instructions[index]!
       const result = evaluateInstruction(instruction, state, transferContext)
-      if (result.kind === 'ends') {
-        // The path terminates like an inline throw: nothing recorded, nothing returned.
-        run.blocks[blockID]!.pendingReturn = null
-        stopped = true
-        break
+      switch (result.kind) {
+        case 'ends':
+          // The path terminates like an inline throw: nothing recorded, nothing returned.
+          run.blocks[blockID]!.pendingReturn = null
+          stopped = true
+          break instructionLoop
+        case 'stop':
+          addStop(
+            run,
+            blockID,
+            result.stop,
+            state.shared.slice(),
+            index,
+          )
+          // A return recorded by an earlier visit of this block described a smaller incoming
+          // state; the stop supersedes it.
+          run.blocks[blockID]!.pendingReturn = null
+          stopped = true
+          break instructionLoop
+        case 'assertion':
+          addAssertionObservation(run, result.assertion, result.observation)
+          state.frame.values[instruction.result] = result.value
+          break
+        case 'value':
+          state.frame.values[instruction.result] = result.value
+          break
       }
-      if (result.kind === 'stop') {
-        addStop(run, blockID, result.stop, state.shared.slice(), index)
-        // A return recorded by an earlier visit of this block described a smaller incoming
-        // state; the stop supersedes it.
-        run.blocks[blockID]!.pendingReturn = null
-        stopped = true
-        break
-      }
-      state.frame.values[instruction.result] = result.value
     }
     if (stopped) continue
     switch (block.terminator.kind) {
@@ -357,7 +384,13 @@ function runEvaluation(
           expressionContext,
         )
         if (conditionOutcome.kind === 'stop') {
-          addStop(run, blockID, conditionOutcome.stop, state.shared.slice(), block.instructions.length)
+          addStop(
+            run,
+            blockID,
+            conditionOutcome.stop,
+            state.shared.slice(),
+            block.instructions.length,
+          )
           run.blocks[blockID]!.pendingReturn = null
           break
         }
@@ -385,7 +418,6 @@ function runEvaluation(
     }
   }
 
-  const successors = blockSuccessors(fn)
   // A stop inside a loop cuts the back edge, freezing the header short of its fixed point —
   // and the stop may first appear on a late widening round, after earlier rounds already
   // propagated returns downstream. Any header on a cycle through a stopping block is
@@ -470,7 +502,60 @@ function runEvaluation(
     }
   }
 
-  return {evaluation: {normal, preconditions, boundsAssumptions, stops: run.stops}, run}
+  return {
+    evaluation: {
+      normal,
+      preconditions,
+      boundsAssumptions,
+      assertions: classifyAssertions(run, run.stops.length === 0 && boundsAssumptions.length === 0),
+      stops: run.stops,
+    },
+    run,
+  }
+}
+
+function requiredAssertion(run: EvaluationRun, assertionIndex: number): {site: SiteID; text: string} {
+  const assertion = run.fn.assertions[assertionIndex]
+  if (assertion == null) {
+    throw new Error(`Unknown assertion ${assertionIndex} in ${run.fn.name}`)
+  }
+  return assertion
+}
+
+function addAssertionObservation(
+  run: EvaluationRun,
+  assertionIndex: number,
+  observation: {canBeTrue: boolean; canBeFalse: boolean},
+): void {
+  requiredAssertion(run, assertionIndex)
+  if (!observation.canBeTrue && !observation.canBeFalse) {
+    throw new Error(`Assertion ${assertionIndex} in ${run.fn.name} has no possible boolean value`)
+  }
+  const aggregate = run.assertionObservations[assertionIndex] ?? {
+    sawDefinitelyTrue: false,
+    sawDefinitelyFalse: false,
+    sawMaybeFalse: false,
+  }
+  if (!observation.canBeTrue) aggregate.sawDefinitelyFalse = true
+  else if (observation.canBeFalse) aggregate.sawMaybeFalse = true
+  else aggregate.sawDefinitelyTrue = true
+  run.assertionObservations[assertionIndex] = aggregate
+}
+
+function classifyAssertions(run: EvaluationRun, proofComplete: boolean): AssertionVerdict[] {
+  return run.fn.assertions.map((assertion, assertionIndex) => {
+    const observation = run.assertionObservations[assertionIndex]
+    const verdict: AssertionVerdict['verdict'] = observation?.sawDefinitelyFalse === true
+      ? 'refuted'
+      : observation?.sawMaybeFalse === true
+        ? 'unproven'
+        : !proofComplete
+          ? 'blocked'
+          : observation?.sawDefinitelyTrue === true
+            ? 'proven'
+            : 'dead'
+    return {site: assertion.site, text: assertion.text, verdict}
+  })
 }
 
 function addStop(

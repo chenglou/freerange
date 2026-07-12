@@ -33,9 +33,12 @@ export type BlockIR = {
   terminator: TerminatorIR
 }
 
+export type StaticAssertionIR = {site: SiteID; text: string}
+
 export type FunctionIR = {
   kind: 'lowered'
   name: string
+  assertions: StaticAssertionIR[]
   parameters: ParameterIR[]
   // Property names of the declared return type when it is a record, else null. Reports
   // omit wider runtime properties that a type-checked caller cannot read.
@@ -134,6 +137,9 @@ export type UnsupportedReason =
   // immutable after construction (owner-locked): update state by rebinding a variable to a
   // fresh object with explicit fields, e.g. `config = {pos: 1, dest: config.dest}`.
   | {kind: 'propertyWrite'}
+  // A direct global console.assert spelling expressed static intent, but its
+  // arguments, position, optional form, or condition is outside the accepted grammar.
+  | {kind: 'staticAssertionForm'; problem: 'argumentCount' | 'position' | 'optionalCall' | 'condition'}
   | {kind: 'forLoopWithoutCondition'}
   // Destructuring pattern or a declaration without an initializer.
   | {kind: 'variableDeclarationShape'}
@@ -155,6 +161,7 @@ export type UnsupportedReason =
 export type UnsupportedFunctionIR = {
   kind: 'unsupported'
   name: string
+  hasStaticAnnotations: boolean
   site: SiteID
   reason: UnsupportedReason
 }
@@ -347,6 +354,9 @@ export type ProgramIR = {
   // Still indexed by FunctionID, assigned from declaration order before any body lowers, so
   // call instructions may reference an index that later turns out unsupported.
   functions: FunctionLowering[]
+  // Direct global console.assert calls outside named top-level function
+  // declarations. Project reporting treats every entry as an error.
+  staticAnnotationIssues: Array<{kind: 'outsideTopLevelFunction'; site: SiteID}>
   // Indexed by ModuleBindingID.
   moduleBindings: ModuleBindingIR[]
   // The synthetic function holding the module's top-level runtime code, evaluated once

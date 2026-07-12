@@ -87,6 +87,8 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       case 'stringLength':
       case 'parsedNumber':
       case 'numberCheck':
+      case 'staticRequire':
+      case 'staticAssert':
       case 'tagCheck':
       case 'nullishCheck':
       case 'arrayLiteral':
@@ -111,6 +113,27 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
     }
   }
   return walk(value)
+}
+
+export function staticRequirement(
+  instruction: InstructionIR | undefined,
+  site: SiteID,
+  context: ExpressionContext,
+): Extract<InferredPrecondition, {kind: 'declaredComparison' | 'declaredNumberCheck'}> | null {
+  if (instruction?.kind === 'compare') {
+    const left = numericExpression(instruction.left, context)
+    const right = numericExpression(instruction.right, context)
+    return left == null || right == null
+      ? null
+      : {kind: 'declaredComparison', operator: instruction.operator, left, right, site}
+  }
+  if (instruction?.kind === 'numberCheck') {
+    const expression = numericExpression(instruction.value, context)
+    return expression == null
+      ? null
+      : {kind: 'declaredNumberCheck', predicate: instruction.predicate, expression, site}
+  }
+  return null
 }
 
 // A stable name for the runtime value an IR value holds, used to key valid-index pairs:
@@ -173,6 +196,16 @@ function samePrecondition(left: InferredPrecondition, right: InferredPreconditio
     return sameExpression(left.index, right.index) && sameExpression(left.sequence, right.sequence)
   }
   if (left.kind === 'inBounds' || right.kind === 'inBounds') return false
+  if (left.kind === 'declaredComparison' && right.kind === 'declaredComparison') {
+    return left.operator === right.operator
+      && sameExpression(left.left, right.left)
+      && sameExpression(left.right, right.right)
+  }
+  if (left.kind === 'declaredComparison' || right.kind === 'declaredComparison') return false
+  if (left.kind === 'declaredNumberCheck' && right.kind === 'declaredNumberCheck') {
+    return left.predicate === right.predicate && sameExpression(left.expression, right.expression)
+  }
+  if (left.kind === 'declaredNumberCheck' || right.kind === 'declaredNumberCheck') return false
   if (left.kind === 'notEqualConstant' && right.kind === 'notEqualConstant' && left.value !== right.value) return false
   return sameExpression(left.expression, right.expression)
 }

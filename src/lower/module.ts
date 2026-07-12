@@ -266,6 +266,7 @@ export function lowerModuleInitializer(
     initializer: {
       kind: 'lowered',
       name: moduleInitializerName,
+      assertions: [],
       returnPropertyNames: null,
       parameters: [],
       entry: 0,

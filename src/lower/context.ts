@@ -8,6 +8,7 @@ import type {
 } from '../ir/ids.ts'
 import type {InstructionIR, TerminatorIR} from '../ir/instructions.ts'
 import {nodeSpan, type BlockIR, type FunctionIR, type SourceSpan, type UnsupportedReason} from '../ir/program.ts'
+import type {StaticAnnotation} from './static-intrinsics.ts'
 
 export type MutableBlock = {
   loopHeader: SiteID | null
@@ -29,6 +30,7 @@ export type FunctionContext = {
   checker: ts.TypeChecker
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>
   moduleBindingsBySymbol: Map<ts.Symbol, ModuleBindingID>
+  staticAnnotations: StaticAnnotation[]
   // The ProgramIR.sites table, shared across all function lowerings; pushing assigns the
   // next dense SiteID.
   sites: SourceSpan[]
@@ -37,6 +39,7 @@ export type FunctionContext = {
   blocks: MutableBlock[]
   bindings: Map<ts.Symbol, ValueID>
   parameters: FunctionIR['parameters']
+  assertions: FunctionIR['assertions']
   // Innermost-last stack of enclosing loops, consulted by `continue`. A continue runs the
   // loop's advance step (a for loop's incrementor, the for-of counter bump; nothing for
   // while), then jumps to the header carrying the loop's carried bindings plus whatever
@@ -56,6 +59,7 @@ export function createFunctionContext(
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
   moduleBindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
   sites: SourceSpan[],
+  staticAnnotations: StaticAnnotation[] = [],
 ): FunctionContext {
   const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}
   return {
@@ -63,12 +67,14 @@ export function createFunctionContext(
     checker,
     functionsBySymbol,
     moduleBindingsBySymbol,
+    staticAnnotations,
     sites,
     nextValue: 0,
     currentBlock: entry,
     blocks: [entry],
     bindings: new Map(),
     parameters: [],
+    assertions: [],
     loops: [],
   }
 }
@@ -83,6 +89,7 @@ export type LoweringSnapshot = {
   instructionCount: number
   blockCount: number
   bindings: Map<ts.Symbol, ValueID>
+  assertionCount: number
   loopCount: number
 }
 
@@ -92,6 +99,7 @@ export function snapshotLowering(context: FunctionContext): LoweringSnapshot {
     instructionCount: context.currentBlock.instructions.length,
     blockCount: context.blocks.length,
     bindings: new Map(context.bindings),
+    assertionCount: context.assertions.length,
     loopCount: context.loops.length,
   }
 }
@@ -102,6 +110,7 @@ export function restoreLowering(context: FunctionContext, snapshot: LoweringSnap
   snapshot.block.terminator = null
   context.currentBlock = snapshot.block
   context.bindings = snapshot.bindings
+  context.assertions.length = snapshot.assertionCount
   context.loops.length = snapshot.loopCount
 }
 
@@ -117,8 +126,12 @@ type InstructionInput = WithoutResultAndSite<InstructionIR>
 // (the constant 0 in `-x`, the constant 1 in `count++`) pass the enclosing node:
 // distinct SiteIDs, shared span.
 export function addInstruction(context: FunctionContext, node: ts.Node, instruction: InstructionInput): ValueID {
-  const result = context.nextValue++
   const site = addSite(context, node)
+  return addInstructionAtSite(context, site, instruction)
+}
+
+export function addInstructionAtSite(context: FunctionContext, site: SiteID, instruction: InstructionInput): ValueID {
+  const result = context.nextValue++
   context.currentBlock.instructions.push({...instruction, result, site} as InstructionIR)
   return result
 }

@@ -49,6 +49,30 @@ These commands write no files. Redirect stdout when you deliberately want a snap
 - `stopped`: Freerange analyzed part of the function, but at least one path stopped. `on analyzed paths` describes only the paths that completed; it is not a contract for the whole function.
 - `skipped`: module setup contained a statement Freerange did not analyze. Values that statement could change are not trusted afterward.
 
+## Static assertions
+
+Freerange treats a direct call to the standard `console.assert(condition)` as a static assertion when the call has exactly one argument, is a standalone statement, and appears in a named top-level function declaration. A local or imported value named `console` is not treated specially.
+
+Consecutive assertions at the very start of the function declare caller requirements. A requirement may be `Number.isInteger(parameter)` or a direct comparison between one parameter and a numeric constant. Requirements narrow that parameter, print as `requires`, and are checked when Freerange analyzes a supported same-file call. Any assertion after another statement asks Freerange to prove the condition at that point:
+
+```ts
+export function itemColumn(itemIndex: number, columnCount: number): number {
+  console.assert(Number.isInteger(columnCount))
+  console.assert(columnCount >= 1)
+
+  const index = Math.max(0, Math.floor(itemIndex))
+  const column = index % columnCount
+  console.assert(column < columnCount)
+  return column
+}
+```
+
+Write one direct condition per assertion, e.g. two assertions for a lower and upper bound instead of one condition joined with `&&`. Conditions may use the side-effect-free arithmetic, property reads, and standard numeric checks Freerange already analyzes. An assertion condition may not call a user function, carry a message argument, introduce control flow, read an array element, or perform division or remainder. Bind such a calculation before the assertion when the function already establishes the calculation's requirements. This keeps the assertion from creating the condition needed to prove itself.
+
+A later assertion does not narrow subsequent statements. If later code depends on a condition, use an ordinary `if` guard or make the condition a leading caller requirement. Every path in a function containing an assertion must finish analysis without site-specific assumptions; otherwise no assertion in that function is accepted as proven. A condition already known to fail or remain uncertain keeps that more specific result; an otherwise successful condition is blocked. Unproven, failing, blocked, and unreachable assertions are errors in `fr`. Successful assertions are quiet there and print as `proves` in `fr --audit`.
+
+Freerange does not change `console.assert` at runtime. JavaScript still evaluates the condition and logs a failed assertion unless the application's build removes the call.
+
 ## Writing analyzable code
 
 Freerange is deliberately designed for code that can be refactored, especially code written or maintained by agents. The goal is not to accept every TypeScript pattern. The goal is to make the useful boundary predictable and make good rewrites cheap.
@@ -101,6 +125,8 @@ A caller requirement can follow local calculations, e.g. division by `width - 1`
 Function calls are analyzed when Freerange can see and support the callee. A same-file call must currently pass every declared parameter explicitly, even when an optional parameter or default value lets JavaScript omit the argument. Unknown calls, callback order, mutation through aliases, and most framework effects stop the affected path or function. An imported constant is followed only when its initializer is a plain numeric literal, e.g. `export const GAP = 24`; calculated constants and imported function behavior are not inferred.
 
 Freerange assumes that repeated reads of a property stay stable during one analyzed synchronous calculation. Snapshot framework or reactive state into plain local values before handing it to a numeric helper when that stability is not guaranteed.
+
+Assertions can additionally prove a small set of local ordering patterns common in UI calculations: values selected by `Math.min` or `Math.max`, adding or subtracting a nonnegative value, matching multiplication by a nonnegative factor, positive remainder bounds, and fields read from a fresh record. This producer walk is available only while the assertion is checked. It does not add relationships to ordinary branches or return-contract inference, and it does not retain a proved assertion for later statements.
 
 An `ensures` line assumes its `requires` and `assumes`. A `requires` line may be a real API condition, or it may expose a relationship Freerange cannot currently prove. An `assumes` line may identify an unchecked program boundary or an analysis limitation. Neither should be changed automatically without deciding what the program should do for that input.
 

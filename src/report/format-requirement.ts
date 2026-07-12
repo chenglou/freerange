@@ -1,12 +1,15 @@
-import type {ArithmeticOperator} from '../ir/instructions.ts'
+import type {ArithmeticOperator, ComparisonOperator} from '../ir/instructions.ts'
 import {formatSite, type ProgramIR} from '../ir/program.ts'
 import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 
-export type PreconditionOperation = 'division' | 'remainder' | 'element read'
+export type PreconditionOperation = 'division' | 'remainder' | 'element read' | 'declared requirement'
 
 export function formatPrecondition(precondition: InferredPrecondition, parameterNames: string[], program: ProgramIR): string {
   const description = describePrecondition(precondition, parameterNames)
-  return `${description.condition} (${description.operation} at ${formatSite(program, precondition.site)})`
+  const source = description.operation === 'declared requirement'
+    ? 'declared at'
+    : `${description.operation} at`
+  return `${description.condition} (${source} ${formatSite(program, precondition.site)})`
 }
 
 // Project reports group propagated requirements at the operation that created them, so
@@ -17,13 +20,20 @@ export function describePrecondition(
 ): {condition: string; operation: PreconditionOperation} {
   return {
     condition: conditionWords(precondition, parameterNames),
-    operation: precondition.kind === 'inBounds' ? 'element read' : precondition.operation,
+    operation: precondition.kind === 'inBounds'
+      ? 'element read'
+      : precondition.kind === 'declaredComparison' || precondition.kind === 'declaredNumberCheck'
+        ? 'declared requirement'
+        : precondition.operation,
   }
 }
 
 // The evidence wording for a requirement inferred before a stop — deliberately a different
 // sentence shape from the requires line above, and it names the guarantee it enables.
 export function formatObservedNeed(precondition: InferredPrecondition, parameterNames: string[], program: ProgramIR): string {
+  if (precondition.kind === 'declaredComparison' || precondition.kind === 'declaredNumberCheck') {
+    return `the requirement declared at ${formatSite(program, precondition.site)} is ${conditionWords(precondition, parameterNames)}`
+  }
   if (precondition.kind === 'inBounds') {
     return `the element read at ${formatSite(program, precondition.site)} hits an element only when ${conditionWords(precondition, parameterNames)}`
   }
@@ -41,6 +51,14 @@ function conditionWords(precondition: InferredPrecondition, parameterNames: stri
     // E.g. `slot is a valid sizes index`: an integer from 0 through sizes.length - 1.
     case 'inBounds':
       return `${formatExpression(precondition.index, parameterNames)} is a valid ${formatExpression(precondition.sequence, parameterNames)} index`
+    case 'declaredComparison':
+      return `${formatExpression(precondition.left, parameterNames)} ${comparisonOperatorText(precondition.operator)} ${formatExpression(precondition.right, parameterNames)}`
+    case 'declaredNumberCheck': {
+      const predicate = precondition.predicate === 'integer'
+        ? 'isInteger'
+        : precondition.predicate === 'finite' ? 'isFinite' : 'isNaN'
+      return `Number.${predicate}(${formatExpression(precondition.expression, parameterNames)})`
+    }
   }
 }
 
@@ -67,5 +85,16 @@ function operatorText(operator: ArithmeticOperator): string {
     case 'multiply': return '*'
     case 'divide': return '/'
     case 'remainder': return '%'
+  }
+}
+
+function comparisonOperatorText(operator: ComparisonOperator): string {
+  switch (operator) {
+    case 'lessThan': return '<'
+    case 'lessThanOrEqual': return '<='
+    case 'greaterThan': return '>'
+    case 'greaterThanOrEqual': return '>='
+    case 'equal': return '==='
+    case 'notEqual': return '!=='
   }
 }

@@ -34,6 +34,18 @@ export type StopReason =
   // disabled, so it has its own actionable reason instead of looking like unsupported
   // TypeScript narrowing.
   | {kind: 'possiblyMissingElement'}
+  // A declared console.assert requirement was false, or could not be expressed and
+  // refined as one direct numeric comparison or Number check.
+  | {kind: 'refutedRequirement'}
+  | {kind: 'unrefinableRequirement'}
+  // A same-file call reached one of the callee's declared requirements with arguments
+  // that either disprove the condition or cannot name it in the caller's contract.
+  | {
+      kind: 'callRequirement'
+      callee: FunctionID
+      declarationSite: SiteID
+      status: 'refuted' | 'unproven'
+    }
   // An asserted element read (arr[i]!) whose index is provably outside the array — there
   // is no element the assertion could produce. An empty array is the special case where
   // every read qualifies.
@@ -44,6 +56,14 @@ export type Stop = {
   reason: StopReason
 }
 
+// The result for one interior console.assert. A blocked result means its function did not
+// finish analysis on every path without a site-specific assumption.
+export type AssertionVerdict = {
+  site: SiteID
+  text: string
+  verdict: 'proven' | 'refuted' | 'unproven' | 'dead' | 'blocked'
+}
+
 // One evaluation can hold BOTH a normal outcome and stops: in
 // `if (flag > 0) return 10; unsupportedThing()` the true branch returns 10 while the other
 // path stops. Empty `stops` means every path completed.
@@ -51,6 +71,7 @@ export type FunctionEvaluation = {
   normal: {returnValue: AbstractValue; sharedState: SharedState} | null
   preconditions: InferredPrecondition[]
   boundsAssumptions: BoundsAssumption[]
+  assertions: AssertionVerdict[]
   stops: Stop[]
 }
 
@@ -82,6 +103,7 @@ export type FunctionAnalysis =
       preconditions: InferredPrecondition[]
       boundsAssumptions: BoundsAssumption[]
       returnValue: AbstractValue
+      assertions: AssertionVerdict[]
     }
   // Some path stopped. The evidence fields share no names with the contract fields above,
   // so report code cannot consume them interchangeably: observedReturn describes only the
@@ -94,6 +116,7 @@ export type FunctionAnalysis =
       observedReturn: {value: AbstractValue} | null
       observedNeeds: InferredPrecondition[]
       observedBoundsAssumptions: BoundsAssumption[]
+      assertions: AssertionVerdict[]
     }
   // The function did not lower. The variant carries a reference (not a copy) to its
   // lowering record, so a mismatched pair is unrepresentable and the report needs no

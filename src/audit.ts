@@ -1,4 +1,4 @@
-import type {ProgramAnalysis, Stop, StopReason} from './engine/outcome.ts'
+import type {AssertionVerdict, ProgramAnalysis, Stop, StopReason} from './engine/outcome.ts'
 import type {SiteID} from './ir/ids.ts'
 import {
   formatSite,
@@ -155,6 +155,8 @@ export type AuditCoverage = {
 export type AuditReason =
   | {kind: 'requires'; precondition: InferredPrecondition}
   | {kind: 'assumes'; assumption: BoundsAssumption}
+  | {kind: 'assertion'; assertion: AssertionVerdict}
+  | {kind: 'staticAnnotationIssue'; issue: ProgramIR['staticAnnotationIssues'][number]}
   | {kind: 'unsupported'; reason: UnsupportedReason}
   | {kind: 'stopped'; reason: StopReason}
   | {kind: 'skipped'; reason: UnsupportedReason}
@@ -210,18 +212,24 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
     addReference(functionName, assumption.site, {kind: 'assumes', assumption})
   }
 
+  const addAssertion = (functionName: string, assertion: AssertionVerdict): void => {
+    addReference(functionName, assertion.site, {kind: 'assertion', assertion})
+  }
+
   for (const fn of analysis.functions) {
     switch (fn.kind) {
       case 'analyzed': {
         analyzed++
         for (const precondition of fn.preconditions) addPrecondition(fn.lowering.name, precondition)
         for (const assumption of fn.boundsAssumptions) addAssumption(fn.lowering.name, assumption)
+        for (const assertion of fn.assertions) addAssertion(fn.lowering.name, assertion)
         break
       }
       case 'partial': {
         partial++
         for (const precondition of fn.observedNeeds) addPrecondition(fn.lowering.name, precondition)
         for (const assumption of fn.observedBoundsAssumptions) addAssumption(fn.lowering.name, assumption)
+        for (const assertion of fn.assertions) addAssertion(fn.lowering.name, assertion)
         for (const stop of fn.stops) addStop(fn.lowering.name, stop)
         break
       }
@@ -245,6 +253,16 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
       addAssumption(program.initializer.name, assumption)
     }
     for (const stop of analysis.initializer.stops) addStop(program.initializer.name, stop)
+  }
+  for (const assertion of analysis.initializer.assertions) {
+    addAssertion(program.initializer.name, assertion)
+  }
+  for (const issue of program.staticAnnotationIssues) {
+    addReference(
+      program.initializer.name,
+      issue.site,
+      {kind: 'staticAnnotationIssue', issue},
+    )
   }
   for (const skip of program.initializerSkips) {
     addReference(
@@ -287,7 +305,7 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
 export const auditPreamble = [
   'Freerange tracks number ranges, integer values, NaN, Infinity, and supported branch checks through synchronous named top-level function declarations. It does not guess through unknown calls, callback order, mutation through aliases, or arbitrary algebraic relationships between separately computed values. Reports assume that repeated reads of a property stay stable during one analyzed calculation.',
   '',
-  'Each file below gets one unit: its result for each function, then the refactoring suggestions that apply to it. In a contract entry, `requires` are caller conditions; `ensures` hold when the function returns and its `requires` and `assumes` are true; `assumes` are input conditions accepted without proof. An `unsupported` entry names the first construct outside the analyzed subset. Change that blocker and rerun when the function should become analyzable; framework wrappers may remain unsupported. `stopped` means analysis halted partway on some path, and `on analyzed paths` is evidence from the paths that completed, not a contract for the whole function. `skipped` marks a top-level statement the module analysis stepped over; values it could write are not trusted.',
+  'Each file below gets one unit: its result for each function, then the refactoring suggestions that apply to it. In a contract entry, `requires` are caller conditions; `ensures` hold when the function returns and its `requires` and `assumes` are true; `assumes` are input conditions accepted without proof; `proves` shows a successful console.assert. Unproven, failing, blocked, and unreachable assertions are shown explicitly. An `unsupported` entry names the first construct outside the analyzed subset. Change that blocker and rerun when the function should become analyzable; framework wrappers may remain unsupported. `stopped` means analysis halted partway on some path, and `on analyzed paths` is evidence from the paths that completed, not a contract for the whole function. `skipped` marks a top-level statement the module analysis stepped over; values it could write are not trusted.',
   '',
   'Refactoring suggestions are conditional examples, not automatic fixes. Apply one only when its "Use when" condition matches the program, then run behavioral tests and the audit again. Only recognized patterns get suggestions; a file with no suggestions and incomplete coverage is not necessarily safe.',
 ].join('\n')
@@ -390,6 +408,8 @@ function guidesForReason(reason: AuditReason): RefactorGuideID[] {
     case 'assumes': return reason.assumption.kind === 'nonzeroDivisor'
       ? ['guard-derived-value']
       : ['guard-array-index']
+    case 'assertion':
+    case 'staticAnnotationIssue': return []
     case 'unsupported': return guidesForUnsupportedReason(reason.reason)
     case 'stopped': return guidesForStop(reason.reason)
     case 'skipped': return guidesForUnsupportedReason(reason.reason)
@@ -397,7 +417,13 @@ function guidesForReason(reason: AuditReason): RefactorGuideID[] {
 }
 
 function guidesForPrecondition(precondition: InferredPrecondition): RefactorGuideID[] {
-  if (precondition.kind === 'inBounds') return ['guard-array-index']
+  switch (precondition.kind) {
+    case 'inBounds': return ['guard-array-index']
+    case 'declaredComparison':
+    case 'declaredNumberCheck': return []
+    case 'nonzero':
+    case 'notEqualConstant': break
+  }
   const directRatio = precondition.kind === 'nonzero'
     && precondition.operation === 'division'
     && precondition.expression.kind === 'binary'
@@ -446,6 +472,7 @@ function guidesForUnsupportedReason(reason: UnsupportedReason): RefactorGuideID[
     case 'statementAfterReturn':
     case 'assignmentInValuePosition':
     case 'propertyWrite':
+    case 'staticAssertionForm':
     case 'varDeclaration':
     case 'evalInFile':
     case 'typeCheckSuppressed':
@@ -465,6 +492,9 @@ function guidesForStop(reason: StopReason): RefactorGuideID[] {
     case 'unsupportedCode': return guidesForUnsupportedReason(reason.reason)
     case 'possiblyMissingElement': return ['handle-missing-element']
     case 'outOfBoundsRead': return []
+    case 'refutedRequirement':
+    case 'unrefinableRequirement':
+    case 'callRequirement':
     case 'moduleRead':
     case 'recursion':
     case 'calleeStopped':

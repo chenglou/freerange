@@ -1,6 +1,6 @@
 import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
-import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
+import type {AssertionVerdict, FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {FunctionID, ValueID} from '../ir/ids.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
 import {forEachOperand} from '../ir/instructions.ts'
@@ -8,13 +8,19 @@ import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type Pro
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
-  | {kind: 'analyzed'; name: string; assumptions: string[]; requires: string[]; ensures: string[]}
+  | {kind: 'analyzed'; name: string; assumptions: string[]; requires: string[]; ensures: string[]; assertions?: AssertionReport[]}
   // e.g. 'unknown identifier scheduledRender at /abs/demo/index.ts:6:7'
   | {kind: 'unsupported'; name: string; unsupported: string}
   // Some path stopped; `observed` lines are evidence from the paths that completed, never a
   // contract. e.g. stopped: 'recursive call to countdown (call at /abs/file.ts:3:10)',
   // observed: 'return is a finite integer number from 0 through 0'.
-  | {kind: 'partial'; name: string; assumptions: string[]; stopped: string[]; skipped?: string[]; observed: string[]}
+  | {kind: 'partial'; name: string; assumptions: string[]; stopped: string[]; skipped?: string[]; observed: string[]; assertions?: AssertionReport[]}
+
+export type AssertionReport = {
+  verdict: AssertionVerdict['verdict']
+  text: string
+  location: string
+}
 
 export type AnalysisReport = {
   functions: FunctionReport[]
@@ -88,6 +94,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
           ],
           stopped: fn.stops.map(stop => formatStop(stop, program, analysis)),
           observed,
+          ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
         })
         break
       }
@@ -103,6 +110,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
           ],
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
           ensures: returnSummaries('return', declaredReturn(fn.returnValue, lowering), program),
+          ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
         })
         break
       }
@@ -122,6 +130,7 @@ export function formatReport(report: AnalysisReport): string {
     switch (fn.kind) {
       case 'analyzed': {
         for (const precondition of fn.requires) lines.push(`  requires: ${precondition}`)
+        for (const assertion of fn.assertions ?? []) lines.push(formatAssertionReport(assertion))
         for (const guarantee of fn.ensures) lines.push(`  ensures: ${guarantee}`)
         for (const assumption of fn.assumptions) lines.push(`  assumes: ${assumption}`)
         break
@@ -131,6 +140,7 @@ export function formatReport(report: AnalysisReport): string {
         break
       }
       case 'partial': {
+        for (const assertion of fn.assertions ?? []) lines.push(formatAssertionReport(assertion))
         for (const assumption of fn.assumptions) lines.push(`  assumes: ${assumption}`)
         for (const stop of fn.stopped) lines.push(`  stopped: ${stop}`)
         for (const skip of fn.skipped ?? []) lines.push(`  skipped: ${skip}`)
@@ -140,6 +150,24 @@ export function formatReport(report: AnalysisReport): string {
     }
   }
   return lines.join('\n')
+}
+
+function assertionReports(assertions: AssertionVerdict[], program: ProgramIR): AssertionReport[] {
+  return assertions.map(assertion => ({
+    verdict: assertion.verdict,
+    text: assertion.text,
+    location: formatSite(program, assertion.site),
+  }))
+}
+
+function formatAssertionReport(assertion: AssertionReport): string {
+  switch (assertion.verdict) {
+    case 'proven': return `  proves: ${assertion.text} (assertion at ${assertion.location})`
+    case 'refuted': return `  assertion can fail: ${assertion.text} (at ${assertion.location})`
+    case 'unproven': return `  assertion unproven: could not prove ${assertion.text} (at ${assertion.location})`
+    case 'dead': return `  unreachable assertion: ${assertion.text} (at ${assertion.location})`
+    case 'blocked': return `  assertion blocked: the function did not finish analysis without site-specific assumptions: ${assertion.text} (at ${assertion.location})`
+  }
 }
 
 
@@ -636,6 +664,21 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
     case 'possiblyMissingElement': {
       return `uses a possibly missing array element without handling undefined (at ${formatSite(program, stop.site)})`
     }
+    case 'refutedRequirement': {
+      return `declared requirement is false (at ${formatSite(program, stop.site)})`
+    }
+    case 'unrefinableRequirement': {
+      return `could not express or prove the declared requirement (at ${formatSite(program, stop.site)})`
+    }
+    case 'callRequirement': {
+      const callee = functionName(program, reason.callee)
+      const callSite = formatSite(program, stop.site)
+      const declarationSite = formatSite(program, reason.declarationSite)
+      switch (reason.status) {
+        case 'refuted': return `call to ${callee} makes its declared requirement definitely false (call at ${callSite}; declared at ${declarationSite})`
+        case 'unproven': return `could not express or prove ${callee}'s declared requirement (call at ${callSite}; declared at ${declarationSite})`
+      }
+    }
     case 'loopLimit': {
       return `the loop at ${formatSite(program, stop.site)} did not converge after ${reason.updates} updates`
     }
@@ -688,7 +731,7 @@ function functionName(program: ProgramIR, callee: number): string {
 
 // The only place reason prose exists; everything else branches on reason.kind. The
 // exhaustiveness check forces a formatting arm for every future variant.
-function formatUnsupportedReason(reason: UnsupportedReason): string {
+export function formatUnsupportedReason(reason: UnsupportedReason): string {
   switch (reason.kind) {
     case 'unknownIdentifier': return `unknown identifier ${reason.name}`
     case 'missingSymbol': return 'node without a TypeScript symbol'
@@ -725,6 +768,14 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'statementAfterReturn': return 'statements after return'
     case 'assignmentInValuePosition': return 'an assignment used as a value (write it as its own statement)'
     case 'propertyWrite': return 'a write into an object (mutation is outside the subset; rebuilding a plain-data record may be suitable when identity and mutation are not observed)'
+    case 'staticAssertionForm': {
+      switch (reason.problem) {
+        case 'argumentCount': return 'console.assert must have exactly one condition argument'
+        case 'position': return 'console.assert must be a standalone statement'
+        case 'optionalCall': return 'optional console.assert calls are not supported'
+        case 'condition': return 'console.assert condition is outside the supported static subset'
+      }
+    }
     case 'varDeclaration': return 'var declarations (use let or const)'
     case 'evalInFile': return 'eval appears in this file; an eval string can rewrite any binding, so no function in the file is analyzed'
     case 'typeCheckSuppressed': return 'a @ts-ignore, @ts-expect-error, or @ts-nocheck comment turns off type checking in this file, so declared types cannot be trusted and no function is analyzed'

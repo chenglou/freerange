@@ -83,6 +83,10 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'numberCheck'; predicate: 'integer' | 'finite' | 'nan'; value: ValueID})
   // Boolean negation, from `!x` on a boolean operand.
   | (InstructionBase & {kind: 'not'; value: ValueID})
+  // Static requirements narrow the function body and become caller preconditions.
+  // Interior assertions are observational; their indexes address FunctionIR.assertions.
+  | (InstructionBase & {kind: 'staticRequire'; value: ValueID})
+  | (InstructionBase & {kind: 'staticAssert'; value: ValueID; assertion: number})
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})
   | (InstructionBase & {kind: 'call'; function: FunctionID; arguments: ValueID[]})
   // tag is set when the literal's contextual type is a tagged union and the literal names
@@ -115,7 +119,9 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'absolute':
     case 'mathUnary':
     case 'numberCheck':
-    case 'not': visit(instruction.value); return
+    case 'not':
+    case 'staticRequire':
+    case 'staticAssert': visit(instruction.value); return
     case 'nullishCheck': visit(instruction.value); return
     case 'tagCheck': visit(instruction.union); return
     case 'arrayLiteral': for (const element of instruction.elements) visit(element); return

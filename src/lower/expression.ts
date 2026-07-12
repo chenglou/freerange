@@ -4,6 +4,7 @@ import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import {declaredOnlyInDeclarationFiles, platformFact} from './platform.ts'
 import {
   addInstruction,
+  addInstructionAtSite,
   addSite,
   createBlock,
   requiredSymbol,
@@ -11,6 +12,7 @@ import {
   unsupported,
   type FunctionContext,
 } from './context.ts'
+import {annotationForExpression, type StaticAnnotation} from './static-intrinsics.ts'
 
 // The only entry point through which assignments lower. Statement positions (expression
 // statements, for-loop incrementors) call this; everything else goes through
@@ -380,6 +382,8 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       : addInstruction(context, current, {kind: 'compare', operator: comparison!, left, right})
   }
   if (ts.isCallExpression(current)) {
+    const staticAnnotation = annotationForExpression(current, context.staticAnnotations)
+    if (staticAnnotation != null) return lowerStaticAnnotation(staticAnnotation, context)
     if (ts.isIdentifier(current.expression)) {
       // Global parseFloat / parseInt / Number(x): honest NaN-carrying results, like their
       // Number.* spellings below (the declaration-file check defends against shadowing).
@@ -518,6 +522,90 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     return addInstruction(context, current, {kind: 'property', object, property: current.name.text})
   }
   throw unsupported(current, {kind: 'expressionForm', syntax: ts.SyntaxKind[current.kind]})
+}
+
+function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionContext): ValueID {
+  if (annotation.kind === 'invalid') {
+    throw unsupported(annotation.node, {kind: 'staticAssertionForm', problem: annotation.problem})
+  }
+  const condition = annotation.condition
+  requireBooleanCondition(condition, context.checker)
+  const originalBlock = context.currentBlock
+  const originalBlockCount = context.blocks.length
+  const originalInstructionCount = originalBlock.instructions.length
+  const value = lowerExpression(condition, context)
+  if (context.currentBlock !== originalBlock || context.blocks.length !== originalBlockCount) {
+    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+  }
+  const conditionInstructions = originalBlock.instructions.slice(originalInstructionCount)
+  if (conditionInstructions.some(instruction => !removableStaticConditionInstruction(instruction))) {
+    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+  }
+  if (annotation.role === 'requirement') {
+    const producer = conditionInstructions.findLast(instruction => instruction.result === value)
+    if (producer == null || !supportedStaticRequirement(producer, context)) {
+      throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+    }
+  }
+  const site = addSite(context, annotation.call)
+  if (annotation.role === 'requirement') {
+    return addInstructionAtSite(context, site, {kind: 'staticRequire', value})
+  }
+  const assertion = context.assertions.length
+  context.assertions.push({site, text: condition.getText(context.sourceFile)})
+  return addInstructionAtSite(context, site, {kind: 'staticAssert', value, assertion})
+}
+
+// Static conditions are erased from production builds. Normal expression lowering owns
+// their JS evaluation order; this list only rejects instructions whose removal could
+// change program state. Compound control flow was rejected by the block check above.
+function removableStaticConditionInstruction(instruction: InstructionIR): boolean {
+  switch (instruction.kind) {
+    case 'call':
+    case 'moduleWrite':
+    case 'moduleHavoc':
+    case 'arrayIndex':
+    case 'staticRequire':
+    case 'staticAssert': return false
+    case 'binary': return instruction.operator !== 'divide' && instruction.operator !== 'remainder'
+    case 'constant':
+    case 'nullishConstant':
+    case 'opaqueConstant':
+    case 'unknownBoolean':
+    case 'arrayLiteral':
+    case 'arrayLength':
+    case 'tagCheck':
+    case 'nullishCheck':
+    case 'booleanConstant':
+    case 'moduleRead':
+    case 'compare':
+    case 'floor':
+    case 'platformValue':
+    case 'absolute':
+    case 'mathUnary':
+    case 'stringLength':
+    case 'parsedNumber':
+    case 'numberCheck':
+    case 'not':
+    case 'minimum':
+    case 'maximum':
+    case 'object':
+    case 'property': return true
+  }
+}
+
+function supportedStaticRequirement(instruction: InstructionIR, context: FunctionContext): boolean {
+  const parameter = (value: ValueID): boolean => context.parameters.some(candidate => candidate.value === value)
+  const constant = (value: ValueID): boolean =>
+    context.currentBlock.instructions.findLast(candidate => candidate.result === value)?.kind === 'constant'
+  switch (instruction.kind) {
+    case 'numberCheck': return instruction.predicate === 'integer' && parameter(instruction.value)
+    case 'compare': {
+      return (parameter(instruction.left) && constant(instruction.right))
+        || (constant(instruction.left) && parameter(instruction.right))
+    }
+    default: return false
+  }
 }
 
 // The single recognizer for the three forms that assign through a plain identifier. The

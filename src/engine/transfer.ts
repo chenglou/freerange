@@ -38,6 +38,7 @@ import {
   peelNonzero,
   canonicalValueKey,
   numericExpression,
+  staticRequirement,
   type ExpressionContext,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
@@ -83,9 +84,18 @@ class KindMismatch extends Error {
   }
 }
 
-// One instruction either produces a value or stops the current path.
+type ValueStep = {kind: 'value'; value: AbstractValue}
+
+// One instruction either produces a value, records an assertion observation, or stops the
+// current path.
 export type StepResult =
-  | {kind: 'value'; value: AbstractValue}
+  | ValueStep
+  | {
+      kind: 'assertion'
+      assertion: number
+      observation: AbstractBoolean
+      value: Extract<AbstractValue, {kind: 'void'}>
+    }
   | {kind: 'stop'; stop: Stop}
   // The path ends contributing nothing — a call to a function that throws on every path,
   // behaving exactly like an inline throw: no return value, no stop record.
@@ -96,11 +106,11 @@ export type StepResult =
 // type level, computedNumber() stamps, and passthroughValue() is the one named escape hatch
 // for values whose numbers were already stamped where they were produced (reads, call
 // results, constants — stamping constants would newly blame overflowing literals).
-function value(result: Exclude<AbstractValue, AbstractNumber>): StepResult {
+function value(result: Exclude<AbstractValue, AbstractNumber>): ValueStep {
   return {kind: 'value', value: result}
 }
 
-function passthroughValue(result: AbstractValue): StepResult {
+function passthroughValue(result: AbstractValue): ValueStep {
   return {kind: 'value', value: result}
 }
 
@@ -108,7 +118,7 @@ function passthroughValue(result: AbstractValue): StepResult {
 // every operand still had the property, records this operation. Finiteness and NaN use
 // separate sites because an overflow can enable a later operation to produce NaN without
 // being the operation that produced it.
-function computedNumber(raw: AbstractNumber, operands: AbstractNumber[], site: SiteID): StepResult {
+function computedNumber(raw: AbstractNumber, operands: AbstractNumber[], site: SiteID): ValueStep {
   return {kind: 'value', value: withLossBlame(raw, operands, site)}
 }
 
@@ -228,6 +238,7 @@ function evaluateInstructionKinded(
           })
         } else {
           addBoundsAssumption(context.boundsAssumptions, {site: instruction.site, kind: 'elementInBounds'})
+          return passthroughValue(element)
         }
       }
       return passthroughValue(element)
@@ -388,11 +399,10 @@ function evaluateInstructionKinded(
         && (instruction.operator === 'equal' || instruction.operator === 'notEqual')) {
         return value(compareBooleans(left, right, instruction.operator === 'notEqual'))
       }
-      return value(compareNumbers(
-        requiredNumber(state, instruction.left),
-        requiredNumber(state, instruction.right),
-        instruction.operator,
-      ))
+      const leftNumber = requiredNumber(state, instruction.left)
+      const rightNumber = requiredNumber(state, instruction.right)
+      const intervalResult = compareNumbers(leftNumber, rightNumber, instruction.operator)
+      return value(intervalResult)
     }
     case 'parsedNumber': return computedNumber({
       kind: 'number',
@@ -434,6 +444,37 @@ function evaluateInstructionKinded(
     case 'not': {
       const operand = requiredBoolean(state, instruction.value)
       return value({kind: 'boolean', canBeTrue: operand.canBeFalse, canBeFalse: operand.canBeTrue})
+    }
+    case 'staticAssert': {
+      const observation = staticAssertionObservation(instruction.value, state, context)
+      return {kind: 'assertion', assertion: instruction.assertion, observation, value: {kind: 'void'}}
+    }
+    case 'staticRequire': {
+      const condition = requiredValue(state, instruction.value)
+      if (condition.kind !== 'boolean') {
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'unrefinableRequirement'}}}
+      }
+      const check = context.expressionContext.instructionByValue[instruction.value]
+      if (check?.kind !== 'compare' && check?.kind !== 'numberCheck') {
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'unrefinableRequirement'}}}
+      }
+      if (!condition.canBeTrue) {
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'refutedRequirement'}}}
+      }
+      if (!condition.canBeFalse) return value({kind: 'void'})
+      const requirement = staticRequirement(check, instruction.site, context.expressionContext)
+      if (requirement == null) {
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'unrefinableRequirement'}}}
+      }
+      const refined = refineCheck(state, check, true, context.expressionContext)
+      if (refined == null) {
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'refutedRequirement'}}}
+      }
+      state.frame = refined.frame
+      state.shared = refined.shared
+      state.validIndexPairs = refined.validIndexPairs
+      addPrecondition(context.preconditions, requirement)
+      return value({kind: 'void'})
     }
     case 'minimum': {
       const operands = instruction.values.map(id => requiredNumber(state, id))
@@ -485,7 +526,38 @@ function evaluateInstructionKinded(
         // returns, so this path ends exactly like an inline throw — silently. A guarded
         // `if (bad) return fail(x)` then reports the same full contract the throw
         // spelling gets.
-        if (evaluation.stops.length === 0 && evaluation.normal == null) return {kind: 'ends'}
+        if (evaluation.stops.length === 0 && evaluation.normal == null) {
+          for (const precondition of evaluation.preconditions) addPrecondition(context.preconditions, precondition)
+          for (const assumption of evaluation.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
+          return {kind: 'ends'}
+        }
+        const requirementFailure = evaluation.stops.find(stop =>
+          stop.reason.kind === 'refutedRequirement'
+            || stop.reason.kind === 'unrefinableRequirement'
+            || stop.reason.kind === 'callRequirement')
+        if (requirementFailure != null) {
+          const failure = requirementFailure.reason
+          let status: 'refuted' | 'unproven'
+          let declarationSite: SiteID
+          if (failure.kind === 'callRequirement') {
+            status = failure.status
+            declarationSite = failure.declarationSite
+          } else if (failure.kind === 'refutedRequirement' || failure.kind === 'unrefinableRequirement') {
+            status = failure.kind === 'refutedRequirement' ? 'refuted' : 'unproven'
+            declarationSite = requirementFailure.site
+          } else {
+            throw new Error('Requirement failure search returned an unrelated stop')
+          }
+          return {kind: 'stop', stop: {
+            site: instruction.site,
+            reason: {
+              kind: 'callRequirement',
+              callee: instruction.function,
+              declarationSite,
+              status,
+            },
+          }}
+        }
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
@@ -1106,6 +1178,242 @@ function evaluateBinary(
     case 'divide': return divideNumbers(left, right)
     case 'remainder': return remainderNumbers(left, right, false)
   }
+}
+
+// Assertion-only comparison proofs walk a small part of the immutable producer graph.
+// The fixed limit prevents a large expression DAG from turning each assertion into a
+// function-sized search. A calculation that exceeds it can be checked in smaller steps.
+const maximumStaticProofSteps = 32
+
+function staticAssertionObservation(
+  valueID: ValueID,
+  state: ExecutionState,
+  context: TransferContext,
+): AbstractBoolean {
+  const held = requiredValue(state, valueID)
+  // Lowering accepts boolean conditions. If an erased type assertion hid the runtime
+  // kind, the assertion remains unproven instead of stopping the function analysis.
+  if (held.kind !== 'boolean') return unknownBoolean()
+  if (!held.canBeTrue || !held.canBeFalse) return held
+  const producer = context.expressionContext.instructionByValue[valueID]
+  if (producer?.kind === 'not') {
+    const operand = staticAssertionObservation(producer.value, state, context)
+    return {kind: 'boolean', canBeTrue: operand.canBeFalse, canBeFalse: operand.canBeTrue}
+  }
+  if (producer?.kind !== 'compare') return held
+  const left = requiredValue(state, producer.left)
+  const right = requiredValue(state, producer.right)
+  if (left.kind !== 'number' || right.kind !== 'number') return held
+  return comparisonLocalProof(left, right, producer, state, context) ?? held
+}
+
+function comparisonLocalProof(
+  left: AbstractNumber,
+  right: AbstractNumber,
+  instruction: Extract<InstructionIR, {kind: 'compare'}>,
+  state: ExecutionState,
+  context: TransferContext,
+): AbstractBoolean | null {
+  if (left.mayBeNaN || right.mayBeNaN) return null
+  const proof = createComparisonProof(state, context.expressionContext)
+  const exact = (answer: boolean): AbstractBoolean => ({
+    kind: 'boolean',
+    canBeTrue: answer,
+    canBeFalse: !answer,
+  })
+
+  if (proof.same(instruction.left, instruction.right)) {
+    switch (instruction.operator) {
+      case 'equal':
+      case 'lessThanOrEqual':
+      case 'greaterThanOrEqual': return exact(true)
+      case 'notEqual':
+      case 'lessThan':
+      case 'greaterThan': return exact(false)
+    }
+  }
+
+  switch (instruction.operator) {
+    case 'lessThan': {
+      if (proof.strictlyBelow(instruction.left, instruction.right)) return exact(true)
+      return proof.atMost(instruction.right, instruction.left) ? exact(false) : null
+    }
+    case 'lessThanOrEqual': {
+      if (proof.atMost(instruction.left, instruction.right)) return exact(true)
+      return proof.strictlyBelow(instruction.right, instruction.left) ? exact(false) : null
+    }
+    case 'greaterThan': {
+      if (proof.strictlyBelow(instruction.right, instruction.left)) return exact(true)
+      return proof.atMost(instruction.left, instruction.right) ? exact(false) : null
+    }
+    case 'greaterThanOrEqual': {
+      if (proof.atMost(instruction.right, instruction.left)) return exact(true)
+      return proof.strictlyBelow(instruction.left, instruction.right) ? exact(false) : null
+    }
+    case 'equal': {
+      return proof.strictlyBelow(instruction.left, instruction.right)
+        || proof.strictlyBelow(instruction.right, instruction.left) ? exact(false) : null
+    }
+    case 'notEqual': {
+      return proof.strictlyBelow(instruction.left, instruction.right)
+        || proof.strictlyBelow(instruction.right, instruction.left) ? exact(true) : null
+    }
+  }
+}
+
+function createComparisonProof(
+  state: ExecutionState,
+  context: ExpressionContext,
+): {
+  same: (left: ValueID, right: ValueID) => boolean
+  atMost: (left: ValueID, right: ValueID) => boolean
+  strictlyBelow: (left: ValueID, right: ValueID) => boolean
+} {
+  let remaining = maximumStaticProofSteps
+  const resolved = new Map<ValueID, ValueID>()
+  const resolving = new Set<ValueID>()
+  const atMostMemo = new Map<string, boolean>()
+
+  // A read through a fresh record literal is the immutable value stored in that field.
+  // Resolving recursively lets frame.content.right reach the arithmetic that built it.
+  const resolveLiteralRead = (value: ValueID): ValueID => {
+    const cached = resolved.get(value)
+    if (cached != null) return cached
+    if (remaining <= 0 || resolving.has(value)) return value
+    remaining--
+    resolving.add(value)
+    const producer = context.instructionByValue[value]
+    let result = value
+    if (producer?.kind === 'property') {
+      const object = resolveLiteralRead(producer.object)
+      const objectProducer = context.instructionByValue[object]
+      if (objectProducer?.kind === 'object') {
+        const property = objectProducer.properties.find(candidate => candidate.name === producer.property)
+        if (property != null) result = resolveLiteralRead(property.value)
+      }
+    }
+    resolving.delete(value)
+    resolved.set(value, result)
+    return result
+  }
+
+  const heldNumber = (value: ValueID): AbstractNumber | null => {
+    const held = state.frame.values[resolveLiteralRead(value)]
+    return held?.kind === 'number' ? held : null
+  }
+
+  const same = (rawLeft: ValueID, rawRight: ValueID): boolean => {
+    const left = resolveLiteralRead(rawLeft)
+    const right = resolveLiteralRead(rawRight)
+    return left === right || canonicalValueKey(left, context) === canonicalValueKey(right, context)
+  }
+
+  const nonnegative = (value: ValueID): boolean => {
+    const held = heldNumber(value)
+    return held != null && held.lower >= 0 && !held.mayBeNaN
+  }
+
+  const atMost = (rawLeft: ValueID, rawRight: ValueID): boolean => {
+    if (remaining <= 0) return false
+    remaining--
+    const left = resolveLiteralRead(rawLeft)
+    const right = resolveLiteralRead(rawRight)
+    if (same(left, right)) return true
+
+    const leftNumber = heldNumber(left)
+    const rightNumber = heldNumber(right)
+    if (leftNumber != null && rightNumber != null
+      && !leftNumber.mayBeNaN && !rightNumber.mayBeNaN
+      && leftNumber.upper <= rightNumber.lower) return true
+
+    const key = `${left}:${right}`
+    const cached = atMostMemo.get(key)
+    if (cached != null) return cached
+    atMostMemo.set(key, false)
+
+    const leftProducer = context.instructionByValue[left]
+    const rightProducer = context.instructionByValue[right]
+    let answer = false
+
+    // The defining operand is the cheapest and most common selection proof:
+    // min(x, y) <= x and x <= max(x, y). Try exact identity before recursive rules.
+    if (leftProducer?.kind === 'minimum') {
+      answer = leftProducer.values.some(operand => same(operand, right))
+    }
+    if (!answer && rightProducer?.kind === 'maximum') {
+      answer = rightProducer.values.some(operand => same(left, operand))
+    }
+
+    // Math.min and Math.max are monotone in corresponding operands. Keeping the written
+    // operand order makes the rule linear and predictable; agents can align equivalent
+    // clamps instead of asking the checker to search permutations.
+    if (leftProducer?.kind === 'minimum' && rightProducer?.kind === 'minimum'
+      && leftProducer.values.length === rightProducer.values.length) {
+      answer = leftProducer.values.every((operand, index) =>
+        atMost(operand, rightProducer.values[index]!))
+    }
+
+    if (!answer && leftProducer?.kind === 'binary'
+      && leftProducer.operator === 'subtract'
+      && nonnegative(leftProducer.right)) {
+      answer = atMost(leftProducer.left, right)
+    }
+    if (!answer && rightProducer?.kind === 'binary' && rightProducer.operator === 'add') {
+      if (nonnegative(rightProducer.right)) answer = atMost(left, rightProducer.left)
+      if (!answer && nonnegative(rightProducer.left)) answer = atMost(left, rightProducer.right)
+    }
+    if (!answer && leftProducer?.kind === 'binary' && leftProducer.operator === 'multiply'
+      && rightProducer?.kind === 'binary' && rightProducer.operator === 'multiply') {
+      const leftForms = [[leftProducer.left, leftProducer.right], [leftProducer.right, leftProducer.left]] as const
+      const rightForms = [[rightProducer.left, rightProducer.right], [rightProducer.right, rightProducer.left]] as const
+      for (const [leftBase, leftFactor] of leftForms) {
+        for (const [rightBase, rightFactor] of rightForms) {
+          if (same(leftFactor, rightFactor)
+            && nonnegative(leftFactor)
+            && atMost(leftBase, rightBase)) answer = true
+        }
+      }
+    }
+
+    // Selection rules come last because expanding every operand is the broadest search.
+    // Direct add/subtract and common-factor proofs above usually identify the written
+    // relationship in one step and preserve the fixed budget for nested clamps.
+    if (!answer && leftProducer?.kind === 'maximum') {
+      answer = leftProducer.values.every(operand => atMost(operand, right))
+    }
+    if (!answer && rightProducer?.kind === 'maximum') {
+      answer = rightProducer.values.some(operand => atMost(left, operand))
+    }
+    if (!answer && leftProducer?.kind === 'minimum') {
+      answer = leftProducer.values.some(operand => atMost(operand, right))
+    }
+    if (!answer && rightProducer?.kind === 'minimum') {
+      answer = rightProducer.values.every(operand => atMost(left, operand))
+    }
+
+    atMostMemo.set(key, answer)
+    return answer
+  }
+
+  const strictlyBelow = (rawLeft: ValueID, rawRight: ValueID): boolean => {
+    if (remaining <= 0) return false
+    remaining--
+    const left = resolveLiteralRead(rawLeft)
+    const right = resolveLiteralRead(rawRight)
+    const leftNumber = heldNumber(left)
+    const rightNumber = heldNumber(right)
+    if (leftNumber != null && rightNumber != null
+      && !leftNumber.mayBeNaN && !rightNumber.mayBeNaN
+      && leftNumber.upper < rightNumber.lower) return true
+
+    const producer = context.instructionByValue[left]
+    if (producer?.kind !== 'binary' || producer.operator !== 'remainder'
+      || !same(producer.right, right)) return false
+    const divisor = heldNumber(producer.right)
+    return divisor != null && !divisor.mayBeNaN && divisor.lower > 0
+  }
+
+  return {same, atMost, strictlyBelow}
 }
 
 function compareNumbers(left: AbstractNumber, right: AbstractNumber, operator: ComparisonOperator): AbstractBoolean {
