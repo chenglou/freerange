@@ -21,7 +21,7 @@ export function springStep(s: Spring): Spring {
   const acceleration = -stiffness * (s.pos - s.dest) - damping * s.v
   const v = s.v + acceleration * t
   const pos = s.pos + v * t
-  return {...s, pos, v}
+  return {pos, dest: s.dest, v}
 }
 
 export function springDone(s: Spring): boolean {

@@ -442,6 +442,7 @@ function guidesForUnsupportedReason(reason: UnsupportedReason): RefactorGuideID[
     case 'objectPropertyForm':
     case 'computedPropertyName':
     case 'spreadAfterProperties':
+    case 'spreadOfExternalRecord':
     case 'asyncOrGeneratorFunction':
     case 'typePredicate':
     case 'protoProperty':

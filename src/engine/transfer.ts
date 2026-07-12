@@ -739,10 +739,11 @@ function refineForSentinel(
 // frame[id] := refined, then rebuild the enclosing value when id was produced by a
 // structural read, recursively — later reads see the narrowed value. Property reads
 // rebuild the record (and chase through a freshly built record into the value that went
-// in: narrowing {...grid}.columns narrows grid.columns, since the copy's property IS the
-// original's); length reads rebuild the array's length interval. Every write MEETS the
-// destination's current value — a refinement of a stale read must not widen a fresher
-// narrowing already sitting in the record.
+// in: with `const copy = {columns: grid.columns}`, narrowing copy.columns narrows
+// grid.columns, since the copy's property IS the stored grid.columns read); length reads
+// rebuild the array's length interval. Every write MEETS the destination's current value
+// — a refinement of a stale read must not widen a fresher narrowing already sitting in
+// the record.
 function writeThroughProducers(
   state: ExecutionState,
   id: ValueID,

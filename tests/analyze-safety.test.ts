@@ -608,25 +608,43 @@ describe('acceptance and module safety', () => {
       .toEqual(['return is a finite number at least 10'])
   })
 
-  test('object spread reads the source shape with later entries overriding', () => {
-    // The update idiom of the immutable subset: rebuild with spread, override what changed.
+  test('object spread is confined to local literals; the update idiom spells its fields', () => {
+    // Object spread copies only OWN enumerable properties, so a spread of a record built
+    // outside the function rejects: a conforming caller can hold the declared properties
+    // on a getter or the prototype and the copy comes out empty (see the values tests for
+    // the falsification shape). The update idiom rebuilds with explicit fields instead. A
+    // spread of a LOCAL literal stays accepted — its own-property layout is known — with
+    // later entries overriding.
     const report = analyzeSource('spread.ts', `
       type Spring = {pos: number; dest: number; v: number}
-      export function settle(s: Spring): Spring {
+      export function settleSpread(s: Spring): Spring {
         return {...s, pos: s.dest, v: 0}
       }
-      export function merged(a: {x: number}, b: {x: number; y: number}): number {
+      export function settle(s: Spring): Spring {
+        return {pos: s.dest, dest: s.dest, v: 0}
+      }
+      export function overridden(): number {
+        const defaults = {width: 300, height: 200}
+        const sized = {...defaults, width: 150}
+        return sized.width + sized.height
+      }
+      export function merged(b: {x: number; y: number}): number {
+        const a = {x: 1}
         const both = {...a, ...b}
         return Math.min(both.x, both.y)
       }
     `)
+    expect(report.functions.find(candidate => candidate.name === 'settleSpread')?.kind).toBe('unsupported')
+    expect(formatReport(report)).toContain('a spread of a record built outside this function (object spread copies only own enumerable properties, and a conforming value can hold its properties on a getter or the prototype, leaving the copy empty; if the intention is to build exactly the declared record shape, list its fields explicitly, e.g. {gain: config.gain} instead of {...config})')
     expect(analyzedFunction(report, 'settle').ensures).toEqual([
       'return.pos is a finite number',
       'return.dest is a finite number',
       'return.v is a finite integer number from 0 through 0',
     ])
-    // The second spread rejects: at runtime it also copies properties b's type never
-    // names, which could override entries from a.
+    expect(analyzedFunction(report, 'overridden').ensures)
+      .toEqual(['return is a finite integer number from 350 through 350'])
+    // The second spread rejects even over a local first spread: at runtime it also
+    // copies properties b's type never names, which could override entries from a.
     const mergedFn = report.functions.find(candidate => candidate.name === 'merged')
     expect(mergedFn?.kind).toBe('unsupported')
     expect(formatReport(report)).toContain('a spread after other entries (the spread value can carry extra properties that override earlier entries at runtime; write the spread first, then override with explicit properties)')

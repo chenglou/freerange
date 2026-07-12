@@ -195,7 +195,7 @@ describe('tagged unions and narrowing', () => {
         return measureFrame({...template, width: 200})
       }
       export function rebuildKeepsPin(frame: Frame): Frame {
-        if (frame.kind === 'lightbox') { return {...frame, width: frame.width + 4} }
+        if (frame.kind === 'lightbox') { return {kind: frame.kind, width: frame.width + 4} }
         return frame
       }
       type Mixed = {ok: boolean; x: number} | {ok: false; y: number}
@@ -228,8 +228,9 @@ describe('tagged unions and narrowing', () => {
     expect(report.functions.find(fn => fn.name === 'launderCondition')?.kind).toBe('partial')
     // The tag pin is value-driven (known string content / exact booleans), so no
     // type-channel spelling — direct cast, quoted key, spread of a cast-tagged template —
-    // can pin a variant the runtime tag does not hold, while the rebuild idiom keeps its
-    // pin through the declared variant's exact tag value.
+    // can pin a variant the runtime tag does not hold, while the explicit rebuild
+    // {kind: frame.kind, ...} keeps its pin through the declared variant's exact tag
+    // value (the narrowed union's tag read carries the value itself).
     expect(report.functions.find(fn => fn.name === 'launderTag')?.kind).toBe('partial')
     expect(report.functions.find(fn => fn.name === 'launderQuotedTag')?.kind).toBe('partial')
     expect(report.functions.find(fn => fn.name === 'launderSpreadTag')?.kind).toBe('partial')
@@ -250,9 +251,9 @@ describe('tagged unions and narrowing', () => {
     // Round-1 findings: (1) joining a state with itself paired same-tag variants by tag
     // alone and intersected away the property an in-check needs — variants now pair by
     // tag AND property-name shape, so the article branch stays reachable; (2) the rebuild
-    // idiom {...frame, width: ...} and a preset annotated as one member shape used to
-    // throw at the join — the literal's own checked type now names the variant, and a
-    // record meeting a union degrades to the shared hull instead of crashing.
+    // idiom {type: frame.type, width: ...} and a preset annotated as one member shape
+    // used to throw at the join — the literal's own checked type now names the variant,
+    // and a record meeting a union degrades to the shared hull instead of crashing.
     const report = analyzeSource('union-round1.ts', `
       type Updates = {type: 'updates'; tab: number} | {type: 'updates'; article: number}
       export function badgeJoined(route: Updates, verbose: boolean): number {
@@ -263,7 +264,7 @@ describe('tagged unions and narrowing', () => {
       }
       type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
       export function widen(frame: Frame): Frame {
-        if (frame.type === 'sidebar') { return {...frame, width: frame.width + 40} }
+        if (frame.type === 'sidebar') { return {type: frame.type, width: frame.width + 40} }
         return frame
       }
       const sidebarPreset: {type: 'sidebar'; width: number} = {type: 'sidebar', width: 200}

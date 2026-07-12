@@ -151,22 +151,23 @@ describe('arrays and declared values', () => {
     expect(formatReport(report)).toContain(`reads an element provably outside the array (at ${file}:21:16)`)
   })
 
-  test('nullish parameters and spread copies stay nameable in requirements', () => {
+  test('nullish parameters and explicit-field copies stay nameable in requirements', () => {
     const report = analyzeSource('nameable.ts', `
       export function rate(total: number, interval: number | null): number {
         if (interval !== null) { return total / interval }
         return 0
       }
-      export function throughSpread(grid: {columns: number}, width: number): number {
-        const copy = {...grid}
+      export function throughCopyFields(grid: {columns: number}, width: number): number {
+        const copy = {columns: grid.columns}
         return width / copy.columns
       }
     `)
     const file = 'nameable.ts'
     expect(analyzedFunction(report, 'rate').requires)
       .toEqual([`interval is nonzero (division at ${file}:3:41)`])
-    // The record is immutable, so {...grid}.columns IS grid.columns.
-    expect(analyzedFunction(report, 'throughSpread').requires)
+    // copy.columns resolves through the local literal to the grid.columns read stored at
+    // construction, so the requirement names grid.columns, which the caller can satisfy.
+    expect(analyzedFunction(report, 'throughCopyFields').requires)
       .toEqual([`grid.columns is nonzero (division at ${file}:8:16)`])
   })
 
@@ -192,6 +193,17 @@ describe('arrays and declared values', () => {
         }
         return 0
       }
+      export function throughCopyFields(grid: {columns: number}): number {
+        const copy = {columns: grid.columns}
+        if (copy.columns >= 1) {
+          return 100 / grid.columns
+        }
+        return 0
+      }
+      export function spreadDoubled(box: {gain: number}): number {
+        const copy = {...box}
+        return copy.gain + copy.gain
+      }
       export function distinguish(setting: number | null | undefined): number {
         if (setting == null) {
           if (setting === undefined) return 1
@@ -212,9 +224,21 @@ describe('arrays and declared values', () => {
     const lost = analyzedFunction(report, 'lostNarrowing')
     expect(lost.requires).toEqual([])
     expect(lost.ensures).toEqual(['return is a finite number from 0 through 100'])
-    // Narrowing {...grid}.columns narrows grid.columns — the copy's property IS the
-    // original's.
-    const copied = analyzedFunction(report, 'throughCopy')
+    // A spread of a parameter record rejects: object spread copies only own enumerable
+    // properties, and a structurally conforming caller can hold the declared property on
+    // a getter or the prototype — `class NumberBox { get gain(): number { return 10 } }`
+    // is strict-tsc clean with zero casts — so `{...box}` stores nothing and copy.gain is
+    // undefined at runtime. spreadDoubled pins the falsification shape: off the empty
+    // copy, copy.gain + copy.gain is NaN, while the spread's modeled per-property reads
+    // published a non-NaN ensures. throughCopy pins the guarded spelling, rejected for
+    // the same reason.
+    expect(report.functions.find(fn => fn.name === 'throughCopy')?.kind).toBe('unsupported')
+    expect(report.functions.find(fn => fn.name === 'spreadDoubled')?.kind).toBe('unsupported')
+    expect(formatReport(report)).toContain('a spread of a record built outside this function')
+    // The explicit-fields twin is the supported spelling: the grid.columns read genuinely
+    // happens and stores a real value, narrowing copy.columns narrows grid.columns (the
+    // copy's property IS the stored read), and the guard discharges the division.
+    const copied = analyzedFunction(report, 'throughCopyFields')
     expect(copied.requires).toEqual([])
     expect(copied.ensures).toEqual(['return is a finite number from 0 through 100'])
     // A pure-sentinel operand (null | undefined after the outer narrow) still checks, and

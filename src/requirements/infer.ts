@@ -98,8 +98,10 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       case 'arrayLength': return null
       case 'property': {
         // A read through a freshly built record resolves to the value that went in — the
-        // record is immutable, so `{...grid}.columns` IS grid.columns. This keeps spread
-        // copies nameable: dividing by copy.columns still requires grid.columns nonzero.
+        // record is immutable, so with `const copy = {columns: grid.columns}`,
+        // copy.columns IS the grid.columns read stored at construction. This keeps
+        // explicit-field copies nameable: dividing by copy.columns still requires
+        // grid.columns nonzero.
         const producer = context.instructionByValue[instruction.object]
         if (producer?.kind === 'object') {
           const source = producer.properties.find(property => property.name === instruction.property)

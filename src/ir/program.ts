@@ -74,6 +74,14 @@ export type UnsupportedReason =
   | {kind: 'objectPropertyForm'}
   | {kind: 'computedPropertyName'}
   | {kind: 'spreadAfterProperties'}
+  // A spread whose source is not a record literal built in this function — a parameter, a
+  // module binding, a call result. Object spread copies only OWN enumerable properties,
+  // so a conforming value holding its properties on a getter or the prototype leaves the
+  // copy empty — copy.gain is undefined at runtime — while the lowering modeled the
+  // spread as one genuine read per declared property. The explicit-fields spelling
+  // {gain: config.gain} is the supported rewrite: each read genuinely happens, repairing
+  // the JavaScript itself, not just the analysis.
+  | {kind: 'spreadOfExternalRecord'}
   | {kind: 'asyncOrGeneratorFunction'}
   | {kind: 'typePredicate'}
   | {kind: 'protoProperty'}
@@ -130,7 +138,7 @@ export type UnsupportedReason =
   | {kind: 'assignmentInValuePosition'}
   // A write into an object, e.g. `config.pos = 1` or `count.total += n`. Values are
   // immutable after construction (owner-locked): update state by rebinding a variable to a
-  // fresh object, e.g. `config = {...config, pos: 1}`.
+  // fresh object with explicit fields, e.g. `config = {pos: 1, dest: config.dest}`.
   | {kind: 'propertyWrite'}
   | {kind: 'forLoopWithoutCondition'}
   | {kind: 'forLoopWithoutIncrementor'}
@@ -238,9 +246,9 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
 // Inside a declared variant, the tag property holds exactly its tag value — the string
 // content or the pinned boolean — rather than the walked hedge. This is what lets the
 // rebuild idiom keep its variant: after `frame.type === 'sidebar'` narrows the union,
-// `{...frame, width}` copies a tag whose VALUE still says 'sidebar', and the engine's
-// object arm pins from that value (an unnarrowed multi-variant union joins its tags to
-// bare opaque or an unknown boolean, so nothing pins — correctly).
+// `{type: frame.type, width}` reads a tag whose VALUE still says 'sidebar', and the
+// engine's object arm pins from that value (an unnarrowed multi-variant union joins its
+// tags to bare opaque or an unknown boolean, so nothing pins — correctly).
 function exactTagValue(tagValue: string | boolean): AbstractValue {
   if (typeof tagValue === 'string') return {kind: 'opaque', content: tagValue}
   return {kind: 'boolean', canBeTrue: tagValue, canBeFalse: !tagValue}

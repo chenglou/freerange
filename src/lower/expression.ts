@@ -124,6 +124,34 @@ export function lowerStatementExpression(expression: ts.Expression, context: Fun
   lowerExpression(expression, context)
 }
 
+// Instructions lowered so far, indexed by result ValueID — the same producer table the
+// engine builds after sealing, assembled mid-lowering so the spread gate below can chase
+// a spread source through record literals. Block parameters have no producer and index
+// as undefined, which classifies them as not-a-literal, the conservative side.
+function producersByValue(context: FunctionContext): Array<InstructionIR | undefined> {
+  const producers: Array<InstructionIR | undefined> = []
+  for (const block of context.blocks) {
+    for (const instruction of block.instructions) producers[instruction.result] = instruction
+  }
+  return producers
+}
+
+// Resolves a value through property reads of record literals built in this function:
+// with `const wrapper = {inner: {x: 1}}`, the read wrapper.inner resolves to the inner
+// literal. Anything else — a parameter, a module binding, a call result — resolves to
+// itself.
+function resolveThroughRecordLiterals(value: ValueID, producers: Array<InstructionIR | undefined>): ValueID {
+  const producer = producers[value]
+  if (producer?.kind !== 'property') return value
+  const resolvedObject = resolveThroughRecordLiterals(producer.object, producers)
+  const objectProducer = producers[resolvedObject]
+  if (objectProducer?.kind === 'object') {
+    const source = objectProducer.properties.find(property => property.name === producer.property)
+    if (source != null) return resolveThroughRecordLiterals(source.value, producers)
+  }
+  return value
+}
+
 export function lowerExpression(expression: ts.Expression, context: FunctionContext): ValueID {
   const current = unwrap(expression, context.checker)
   if (ts.isNumericLiteral(current)) {
@@ -212,9 +240,9 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         properties.set(name, {name, value: lowerExpression(property.initializer, context)})
         continue
       }
-      // `{...spring, pos: newPos}` — the update idiom of the immutable subset. Every object
-      // has a statically known fixed shape, so a spread is one read per source property;
-      // later entries override earlier ones below.
+      // `{...template, width: 200}` over a record literal built in this function: the
+      // copy's property layout is known exactly, so a spread is one read per source
+      // property; later entries override earlier ones below.
       if (ts.isSpreadAssignment(property)) {
         // The spread must be the literal's first entry. Width subtyping lets the spread
         // value carry properties its static type never names, and the runtime spread
@@ -230,6 +258,21 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           throw unsupported(property, {kind: 'valueType', typeText: context.checker.typeToString(sourceType)})
         }
         const source = lowerExpression(property.expression, context)
+        // The source must resolve to a record literal built in this function. Object
+        // spread copies only OWN enumerable properties, so for a record built elsewhere —
+        // a parameter, a module binding, a call result — a conforming value can hold its
+        // properties on a getter or the prototype and the copy comes out EMPTY:
+        // `class NumberBox { get gain(): number { return 10 } }` satisfies {gain: number}
+        // with zero casts, copy.gain is undefined at runtime, and the per-property reads
+        // lowered below would prove claims that runtime falsifies. The explicit-fields
+        // spelling {gain: config.gain} is the supported rewrite: the read genuinely
+        // happens, repairing the JavaScript itself, not just the analysis. A LOCAL
+        // literal's own-property layout is known exactly, so spreading one stays
+        // accepted.
+        const producers = producersByValue(context)
+        if (producers[resolveThroughRecordLiterals(source, producers)]?.kind !== 'object') {
+          throw unsupported(property, {kind: 'spreadOfExternalRecord'})
+        }
         for (const member of context.checker.getPropertiesOfType(sourceType)) {
           if (member.name === '__proto__') throw unsupported(property, {kind: 'protoProperty'})
           // Each copied property's kind must be representable: a `value: number | boolean`
@@ -252,8 +295,8 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     // returned as Frame) records which variant it builds, so branches building different
     // variants join per tag instead of dropping every mismatched property. The tag VALUE
     // comes from the literal's own checked type, not its syntax, so the rebuild idiom
-    // {...frame, width: frame.width + 40} — where the tag arrives via the spread — is
-    // recognized too.
+    // {type: frame.type, width: frame.width + 40} — where the tag arrives via a property
+    // read of the narrowed union — is recognized too.
     const contextual = context.checker.getContextualType(current)
     // Omitted optionals become explicit undefined values, keeping the invariant that a
     // record value carries every property its static type declares — a join between a

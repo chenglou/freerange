@@ -496,6 +496,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'objectPropertyForm': return 'object property form (use plain data properties: name: value, shorthand, or spread)'
     case 'computedPropertyName': return 'computed object property name'
     case 'spreadAfterProperties': return 'a spread after other entries (the spread value can carry extra properties that override earlier entries at runtime; write the spread first, then override with explicit properties)'
+    case 'spreadOfExternalRecord': return 'a spread of a record built outside this function (object spread copies only own enumerable properties, and a conforming value can hold its properties on a getter or the prototype, leaving the copy empty; if the intention is to build exactly the declared record shape, list its fields explicitly, e.g. {gain: config.gain} instead of {...config})'
     case 'asyncOrGeneratorFunction': return 'an async or generator function (the runtime result is a Promise or iterator, not the body\'s return value)'
     case 'typePredicate': return 'a type predicate (the checker takes the predicate on faith; return a plain boolean and check properties where they are read)'
     case 'protoProperty': return 'a property named __proto__ (prototype-setting syntax at runtime, not a data property)'
