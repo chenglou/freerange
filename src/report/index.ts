@@ -223,7 +223,7 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // that is itself an array or a nullable root (the sentence quantifies over properties
 // IN the root, saying nothing about the root itself), nested element levels (`every
 // prepared.grid element is a plain array — ...` — a genuine outer array can hold a
-// lying inner row, and only the nested line condemns the row), arrays behind a nullable
+// lying inner row, and the nested line is the one such a row violates), arrays behind a nullable
 // record (`options.config is null or options.config.grid is a plain array — ...` — the
 // folded line's unconditional 'holds' would forbid the legal null at config), tuples
 // (see the tuple arm below), and nullable array members themselves. Nullable members
@@ -234,13 +234,13 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // number[]`, which any JSON-derived value does, since serializers write null for
 // absent) satisfied every printed line while a printed ensures was false at runtime.
 // The member's own disjunct line is sentinel-precise — `prepared.overrides is null or
-// prepared.overrides is a plain array — ...` — and condemns the wrong-sentinel smuggle,
+// prepared.overrides is a plain array — ...` — and a wrong-sentinel smuggle violates it,
 // so it always prints, and with no nullable member folded the parenthetical is gone.
 // Review rounds falsified each looser membership the same way: a nullable root folded
 // into a sentence that said nothing about the root, a suppressed nested line let a
 // lying inner row through with every printed line holding, and the unconditional
-// 'holds' condemned a legal null behind a nullable record, vacating the report for
-// legitimate callers.
+// 'holds' was violated by a legal null behind a nullable record, so the whole report
+// stopped applying to legitimate callers.
 function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
   const folds = numberLeafCount(declared) >= 3 && declared.kind !== 'number'
   if (folds) assumptions.push(`every property declared as a number in ${path} holds a finite non-NaN number`)
@@ -383,7 +383,7 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
         // subtree never joins either fold, so every inner line prints exactly — in
         // particular a nullable array member's own disjunct, `overrides is null or
         // overrides is a plain array — ...`, whose named sentinel is the one the engine
-        // seeds and narrows by; the disjunct is what condemns a wrong-sentinel smuggle.
+        // seeds and narrows by; a wrong-sentinel smuggle violates the disjunct.
         const leaf: string[] = []
         pushDeclaredAssumptions(path, declared.inner, leaf, exactLeaves)
         for (const line of leaf) assumptions.push(`${path} is ${sentinelWords} or ${line}`)

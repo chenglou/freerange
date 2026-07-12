@@ -696,6 +696,41 @@ describe('arrays and declared values', () => {
     ])
   })
 
+  test('two direct array properties stay per-property, and nullable members never raise the count', () => {
+    // The fold's counting boundary, pinned from below on both axes. A review round ran
+    // two mutants that survived the whole suite: lowering the threshold to two members,
+    // and letting nullable members raise the count to the threshold. Both changed real
+    // reports (a two-array record gained the folded line; a two-plus-nullable record
+    // folded and suppressed the direct arrays' own lines) with no test failing. The
+    // nullable-count mutant matters beyond presentation: the folded sentence's
+    // unconditional 'holds' would then cover a `number[] | null` property, and a legal
+    // caller passing null violates a printed line — the quantifier-domain failure the
+    // fold history exists to prevent.
+    const report = analyzeSource('fold-boundary.ts', `
+      type Duo = {widths: number[]; heights: number[]}
+      export function duoTotal(layout: Duo): number {
+        return layout.widths.length + layout.heights.length
+      }
+      type DuoPlusNullable = {widths: number[]; heights: number[]; overrides: number[] | null}
+      export function duoPlusTotal(layout: DuoPlusNullable): number {
+        return layout.widths.length + layout.heights.length
+      }
+    `)
+    expect(formatReport(report)).not.toContain('every property declared as an array in')
+    const perProperty = [
+      'layout.widths is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every layout.widths element is finite and not NaN',
+      'layout.heights is a plain array — its length counts its elements, and every index below the length holds an element',
+      'every layout.heights element is finite and not NaN',
+    ]
+    expect(analyzedFunction(report, 'duoTotal').assumptions).toEqual(perProperty)
+    expect(analyzedFunction(report, 'duoPlusTotal').assumptions).toEqual([
+      ...perProperty,
+      'layout.overrides is null or layout.overrides is a plain array — its length counts its elements, and every index below the length holds an element',
+      'layout.overrides is null or every layout.overrides element is finite and not NaN',
+    ])
+  })
+
   test('a mixed root prints the number fold and the array fold with disjoint membership', () => {
     // Three or more number leaves and three or more direct array properties on one
     // record: both folded sentences print, and each covers only what it names — the
