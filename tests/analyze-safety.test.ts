@@ -609,16 +609,35 @@ describe('acceptance and module safety', () => {
   })
 
   test('object spread is confined to local literals; the update idiom spells its fields', () => {
-    // Object spread copies only OWN enumerable properties, so a spread of a record built
-    // outside the function rejects: a conforming caller can hold the declared properties
-    // on a getter or the prototype and the copy comes out empty (see the values tests for
-    // the falsification shape). The update idiom rebuilds with explicit fields instead. A
-    // spread of a LOCAL literal stays accepted — its own-property layout is known — with
-    // later entries overriding.
+    // Object spread copies only OWN enumerable properties, so a spread rejects unless the
+    // source is traced to a record literal built in this function: an external record can
+    // hold the declared properties on a getter or the prototype and the copy comes out
+    // empty (see the values tests for the falsification shape), and a local record
+    // reassigned across branches has no single literal to trace to. The update idiom
+    // rebuilds with explicit fields instead. A spread of a LOCAL literal stays accepted —
+    // its own-property layout is known — with later entries overriding.
     const report = analyzeSource('spread.ts', `
       type Spring = {pos: number; dest: number; v: number}
+      const defaultSpring = {pos: 0, dest: 0, v: 0}
+      function makeSpring(): Spring {
+        return {pos: 0, dest: 0, v: 0}
+      }
       export function settleSpread(s: Spring): Spring {
         return {...s, pos: s.dest, v: 0}
+      }
+      export function settleModuleSpread(): Spring {
+        return {...defaultSpring, v: 1}
+      }
+      export function settleCallSpread(): Spring {
+        return {...makeSpring(), v: 1}
+      }
+      export function settleRebound(flag: boolean): number {
+        let spring = {pos: 1}
+        if (flag) {
+          spring = {pos: 2}
+        }
+        const copy = {...spring}
+        return copy.pos
       }
       export function settle(s: Spring): Spring {
         return {pos: s.dest, dest: s.dest, v: 0}
@@ -635,7 +654,18 @@ describe('acceptance and module safety', () => {
       }
     `)
     expect(report.functions.find(candidate => candidate.name === 'settleSpread')?.kind).toBe('unsupported')
-    expect(formatReport(report)).toContain('a spread of a record built outside this function (object spread copies only own enumerable properties, and a conforming value can hold its properties on a getter or the prototype, leaving the copy empty; if the intention is to build exactly the declared record shape, list its fields explicitly, e.g. {gain: config.gain} instead of {...config})')
+    // The boundary has three external source clauses — a parameter (settleSpread), a
+    // module binding (settleModuleSpread), a call result (settleCallSpread) — and each
+    // needs its own pin: a gate weakened to reject only producer-less sources kept the
+    // whole suite green while re-admitting module-binding spreads, the exact getter
+    // falsification the rule exists to prevent.
+    expect(report.functions.find(candidate => candidate.name === 'settleModuleSpread')?.kind).toBe('unsupported')
+    expect(report.functions.find(candidate => candidate.name === 'settleCallSpread')?.kind).toBe('unsupported')
+    // A local record reassigned across branches is built in the function but cannot be
+    // traced to one literal (the join has no producer), so the spread rejects on the
+    // conservative side — and the message must stay honest about that trigger too.
+    expect(report.functions.find(candidate => candidate.name === 'settleRebound')?.kind).toBe('unsupported')
+    expect(formatReport(report)).toContain('a spread of a record the analysis cannot trace to a record literal built in this function (an external record — a parameter, a module binding, a call result — can hold its properties on a getter or the prototype, and object spread copies only own enumerable properties, leaving such a copy empty; a local record reassigned across branches or loop iterations also cannot be traced; to build exactly the declared record shape, list the fields explicitly, e.g. {gain: config.gain} instead of {...config})')
     expect(analyzedFunction(report, 'settle').ensures).toEqual([
       'return.pos is a finite number',
       'return.dest is a finite number',

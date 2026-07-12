@@ -204,6 +204,11 @@ describe('arrays and declared values', () => {
         const copy = {...box}
         return copy.gain + copy.gain
       }
+      export function fromNestedLiteral(): number {
+        const wrapper = {inner: {x: 1}}
+        const copy = {...wrapper.inner}
+        return copy.x + 2
+      }
       export function distinguish(setting: number | null | undefined): number {
         if (setting == null) {
           if (setting === undefined) return 1
@@ -234,13 +239,19 @@ describe('arrays and declared values', () => {
     // the same reason.
     expect(report.functions.find(fn => fn.name === 'throughCopy')?.kind).toBe('unsupported')
     expect(report.functions.find(fn => fn.name === 'spreadDoubled')?.kind).toBe('unsupported')
-    expect(formatReport(report)).toContain('a spread of a record built outside this function')
+    expect(formatReport(report)).toContain('a spread of a record the analysis cannot trace to a record literal built in this function')
     // The explicit-fields twin is the supported spelling: the grid.columns read genuinely
     // happens and stores a real value, narrowing copy.columns narrows grid.columns (the
     // copy's property IS the stored read), and the guard discharges the division.
     const copied = analyzedFunction(report, 'throughCopyFields')
     expect(copied.requires).toEqual([])
     expect(copied.ensures).toEqual(['return is a finite number from 0 through 100'])
+    // The trace chases property reads through local literals: wrapper.inner resolves to
+    // the inner literal, so spreading it stays accepted. Replacing the chase with the
+    // identity function used to survive the whole suite; this pin is what kills that
+    // over-rejecting mutant.
+    expect(analyzedFunction(report, 'fromNestedLiteral').ensures)
+      .toEqual(['return is a finite integer number from 3 through 3'])
     // A pure-sentinel operand (null | undefined after the outer narrow) still checks, and
     // typeof x !== 'undefined' is the classic spelling of the undefined sentinel check.
     expect(analyzedFunction(report, 'distinguish').ensures)
