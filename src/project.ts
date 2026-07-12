@@ -1,24 +1,18 @@
-// Project commands load the nearest TypeScript project and its declared references once,
-// analyze every type-correct source file, and render either lint findings or a concise
-// refactoring index. Detailed contracts remain available through targeted file commands.
+// The two commands load the nearest TypeScript project and its declared references once
+// and analyze type-correct source files. `fr [file]` prints lint findings — the CI gate —
+// and `fr --audit [file]` prints the deep layer: every function's contracts plus
+// refactoring suggestions. Each command's file version is the project version narrowed to
+// that file: same content kinds, same line formats, one file's slice.
 
 import {existsSync} from 'node:fs'
 import {dirname, resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
-import {
-  createFileAudit,
-  formatFileAudit,
-  refactorGuide,
-  type AuditCoverage,
-  type AuditReference,
-  type FileAudit,
-} from './audit.ts'
+import {auditPreamble, createFileAudit, formatFileAuditUnit} from './audit.ts'
 import type {FunctionAnalysis} from './engine/outcome.ts'
 import type {SiteID} from './ir/ids.ts'
 import {reportPath, siteLocation} from './ir/program.ts'
 import {describePrecondition, type PreconditionOperation} from './report/format-requirement.ts'
-import {createReport, formatReport} from './report/index.ts'
 import {checkFile} from './typescript/check.ts'
 import {formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
 import {
@@ -68,33 +62,51 @@ type ProjectScan = {
   pretty: boolean
 }
 
-export function runProject(searchFrom: string): boolean {
+// `fr`: every file's lint findings plus project coverage. Findings are the CI gate, so
+// the returned failure covers error-level findings as well as TypeScript errors.
+export function runProjectFindings(searchFrom: string): boolean {
   const scan = analyzeProject(searchFrom)
   const findings = scan.files.flatMap(collectLintFindings)
     .sort((left, right) =>
       left.file.localeCompare(right.file) || left.line - right.line || left.column - right.column)
-  console.log(formatProjectLint(findings, scan.coverage, scan.pretty))
-  return scan.hasTypeScriptErrors
+  console.log(formatFindings(findings, scan.coverage, scan.pretty))
+  return scan.hasTypeScriptErrors || findings.some(finding => lintLevel(finding) === 'error')
 }
 
+// `fr <file>`: the project findings narrowed to one file — the same finding lines a
+// project run prints for the file, with the file's own coverage counts.
+export function runFileFindings(file: string): boolean {
+  const target = analyzeTargetFile(file)
+  if (target == null) return true
+  const findings = collectLintFindings(target.detailed)
+    .sort((left, right) => left.line - right.line || left.column - right.column)
+  console.log(formatFindings(findings, fileCoverage(target.detailed), target.pretty))
+  return findings.some(finding => lintLevel(finding) === 'error')
+}
+
+// `fr --audit`: the deep layer at project scope. One unit per file — contracts, then
+// refactoring suggestions — with the explanatory prose once at the top and project
+// coverage once at the end. The units all come from the one shared project analysis;
+// nothing here creates a per-file TypeScript program. Audit output is informational: the
+// returned failure only signals TypeScript errors.
 export function runProjectAudit(searchFrom: string): boolean {
   const scan = analyzeProject(searchFrom)
   const audits = scan.files.map(createFileAudit)
-  console.log(formatProjectAudit(audits, scan.coverage, scan.pretty))
+    .sort((left, right) => left.file.localeCompare(right.file))
+  console.log([
+    auditPreamble,
+    ...audits.map(formatFileAuditUnit),
+    formatCoverage(scan.coverage),
+  ].join('\n\n'))
   return scan.hasTypeScriptErrors
 }
 
-export function runFile(file: string): boolean {
-  const detailed = analyzeTargetFile(file)
-  if (detailed == null) return true
-  console.log(formatReport(createReport(detailed.program, detailed.analysis)))
-  return false
-}
-
-export function runAudit(file: string): boolean {
-  const detailed = analyzeTargetFile(file)
-  if (detailed == null) return true
-  console.log(formatFileAudit(createFileAudit(detailed)))
+// `fr --audit <file>`: exactly one file's unit under the same preamble — a literal slice
+// of the project audit.
+export function runFileAudit(file: string): boolean {
+  const target = analyzeTargetFile(file)
+  if (target == null) return true
+  console.log([auditPreamble, formatFileAuditUnit(createFileAudit(target.detailed))].join('\n\n'))
   return false
 }
 
@@ -129,12 +141,10 @@ function analyzeProject(searchFrom: string): ProjectScan {
 
     const detailed = analyzeProjectSource(source, process.cwd())
     files.push(detailed)
-    const fileFunctions = detailed.analysis.functions
-    for (const fn of fileFunctions) {
-      if (fn.kind === 'analyzed') analyzed++
-      else if (fn.kind === 'partial') partial++
-      else unsupported++
-    }
+    const perFile = fileCoverage(detailed)
+    analyzed += perFile.analyzed
+    partial += perFile.partial
+    unsupported += perFile.unsupported
   }
 
   return {
@@ -218,7 +228,9 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
   return findings
 }
 
-function formatProjectLint(findings: LintFinding[], coverage: ProjectCoverage, pretty: boolean): string {
+// Project and file findings share this format: with a file argument, the output is the
+// project output narrowed to the file, so only the coverage counts differ.
+function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pretty: boolean): string {
   const lines: string[] = []
   for (const finding of findings) lines.push(...formatLintFinding(finding, pretty))
 
@@ -230,9 +242,30 @@ function formatProjectLint(findings: LintFinding[], coverage: ProjectCoverage, p
     '',
     `${findings.length} finding${findings.length === 1 ? '' : 's'} (${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'}, ${notes} note${notes === 1 ? '' : 's'}).`,
     formatCoverage(coverage),
-    'Lint findings come only from analyzed paths. Run `fr --audit` for recognized refactoring patterns or `fr <file>` for exact contracts.',
+    'Lint findings come only from analyzed paths. Run `fr --audit [file]` for every function\'s contracts and refactoring suggestions.',
   )
   return lines.join('\n')
+}
+
+// The findings-mode coverage counts for one file, in the same shape project coverage
+// uses; a file that reaches this point has no TypeScript errors, so nothing was skipped.
+function fileCoverage(detailed: DetailedAnalysis): ProjectCoverage {
+  const coverage = {
+    files: 1,
+    typeErrorFiles: 0,
+    functions: detailed.analysis.functions.length,
+    analyzed: 0,
+    partial: 0,
+    unsupported: 0,
+  }
+  for (const fn of detailed.analysis.functions) {
+    switch (fn.kind) {
+      case 'analyzed': coverage.analyzed++; break
+      case 'partial': coverage.partial++; break
+      case 'notLowered': coverage.unsupported++; break
+    }
+  }
+  return coverage
 }
 
 function formatLintFinding(finding: LintFinding, pretty: boolean): string[] {
@@ -295,80 +328,6 @@ function color(code: number, text: string | number): string {
   return `\u001B[${code}m${text}\u001B[0m`
 }
 
-function formatProjectAudit(audits: FileAudit[], coverage: ProjectCoverage, pretty: boolean): string {
-  const matched = audits
-    .map(audit => ({
-      audit,
-      matches: groupAuditReferences(audit.references),
-    }))
-    .filter(entry => entry.matches.length > 0)
-    .sort((left, right) => left.audit.file.localeCompare(right.audit.file))
-  const matchCount = matched.reduce((total, entry) => total + entry.matches.length, 0)
-  const lines: string[] = []
-
-  if (matched.length === 0) {
-    lines.push('No recognized refactoring patterns matched.')
-  } else {
-    for (let index = 0; index < matched.length; index++) {
-      const {audit, matches} = matched[index]!
-      if (index > 0) lines.push('')
-      lines.push(`${pretty ? color(96, audit.file) : audit.file} (${formatAuditCoverage(audit.coverage)})`)
-      for (const match of matches) lines.push(formatAuditMatch(audit, match, pretty))
-    }
-  }
-
-  lines.push(
-    '',
-    `${matchCount} matched location${matchCount === 1 ? '' : 's'} in ${matched.length} file${matched.length === 1 ? '' : 's'}.`,
-    formatCoverage(coverage),
-    'Only recognized patterns are listed; no suggestion does not mean an unsupported function is safe.',
-    'Run `fr --audit <file>` for that file\'s contracts, examples, and behavior warnings.',
-  )
-  return lines.join('\n')
-}
-
-function formatAuditCoverage(coverage: AuditCoverage): string {
-  const parts = coverage.functions === 0
-    ? ['no named function declarations']
-    : [`${coverage.analyzed}/${coverage.functions} functions fully analyzed`]
-  if (coverage.partial > 0) parts.push(`${coverage.partial} partial`)
-  if (coverage.unsupported > 0) parts.push(`${coverage.unsupported} unsupported`)
-  if (coverage.initializer !== 'analyzed') parts.push(`module setup ${coverage.initializer}`)
-  if (coverage.initializerSkips > 0) {
-    parts.push(`${coverage.initializerSkips} module statement${coverage.initializerSkips === 1 ? '' : 's'} skipped`)
-  }
-  return parts.join('; ')
-}
-
-function groupAuditReferences(references: AuditReference[]): AuditReference[] {
-  const matches: AuditReference[] = []
-  for (const reference of references) {
-    if (reference.guideIDs.length === 0) continue
-    // createFileAudit sorts by span, so references for one location are adjacent.
-    const previous = matches.at(-1)
-    if (previous == null
-      || previous.span.start !== reference.span.start
-      || previous.span.end !== reference.span.end) {
-      matches.push({...reference, guideIDs: [...reference.guideIDs]})
-      continue
-    }
-    for (const guideID of reference.guideIDs) {
-      if (!previous.guideIDs.includes(guideID)) previous.guideIDs.push(guideID)
-    }
-  }
-  return matches
-}
-
-function formatAuditMatch(audit: FileAudit, reference: AuditReference, pretty: boolean): string {
-  const locationPrefix = `${audit.file}:`
-  const location = reference.location.startsWith(locationPrefix)
-    ? reference.location.slice(locationPrefix.length)
-    : reference.location
-  const guides = reference.guideIDs.map(refactorGuide)
-  const guideLabel = `[${reference.guideIDs.join(', ')}]`
-  return `  ${pretty ? color(93, location) : location}  ${reference.functionName}: ${guides.map(guide => guide.title).join('; also consider ')}  ${pretty ? color(90, guideLabel) : guideLabel}`
-}
-
 function formatCoverage(coverage: ProjectCoverage): string {
   return `coverage: ${coverage.analyzed}/${coverage.functions} named top-level function declarations fully analyzed; ${coverage.partial} partial; ${coverage.unsupported} unsupported; ${coverage.typeErrorFiles}/${coverage.files} project files skipped for TypeScript errors.`
 }
@@ -384,13 +343,20 @@ function sameCallerContracts(left: CallerContract[], right: CallerContract[]): b
   return true
 }
 
-function analyzeTargetFile(file: string): DetailedAnalysis | null {
+// A target file analyzed on its own, with the output styling its project configures.
+// null means the file has TypeScript errors (already printed) and cannot be analyzed.
+type TargetFile = {detailed: DetailedAnalysis; pretty: boolean}
+
+function analyzeTargetFile(file: string): TargetFile | null {
   const absoluteFile = resolve(file)
   if (!existsSync(absoluteFile)) throw new Error(`File not found: ${absoluteFile}`)
   const configPath = findTypeScriptConfig(dirname(absoluteFile))
   if (configPath == null) {
     try {
-      return analyzeCheckedSource(checkFile(absoluteFile), process.cwd())
+      return {
+        detailed: analyzeCheckedSource(checkFile(absoluteFile), process.cwd()),
+        pretty: usePrettyOutput(),
+      }
     } catch (error) {
       if (!(error instanceof TypeScriptDiagnosticsError)) throw error
       printTypeScriptDiagnostics(error.diagnostics, error.options, process.cwd())
@@ -404,7 +370,10 @@ function analyzeTargetFile(file: string): DetailedAnalysis | null {
   const diagnostics = ts.getPreEmitDiagnostics(source.project.program, source.sourceFile)
   printTypeScriptDiagnostics(diagnostics, source.project.parsed.options, process.cwd())
   if (hasErrorDiagnostics(diagnostics)) return null
-  return analyzeProjectSource(source, process.cwd())
+  return {
+    detailed: analyzeProjectSource(source, process.cwd()),
+    pretty: usePrettyOutput(source.project.parsed.options['pretty']),
+  }
 }
 
 type CollectedProjectDiagnostics = {

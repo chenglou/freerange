@@ -18,6 +18,6 @@ export function auditSource(file: string, source: string): FileAudit {
 }
 
 export {formatReport} from './report/index.ts'
-export {formatFileAudit, refactorGuide, refactorGuides} from './audit.ts'
+export {auditPreamble, formatFileAuditUnit, refactorGuide, refactorGuides} from './audit.ts'
 export type {AuditCoverage, AuditReason, AuditReference, FileAudit, RefactorGuide, RefactorGuideID} from './audit.ts'
 export type {AnalysisReport} from './report/index.ts'

@@ -109,10 +109,11 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
 }
 
 // The legend targets a reader — usually another model — that has never seen a freerange
-// report: each line kind in one sentence, so the report is self-describing. Exported so
-// project runs (the survey) can write it ONCE per run instead of per file — it was 28% of
-// the report corpus, and every reader learned to skip it.
-export const reportLegend = [
+// report: each line kind in one sentence, so the report is self-describing. Audit runs
+// skip it (legend: false) because the audit preamble explains the same line kinds in
+// prose, once per run — the legend was 28% of the per-file report corpus, and every
+// reader learned to skip it.
+const reportLegend = [
   '# freerange: static analysis of the numeric behavior of each top-level function.',
   '# requires: conditions the caller must make true; given them, the ensures lines hold.',
   '# ensures:  guarantees about the returned value whenever the function returns.',

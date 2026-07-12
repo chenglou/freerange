@@ -287,37 +287,49 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
   }
 }
 
-export function formatFileAudit(audit: FileAudit): string {
+// Prose every audit run prints once, above the per-file units: what the analysis covers,
+// what each contract line kind means, and how to treat the refactoring suggestions. Both
+// `fr --audit` and `fr --audit <file>` print it, so a file's unit below stays identical
+// between the two outputs.
+export const auditPreamble = [
+  '# Freerange audit',
+  '',
+  'Freerange tracks number ranges, integer values, NaN, Infinity, and supported branch checks through synchronous named top-level function declarations. It does not guess through unknown calls, callback order, mutation through aliases, or arbitrary algebraic relationships between separately computed values.',
+  '',
+  'Each file below gets one unit: its contracts, then the refactoring suggestions that apply to it. In a contract entry, `requires` are caller conditions; `ensures` hold when the function returns and its `requires` and `assumes` are true; `assumes` are input conditions accepted without proof. An `unsupported` entry names the first construct outside the analyzed subset that blocked the function, so fix one blocker and rerun. `stopped` means analysis halted partway on some path, and `on analyzed paths` is evidence from the paths that completed, not a contract for the whole function. `skipped` marks a top-level statement the module analysis stepped over; values it could write are not trusted.',
+  '',
+  'Refactoring suggestions are conditional examples, not automatic fixes. Apply one only when its "Use when" condition matches the program, then run behavioral tests and the audit again. Only recognized patterns get suggestions; a file with no suggestions and incomplete coverage is not necessarily safe.',
+].join('\n')
+
+function formatAuditCoverage(coverage: AuditCoverage): string {
+  const parts = coverage.functions === 0
+    ? ['no named function declarations']
+    : [`${coverage.analyzed}/${coverage.functions} functions fully analyzed`]
+  if (coverage.partial > 0) parts.push(`${coverage.partial} partial`)
+  if (coverage.unsupported > 0) parts.push(`${coverage.unsupported} unsupported`)
+  if (coverage.initializer !== 'analyzed') parts.push(`module setup ${coverage.initializer}`)
+  if (coverage.initializerSkips > 0) {
+    parts.push(`${coverage.initializerSkips} module statement${coverage.initializerSkips === 1 ? '' : 's'} skipped`)
+  }
+  return parts.join('; ')
+}
+
+// One file's audit unit: a header carrying the file's coverage counts, its contract
+// entries, then its refactoring suggestions — always in that order, under these exact
+// section labels. A planned `fr --check` snapshot mode will diff the contracts portion of
+// each unit, so the contracts section must keep its position and label. `fr --audit
+// <file>` prints one unit; bare `fr --audit` prints one unit per project file; both print
+// auditPreamble once above, which keeps a file's unit identical in the two outputs.
+export function formatFileAuditUnit(audit: FileAudit): string {
   const {coverage} = audit
   const complete = coverage.analyzed === coverage.functions
     && coverage.initializer === 'analyzed'
     && coverage.initializerSkips === 0
-  const lines = [`# Freerange audit: ${audit.file}`, '']
-  if (coverage.functions === 0) {
-    lines.push(coverage.initializerSkips > 0
-      ? 'Freerange found no named top-level function declarations. Other top-level code was skipped as shown below.'
-      : 'This file has no named top-level function declarations to analyze.')
-  } else if (complete) {
-    lines.push(coverage.functions === 1
-      ? 'Freerange fully analyzed the file\'s only named top-level function declaration.'
-      : `Freerange fully analyzed all ${coverage.functions} named top-level function declarations in this file.`)
-  } else {
-    lines.push(`Freerange understood only part of this file: ${coverage.analyzed} fully analyzed, ${coverage.partial} partially analyzed, and ${coverage.unsupported} unsupported out of ${coverage.functions} named top-level function declaration${coverage.functions === 1 ? '' : 's'}.`)
-    lines.push('A partial entry describes only the paths Freerange reached. An unsupported entry names the first construct that blocked that function, so fix one blocker and run the audit again.')
-  }
-  if (coverage.initializer !== 'analyzed' || coverage.initializerSkips > 0) {
-    lines.push(`Module setup was ${coverage.initializer} and skipped ${coverage.initializerSkips} statement${coverage.initializerSkips === 1 ? '' : 's'}. Values those statements could change are not trusted.`)
-  }
-  lines.push(
-    '',
-    'Freerange tracks number ranges, integer values, NaN, Infinity, and supported branch checks through synchronous named top-level function declarations. It does not guess through unknown calls, callback order, mutation through aliases, or arbitrary algebraic relationships between separately computed values.',
-  )
+  const lines = [`# ${audit.file} (${formatAuditCoverage(coverage)})`]
   if (audit.contracts.functions.length > 0) {
     lines.push(
       '',
       '## Contracts',
-      '',
-      '`requires` are caller conditions. `ensures` hold when the function returns and its `requires` and `assumes` are true. `on analyzed paths` is evidence from a partial analysis, not a contract for the whole function.',
       '',
       formatReport(audit.contracts, {legend: false, file: false}),
     )
@@ -326,9 +338,9 @@ export function formatFileAudit(audit: FileAudit): string {
   if (audit.guideIDs.length === 0 && !complete) {
     lines.push(
       '',
-      '## Refactoring guidance',
+      '## Refactoring suggestions',
       '',
-      'No checked refactoring pattern applies automatically to this file. Read the first `unsupported`, `stopped`, or `skipped` line and decide whether that code contains numeric behavior worth analyzing. If it does, isolate the calculation when practical and rerun the audit. An audit with no suggestions and incomplete coverage does not mean the file is safe.',
+      'No checked refactoring pattern applies automatically to this file. Read the first `unsupported`, `stopped`, or `skipped` line and decide whether that code contains numeric behavior worth analyzing. If it does, isolate the calculation when practical and rerun the audit.',
     )
   } else if (audit.guideIDs.length > 0) {
     const primaryGuideIDs: RefactorGuideID[] = []
@@ -339,9 +351,7 @@ export function formatFileAudit(audit: FileAudit): string {
     const secondaryGuideIDs = audit.guideIDs.filter(guideID => !primaryGuideIDs.includes(guideID))
     lines.push(
       '',
-      '## Refactoring patterns to consider',
-      '',
-      'These are conditional examples, not automatic fixes. Apply one only when its "Use when" condition matches the program, then run behavioral tests and this audit again.',
+      '## Refactoring suggestions',
     )
     for (const guideID of primaryGuideIDs) {
       const guide = refactorGuide(guideID)

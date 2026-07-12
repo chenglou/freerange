@@ -1,8 +1,9 @@
 import {expect, test} from 'bun:test'
 import {
   analyzeSource,
+  auditPreamble,
   auditSource,
-  formatFileAudit,
+  formatFileAuditUnit,
   refactorGuide,
   type AnalysisReport,
   type RefactorGuideID,
@@ -207,11 +208,16 @@ test('file audits lead with honest coverage and route only relevant checked patt
     reference.reason.kind === 'unsupported'
     && reference.reason.reason.kind === 'propertyWrite')
   expect(propertyWrite?.guideIDs).toEqual([])
-  const output = formatFileAudit(audit)
-  expect(output).toStartWith('# Freerange audit: layout.ts\n\nFreerange understood only part of this file')
-  expect(output).toContain('A partial entry describes only the paths Freerange reached.')
+  const output = formatFileAuditUnit(audit)
+  expect(output).toStartWith('# layout.ts (2/6 functions fully analyzed; 4 unsupported; 1 module statement skipped)')
+  // Contracts always print before suggestions within a unit; a planned `fr --check`
+  // snapshot mode will diff the contracts portion.
+  expect(output.indexOf('## Contracts')).toBeGreaterThan(0)
+  expect(output.indexOf('## Contracts')).toBeLessThan(output.indexOf('## Refactoring suggestions'))
   expect(output).toContain('### Check the exact divisor')
-  expect(output).toContain('These are conditional examples, not automatic fixes.')
+  // Run-level prose lives in the preamble, printed once per run, never inside a unit.
+  expect(auditPreamble).toContain('conditional examples, not automatic fixes')
+  expect(output).not.toContain('conditional examples, not automatic fixes')
   for (const guideID of [
     'guard-derived-value',
     'write-explicit-condition',
@@ -233,7 +239,7 @@ test('file audits lead with honest coverage and route only relevant checked patt
     }
   `)
   expect(unsupportedWithoutGuide.guideIDs).toEqual([])
-  expect(formatFileAudit(unsupportedWithoutGuide)).toContain('No checked refactoring pattern applies automatically')
+  expect(formatFileAuditUnit(unsupportedWithoutGuide)).toContain('No checked refactoring pattern applies automatically')
 })
 
 test('audit references preserve each propagated requirement payload', () => {
@@ -306,7 +312,7 @@ test('guide routing requires the exact supported operation and value kind', () =
   const provenStop = provenOutOfBounds.references.find(reference =>
     reference.reason.kind === 'stopped' && reference.reason.reason.kind === 'outOfBoundsRead')
   expect(provenStop?.guideIDs).toEqual([])
-  expect(formatFileAudit(provenOutOfBounds)).not.toContain('### Check an asserted array index')
+  expect(formatFileAuditUnit(provenOutOfBounds)).not.toContain('### Check an asserted array index')
 
   const divisorAssumption = audit.references.find(reference =>
     reference.functionName === 'assertedRatio' && reference.reason.kind === 'assumes')
@@ -318,12 +324,12 @@ test('zero function coverage does not claim skipped callable forms are absent', 
     export const width = (value: number): number => value
   `)
   expect(audit.coverage).toMatchObject({functions: 0, initializerSkips: 1})
-  const output = formatFileAudit(audit)
-  expect(output).toContain('Freerange found no named top-level function declarations.')
-  expect(output).not.toContain('no top-level functions')
+  const output = formatFileAuditUnit(audit)
+  expect(output).toStartWith('# arrow.ts (no named function declarations')
+  expect(output).toContain('1 module statement skipped')
   expect(output).toContain('`unsupported`, `stopped`, or `skipped`')
 
-  const constantsOnly = formatFileAudit(auditSource('constants.ts', 'export const width = 24'))
+  const constantsOnly = formatFileAuditUnit(auditSource('constants.ts', 'export const width = 24'))
   expect(constantsOnly).not.toContain('## Contracts')
 })
 
@@ -342,7 +348,7 @@ test('partial audits retain requirements found before a path stopped', () => {
   const observedRequirement = audit.references.find(reference =>
     reference.functionName === 'partial' && reference.reason.kind === 'requires')
   expect(observedRequirement?.guideIDs).toEqual(['guard-derived-value', 'encode-input-rule'])
-  expect(formatFileAudit(audit)).toContain('### Check the exact divisor')
+  expect(formatFileAuditUnit(audit)).toContain('### Check the exact divisor')
 })
 
 test('array callbacks route by structured method kind', () => {

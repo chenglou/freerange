@@ -3,6 +3,7 @@ import {existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs
 import {tmpdir} from 'node:os'
 import {dirname, join} from 'node:path'
 import * as ts from 'typescript'
+import {auditPreamble} from '../src/audit.ts'
 import {formatTypeScriptDiagnostics} from '../src/typescript/diagnostics.ts'
 
 const freerangeCli = new URL('../fr.ts', import.meta.url).pathname
@@ -108,7 +109,8 @@ export function outOfBounds(): number {
 
     const result = runCli(projectDirectory)
 
-    expect(result.exitCode).toBe(0)
+    // Findings are the CI gate: the out-of-bounds error must fail the run.
+    expect(result.exitCode).toBe(1)
     expect(result.stderr).toBe('')
     expect(result.stdout).toStartWith('contracts.ts(2,10): note [caller-contract]: this division requires 7 caller conditions')
     expect(result.stdout).not.toContain('Notes are caller conditions')
@@ -120,6 +122,7 @@ export function outOfBounds(): number {
     expect(result.stdout).toContain('error [out-of-bounds-read]: asserted element read (arr[i]!) is provably out of bounds')
     expect(result.stdout).toContain('6 findings (1 error, 0 warnings, 5 notes).')
     expect(result.stdout).toContain('coverage: 10/11 named top-level function declarations fully analyzed; 1 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
+    expect(result.stdout).toContain('Run `fr --audit [file]` for every function\'s contracts and refactoring suggestions.')
     expect(existsSync(join(projectDirectory, 'freerange-report'))).toBe(false)
 
     const colored = Bun.spawnSync({
@@ -132,12 +135,14 @@ export function outOfBounds(): number {
     expect(colored).toContain('\u001B[96mcontracts.ts\u001B[0m:\u001B[93m2\u001B[0m:\u001B[93m10\u001B[0m - \u001B[96mnote\u001B[0m')
     expect(colored).toContain('\u001B[90m [caller-contract]: \u001B[0m')
 
+    // `fr <file>` is the project findings narrowed to that file: the finding lines are
+    // identical, only the coverage counts are the file's own.
     const targeted = runCli(projectDirectory, 'contracts.ts')
-    expect(targeted.stdout).toContain(`wrapper
-  requires: columnCount is nonzero (division at contracts.ts:2:10)`)
-    expect(targeted.stdout).toContain(`adapted
-  requires: (width - gap) is nonzero (division at contracts.ts:2:10)`)
-    expect(targeted.stdout).not.toContain('guarded\n  requires:')
+    expect(targeted.exitCode).toBe(1)
+    const findingLines = (output: string) => output.split('\n\n')[0]
+    expect(findingLines(targeted.stdout)).toBe(findingLines(result.stdout))
+    expect(targeted.stdout).toContain('coverage: 10/11 named top-level function declarations fully analyzed; 1 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
+    expect(targeted.stdout).not.toContain('requires:')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
@@ -162,7 +167,7 @@ export function answer(): number { return 42 }
   }
 })
 
-test('project audit is a concise index while file audit keeps the detailed guide', () => {
+test('project audit prints one unit per file and the file audit is a literal slice', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-audit-'))
   try {
     writeProject(projectDirectory, {'advice.ts': `export function divide(width: number, columnCount: number): number {
@@ -186,17 +191,26 @@ export function clean(): number {
 
     expect(projectAudit.exitCode).toBe(0)
     expect(projectAudit.stderr).toBe('')
-    expect(projectAudit.stdout).toStartWith('advice.ts (3/4 functions fully analyzed; 1 unsupported)')
-    expect(projectAudit.stdout).toContain('[guard-derived-value, encode-input-rule]')
-    expect(projectAudit.stdout).toContain('[write-explicit-condition]')
-    expect(projectAudit.stdout).toContain('2 matched locations in 1 file.')
-    expect(projectAudit.stdout).toContain('coverage: 3/4 named top-level function declarations fully analyzed; 0 partial; 1 unsupported; 0/1 project files skipped for TypeScript errors.')
-    expect(projectAudit.stdout).not.toContain('export function remap')
+    // The explanatory prose prints once at the top, then one unit per file, then the
+    // project coverage once at the end.
+    expect(projectAudit.stdout).toStartWith(`${auditPreamble}\n\n# advice.ts (3/4 functions fully analyzed; 1 unsupported)`)
+    expect(projectAudit.stdout.split('Refactoring suggestions are conditional examples')).toHaveLength(2)
+    expect(projectAudit.stdout.trimEnd()).toEndWith('coverage: 3/4 named top-level function declarations fully analyzed; 0 partial; 1 unsupported; 0/1 project files skipped for TypeScript errors.')
+    // Contracts come before suggestions within the unit — a planned `fr --check`
+    // snapshot mode will diff the contracts portion.
+    expect(projectAudit.stdout.indexOf('## Contracts')).toBeLessThan(projectAudit.stdout.indexOf('## Refactoring suggestions'))
+    expect(projectAudit.stdout).toContain(`divide
+  requires: columnCount is nonzero (division at advice.ts:2:10)`)
+    expect(projectAudit.stdout).toContain('### Check the exact divisor')
+    expect(projectAudit.stdout).toContain('**Encode a real input rule where the calculation begins.**')
 
+    // The file audit is the project audit narrowed to the file: same preamble, and the
+    // file's unit is character-for-character a slice of the project output.
     const fileAudit = runCli(projectDirectory, '--audit', 'advice.ts')
     expect(fileAudit.exitCode).toBe(0)
-    expect(fileAudit.stdout).toContain('### Check the exact divisor')
-    expect(fileAudit.stdout).toContain('**Encode a real input rule where the calculation begins.**')
+    expect(fileAudit.stdout).toStartWith(`${auditPreamble}\n\n# advice.ts (`)
+    const unit = fileAudit.stdout.slice(auditPreamble.length).trim()
+    expect(projectAudit.stdout).toContain(unit)
 
     const extraPath = runCli(projectDirectory, '--audit', 'advice.ts', 'other.ts')
     expect(extraPath.exitCode).toBe(1)
@@ -205,6 +219,26 @@ export function clean(): number {
     const extraReportPath = runCli(projectDirectory, 'advice.ts', 'other.ts')
     expect(extraReportPath.exitCode).toBe(1)
     expect(extraReportPath.stderr).toContain('Usage: fr [file]')
+  } finally {
+    rmSync(projectDirectory, {recursive: true, force: true})
+  }
+})
+
+test('error-level findings gate the exit code while the audit stays informational', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-exit-codes-'))
+  try {
+    writeProject(projectDirectory, {'wrong.ts': `export function wrong(): number {
+  const values = [1]
+  return values[2]!
+}
+`})
+
+    // Findings mode is the CI gate at both granularities.
+    expect(runCli(projectDirectory).exitCode).toBe(1)
+    expect(runCli(projectDirectory, 'wrong.ts').exitCode).toBe(1)
+    // The audit reports the same file without gating; it fails only on TypeScript errors.
+    expect(runCli(projectDirectory, '--audit').exitCode).toBe(0)
+    expect(runCli(projectDirectory, '--audit', 'wrong.ts').exitCode).toBe(0)
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
@@ -232,7 +266,7 @@ export function ignoresImplicitAny(value): number { return 1 }
       exactOptionalPropertyTypes: false,
     })
 
-    const targeted = runCli(projectDirectory, 'optional-and-index.ts')
+    const targeted = runCli(projectDirectory, '--audit', 'optional-and-index.ts')
     expect(targeted.exitCode).toBe(0)
     expect(targeted.stderr).toBe('')
     expect(targeted.stdout).toContain('return is undefined or a finite number')
@@ -242,9 +276,9 @@ export function ignoresImplicitAny(value): number { return 1 }
 
     const projectAudit = runCli(projectDirectory, '--audit')
     expect(projectAudit.exitCode).toBe(0)
-    expect(projectAudit.stdout).toContain('increment: Handle a possibly missing array element')
-    expect(projectAudit.stdout).toContain('[handle-missing-element]')
-    expect(projectAudit.stdout).not.toContain('guardedIncrement:')
+    expect(projectAudit.stdout).toContain('### Handle a possibly missing array element')
+    expect(projectAudit.stdout).toContain('in increment')
+    expect(projectAudit.stdout).not.toContain('in guardedIncrement')
 
     writeFileSync(join(projectDirectory, 'tsconfig.json'), JSON.stringify({
       compilerOptions: {strict: false},
@@ -315,9 +349,15 @@ export function gap(): number { return GAP }
     const targeted = runCli(join(projectDirectory, 'src'), 'target.ts')
     expect(targeted.exitCode).toBe(0)
     expect(targeted.stderr).not.toContain('broken.ts')
-    expect(targeted.stdout).toContain('\ntarget.ts\n\n')
-    expect(targeted.stdout).not.toContain('\nsrc/target.ts\n')
-    expect(targeted.stdout).toContain('return is a finite integer number from 24 through 24')
+    expect(targeted.stdout).toContain('No lint findings.')
+    expect(targeted.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed; 0 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
+
+    const targetedAudit = runCli(join(projectDirectory, 'src'), '--audit', 'target.ts')
+    expect(targetedAudit.exitCode).toBe(0)
+    expect(targetedAudit.stderr).not.toContain('broken.ts')
+    expect(targetedAudit.stdout).toContain('\n# target.ts (')
+    expect(targetedAudit.stdout).not.toContain('src/target.ts')
+    expect(targetedAudit.stdout).toContain('return is a finite integer number from 24 through 24')
 
     const missing = runCli(join(projectDirectory, 'src'), 'missing.ts')
     expect(missing.exitCode).toBe(1)
@@ -351,7 +391,11 @@ test('targeted fr has fallback options while project commands require a tsconfig
 
     const targeted = runCli(directory, 'width.ts')
     expect(targeted.exitCode).toBe(0)
-    expect(targeted.stdout).toContain('return is a finite integer number from 24 through 24')
+    expect(targeted.stdout).toContain('No lint findings.')
+
+    const targetedAudit = runCli(directory, '--audit', 'width.ts')
+    expect(targetedAudit.exitCode).toBe(0)
+    expect(targetedAudit.stdout).toContain('return is a finite integer number from 24 through 24')
 
     for (const arguments_ of [[], ['--audit']]) {
       const projectCommand = runCli(directory, ...arguments_)
