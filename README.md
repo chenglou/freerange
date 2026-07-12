@@ -33,12 +33,12 @@ TypeScript can tell you that a value is a number. Freerange tells you which numb
 ## Running it
 
 - Like `tsc`, `bun fr.ts` searches the current directory and then its parents for the nearest `tsconfig.json`. It analyzes that project and its declared project references, then prints lint findings and coverage.
-- `bun fr.ts src/some/file.ts` uses the nearest project for type information and prints that file's exact contracts. Without a config, it uses Freerange's fallback TypeScript settings.
-- `bun fr.ts --audit` prints a project-wide index of recognized refactoring patterns and coverage. It lists only matching locations, not every contract or unsupported function.
-- `bun fr.ts --audit src/some/file.ts` prints that file's contracts, coverage, and relevant refactoring examples. Use this while moving a calculation into the supported subset.
+- `bun fr.ts src/some/file.ts` prints the project's lint findings narrowed to that file, under the same `tsconfig.json` a bare `bun fr.ts` finds — the file argument never changes which configuration governs. Without a config, it uses Freerange's fallback TypeScript settings.
+- `bun fr.ts --audit` prints every function's contracts and the refactoring suggestions that apply, one unit per file, with project coverage at the end.
+- `bun fr.ts --audit src/some/file.ts` prints exactly that file's unit of the project audit. Use this while moving a calculation into the supported subset.
 - TypeScript diagnostics use TypeScript's own formatting. Freerange findings follow its plain and pretty location and color conventions; the project's `pretty` setting wins, otherwise `NO_COLOR`, `FORCE_COLOR`, and terminal detection decide. A file-specific error skips that file while clean files still analyze. A project-wide diagnostic, such as a missing package named in `compilerOptions.types`, skips that project's files because their type information cannot be trusted. The command exits with status 1 when TypeScript reports an error.
 
-These commands write no files. Redirect stdout when you deliberately want a snapshot. No lint findings does not mean an unsupported or partially analyzed file is safe, so always read the coverage line. A change such as `at least 54` becoming `at least 0` is visible only in the exact contract output for that file.
+These commands write no files. Redirect stdout when you deliberately want a snapshot. No lint findings does not mean an unsupported or partially analyzed file is safe, so always read the coverage line. A change such as `at least 54` becoming `at least 0` is visible only in the audit's contract output, not in the lint findings.
 
 ## Reading contracts
 
