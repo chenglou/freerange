@@ -1,11 +1,12 @@
-// The two commands load the nearest TypeScript project and its declared references once
-// and analyze type-correct source files. `fr [file]` prints lint findings — the CI gate —
-// and `fr --audit [file]` prints the deep layer: every function's contracts plus
-// refactoring suggestions. Each command's file version is the project version narrowed to
-// that file: same content kinds, same line formats, one file's slice.
+// Both commands resolve the tsconfig from the current directory — searching upward like
+// `tsc` — and load that project and its declared references once. `fr [file]` prints lint
+// findings — the CI gate — and `fr --audit [file]` prints the deep layer: every function's
+// contracts plus refactoring suggestions. Each command's file version is the project
+// version narrowed to that file: same configuration, same content kinds, same line
+// formats, one file's slice.
 
 import {existsSync} from 'node:fs'
-import {dirname, resolve} from 'node:path'
+import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
 import {auditPreamble, createFileAudit, formatFileAuditUnit} from './audit.ts'
@@ -347,32 +348,47 @@ function sameCallerContracts(left: CallerContract[], right: CallerContract[]): b
 // null means the file has TypeScript errors (already printed) and cannot be analyzed.
 type TargetFile = {detailed: DetailedAnalysis; pretty: boolean}
 
+// The configuration rule: like a bare `fr`, the tsconfig is resolved from the current
+// directory, never from the file's own directory. The file argument narrows the output,
+// not the configuration, so a nested tsconfig near the file cannot make `fr sub/file.ts`
+// disagree with what `fr` reports for that same file. A file inside the project's file
+// set is analyzed through the same project program a project run builds; a file outside
+// it (e.g. a fixture under /tmp) is analyzed as a single-file program under the same
+// cwd-resolved compiler options.
 function analyzeTargetFile(file: string): TargetFile | null {
   const absoluteFile = resolve(file)
   if (!existsSync(absoluteFile)) throw new Error(`File not found: ${absoluteFile}`)
-  const configPath = findTypeScriptConfig(dirname(absoluteFile))
-  if (configPath == null) {
-    try {
-      return {
-        detailed: analyzeCheckedSource(checkFile(absoluteFile), process.cwd()),
-        pretty: usePrettyOutput(),
-      }
-    } catch (error) {
-      if (!(error instanceof TypeScriptDiagnosticsError)) throw error
-      printTypeScriptDiagnostics(error.diagnostics, error.options, process.cwd())
-      return null
-    }
-  }
+  const configPath = findTypeScriptConfig(process.cwd())
+  if (configPath == null) return analyzeFileAlone(absoluteFile, undefined)
 
   const projects = loadTypeScriptProjectGraph(configPath)
   const source = projectSources(projects).find(candidate => resolve(candidate.sourceFile.fileName) === absoluteFile)
-  if (source == null) throw new Error(`${absoluteFile} is not part of the TypeScript project ${configPath}.`)
+  if (source == null) return analyzeFileAlone(absoluteFile, projects.at(-1)!.parsed.options)
   const diagnostics = ts.getPreEmitDiagnostics(source.project.program, source.sourceFile)
   printTypeScriptDiagnostics(diagnostics, source.project.parsed.options, process.cwd())
   if (hasErrorDiagnostics(diagnostics)) return null
   return {
     detailed: analyzeProjectSource(source, process.cwd()),
     pretty: usePrettyOutput(source.project.parsed.options['pretty']),
+  }
+}
+
+// A single-file program for a file no project covers. Passing undefined options means no
+// tsconfig resolved from the current directory at all, so the recommended fallback
+// options apply; otherwise the cwd project's options govern this file like any other.
+function analyzeFileAlone(absoluteFile: string, options: ts.CompilerOptions | undefined): TargetFile | null {
+  try {
+    return {
+      detailed: analyzeCheckedSource(
+        options == null ? checkFile(absoluteFile) : checkFile(absoluteFile, options),
+        process.cwd(),
+      ),
+      pretty: usePrettyOutput(options?.['pretty']),
+    }
+  } catch (error) {
+    if (!(error instanceof TypeScriptDiagnosticsError)) throw error
+    printTypeScriptDiagnostics(error.diagnostics, error.options, process.cwd())
+    return null
   }
 }
 

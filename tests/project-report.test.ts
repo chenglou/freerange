@@ -437,6 +437,123 @@ export function gap(): number { return GAP }
   }
 })
 
+// The two nested-tsconfig tests below pin the configuration rule: both modes resolve the
+// tsconfig from the current directory, so the file argument narrows the output, never the
+// configuration. A tsconfig sitting next to the file must not change which compiler
+// options govern it, in either layout direction.
+const nestedTsconfigSource = `export function scale(amount) {
+  return amount * 3
+}
+
+export function divide(numerator: number, denominator: number): number {
+  return numerator / denominator
+}
+`
+const laxOptions = {strict: false, strictNullChecks: true}
+
+test('a nested lax tsconfig cannot hide the root project errors from the file run', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-nested-lax-'))
+  try {
+    writeProject(projectDirectory, {
+      'main.ts': 'export function double(value: number): number { return value * 2 }\n',
+      'sub/loose.ts': nestedTsconfigSource,
+      'sub/tsconfig.json': JSON.stringify({compilerOptions: laxOptions, include: ['*.ts']}),
+    })
+
+    // The strict root config governs sub/loose.ts, so its implicit any is an error and
+    // the file is skipped — in the project run and in the file run alike.
+    const project = runCli(projectDirectory)
+    expect(project.exitCode).toBe(1)
+    expect(project.stderr).toContain("sub/loose.ts(1,23): error TS7006: Parameter 'amount' implicitly has an 'any' type.")
+    expect(project.stdout).toContain('1/2 project files skipped for TypeScript errors.')
+
+    const targeted = runCli(projectDirectory, 'sub/loose.ts')
+    expect(targeted.exitCode).toBe(1)
+    expect(targeted.stderr).toContain("sub/loose.ts(1,23): error TS7006: Parameter 'amount' implicitly has an 'any' type.")
+    expect(targeted.stdout).toBe('')
+
+    // The project audit has no unit for the skipped file, so the file audit prints none.
+    const projectAudit = runCli(projectDirectory, '--audit')
+    expect(projectAudit.exitCode).toBe(1)
+    expect(projectAudit.stdout).not.toContain('# sub/loose.ts')
+    const fileAudit = runCli(projectDirectory, '--audit', 'sub/loose.ts')
+    expect(fileAudit.exitCode).toBe(1)
+    expect(fileAudit.stdout).toBe('')
+  } finally {
+    rmSync(projectDirectory, {recursive: true, force: true})
+  }
+})
+
+test('a nested strict tsconfig cannot fail a file the project run accepts', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-nested-strict-'))
+  try {
+    writeProject(projectDirectory, {
+      'main.ts': 'export function double(value: number): number { return value * 2 }\n',
+      'sub/loose.ts': nestedTsconfigSource,
+      'sub/tsconfig.json': JSON.stringify({compilerOptions: {strict: true}, include: ['*.ts']}),
+    }, laxOptions)
+
+    // The lax root config governs sub/loose.ts, so both runs accept it, and the file run
+    // prints exactly the finding line the project run prints for that file.
+    const looseFinding = 'sub/loose.ts(6,10): note [caller-contract]: callers of divide must keep denominator is nonzero (division at sub/loose.ts(6,10))'
+    const project = runCli(projectDirectory)
+    expect(project.exitCode).toBe(0)
+    expect(project.stderr).toBe('')
+    expect(project.stdout).toContain(looseFinding)
+
+    const targeted = runCli(projectDirectory, 'sub/loose.ts')
+    expect(targeted.exitCode).toBe(0)
+    expect(targeted.stderr).toBe('')
+    for (const line of targeted.stdout.split('\n\n')[0]!.split('\n')) {
+      expect(project.stdout).toContain(line)
+    }
+    expect(targeted.stdout).toContain('1 finding (0 errors, 0 warnings, 1 note).')
+
+    // The file audit unit is character-for-character a slice of the project audit.
+    const projectAudit = runCli(projectDirectory, '--audit')
+    expect(projectAudit.exitCode).toBe(0)
+    const fileAudit = runCli(projectDirectory, '--audit', 'sub/loose.ts')
+    expect(fileAudit.exitCode).toBe(0)
+    const unit = fileAudit.stdout.slice(auditPreamble.length).trim()
+    expect(unit.length).toBeGreaterThan(0)
+    expect(projectAudit.stdout).toContain(unit)
+  } finally {
+    rmSync(projectDirectory, {recursive: true, force: true})
+  }
+})
+
+test('a file outside the project file set analyzes under the cwd-resolved options', () => {
+  // The fixture workflow: run `fr /tmp/fixture.ts` from a project root. The fixture is
+  // not in the project's file set, so it gets a single-file program — under the cwd
+  // project's compiler options, not options found near the file.
+  const strictDirectory = mkdtempSync(join(tmpdir(), 'freerange-outside-strict-'))
+  const laxDirectory = mkdtempSync(join(tmpdir(), 'freerange-outside-lax-'))
+  const fixtureDirectory = mkdtempSync(join(tmpdir(), 'freerange-outside-fixture-'))
+  try {
+    writeProject(strictDirectory, {'main.ts': 'export function ok(): number { return 1 }\n'})
+    writeProject(laxDirectory, {'main.ts': 'export function ok(): number { return 1 }\n'}, laxOptions)
+    const fixture = join(fixtureDirectory, 'fixture.ts')
+    writeFileSync(fixture, nestedTsconfigSource)
+
+    const underStrict = runCli(strictDirectory, fixture)
+    expect(underStrict.exitCode).toBe(1)
+    expect(underStrict.stderr).toContain("error TS7006: Parameter 'amount' implicitly has an 'any' type.")
+
+    const underLax = runCli(laxDirectory, fixture)
+    expect(underLax.exitCode).toBe(0)
+    expect(underLax.stderr).toBe('')
+    expect(underLax.stdout).toContain('callers of divide must keep denominator is nonzero')
+
+    const auditUnderStrict = runCli(strictDirectory, '--audit', fixture)
+    expect(auditUnderStrict.exitCode).toBe(1)
+    expect(auditUnderStrict.stdout).toBe('')
+  } finally {
+    rmSync(strictDirectory, {recursive: true, force: true})
+    rmSync(laxDirectory, {recursive: true, force: true})
+    rmSync(fixtureDirectory, {recursive: true, force: true})
+  }
+})
+
 test('targeted fr has fallback options while project commands require a tsconfig', () => {
   const directory = mkdtempSync(join(tmpdir(), 'freerange-no-config-'))
   try {

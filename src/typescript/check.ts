@@ -7,13 +7,14 @@ export type CheckedSource = {
   checker: ts.TypeChecker
 }
 
-const compilerOptions: ts.CompilerOptions = {
+// When no tsconfig is in scope at all, single-file analysis gets the recommended
+// authoring checks. When a tsconfig does resolve from the current directory, the caller
+// passes that project's options instead, so one configuration governs every file.
+const fallbackOptions: ts.CompilerOptions = {
   target: ts.ScriptTarget.ESNext,
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler,
   moduleDetection: ts.ModuleDetectionKind.Force,
-  // Single-file analysis has no project config, so it gets the recommended authoring
-  // checks. Project analysis respects the project's choices except for strict nullability.
   strict: true,
   noUncheckedIndexedAccess: true,
   exactOptionalPropertyTypes: true,
@@ -22,16 +23,16 @@ const compilerOptions: ts.CompilerOptions = {
   types: [],
 }
 
-export function checkFile(file: string): CheckedSource {
+export function checkFile(file: string, options: ts.CompilerOptions = fallbackOptions): CheckedSource {
   const absoluteFile = resolve(file)
-  const program = ts.createProgram([absoluteFile], compilerOptions)
-  return checkedSource(program, absoluteFile)
+  const program = ts.createProgram([absoluteFile], options)
+  return checkedSource(program, absoluteFile, options)
 }
 
 export function checkSource(file: string, source: string): CheckedSource {
   const absoluteFile = resolve(file)
   const sourceFile = ts.createSourceFile(absoluteFile, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS)
-  const defaultHost = ts.createCompilerHost(compilerOptions)
+  const defaultHost = ts.createCompilerHost(fallbackOptions)
   const host: ts.CompilerHost = {
     ...defaultHost,
     getSourceFile: (requestedFile, languageVersion, onError, shouldCreateNewSourceFile) => {
@@ -41,14 +42,14 @@ export function checkSource(file: string, source: string): CheckedSource {
     fileExists: requestedFile => resolve(requestedFile) === absoluteFile || defaultHost.fileExists(requestedFile),
     readFile: requestedFile => resolve(requestedFile) === absoluteFile ? source : defaultHost.readFile(requestedFile),
   }
-  const program = ts.createProgram([absoluteFile], compilerOptions, host)
-  return checkedSource(program, absoluteFile)
+  const program = ts.createProgram([absoluteFile], fallbackOptions, host)
+  return checkedSource(program, absoluteFile, fallbackOptions)
 }
 
-function checkedSource(program: ts.Program, file: string): CheckedSource {
+function checkedSource(program: ts.Program, file: string, options: ts.CompilerOptions): CheckedSource {
   const diagnostics = ts.getPreEmitDiagnostics(program)
   if (diagnostics.length > 0) {
-    throw new TypeScriptDiagnosticsError(diagnostics, compilerOptions, process.cwd())
+    throw new TypeScriptDiagnosticsError(diagnostics, options, process.cwd())
   }
   const sourceFile = program.getSourceFile(file)
   if (sourceFile == null) throw new Error(`TypeScript did not load ${file}`)
