@@ -5,6 +5,7 @@ import {analyzedFunction} from './analyze-helpers.ts'
 
 const fixture = new URL('./fixtures/grid-metrics.ts', import.meta.url).pathname
 const showcaseFixture = new URL('./fixtures/showcase.ts', import.meta.url).pathname
+const demoFixture = new URL('../demo/index.ts', import.meta.url).pathname
 const showcaseReportPath = 'tests/fixtures/showcase.ts'
 const mutationFixture = new URL('./fixtures/object-mutation.ts', import.meta.url).pathname
 const preconditionsFixture = new URL('./fixtures/preconditions.ts', import.meta.url).pathname
@@ -48,6 +49,55 @@ describe('control flow and contracts', () => {
     ])
     expect(analyzedFunction(report, 'widthPerColumn').requires)
       .toEqual([`grid.columnCount is nonzero (division at ${showcaseReportPath}:78:10)`])
+  })
+
+  test('the real demo file keeps its spring contracts', () => {
+    // The demo's spring contracts were silently lost once already: a rejection elsewhere
+    // in the pipeline cost them and no test noticed, because only a hand-written
+    // miniature fixture was pinned — and it had drifted from the real file. This test
+    // runs the analyzer on demo/index.ts itself, so the demo is a regression surface.
+    // The spring trio is pinned precisely; the rest is a coarse verdict tally, so a
+    // broad regression shows up without pinning every browser-code stop line and
+    // unrelated demo edits do not churn the pins.
+    const report = analyzeFile(demoFixture)
+    const kinds = {analyzed: 0, partial: 0, unsupported: 0}
+    for (const fn of report.functions) kinds[fn.kind] += 1
+    expect(kinds).toEqual({analyzed: 10, partial: 1, unsupported: 4})
+    // springStep: the physics integration can overflow, and an overflowed pos minus dest
+    // is Infinity - Infinity, so pos and v honestly carry possible NaN with the blame
+    // site at the Fspring multiplication; dest, k, and b pass through untouched.
+    expect(analyzedFunction(report, 'springStep').ensures).toEqual([
+      'return.pos is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:19)',
+      'return.dest is a finite number',
+      'return.v is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:19)',
+      'return.k is a finite number',
+      'return.b is a finite number',
+    ])
+    // springGoToEnd snaps to rest: v is exactly 0, pos becomes dest.
+    expect(analyzedFunction(report, 'springGoToEnd').ensures).toEqual([
+      'return.pos is a finite number',
+      'return.dest is a finite number',
+      'return.v is a finite integer number from 0 through 0',
+      'return.k is a finite number',
+      'return.b is a finite number',
+    ])
+    // stepSpring loops springStep `steps` times and inherits its possibly-NaN story.
+    expect(analyzedFunction(report, 'stepSpring').ensures).toEqual([
+      'return.pos is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:19)',
+      'return.dest is a finite number',
+      'return.v is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:19)',
+      'return.k is a finite number',
+      'return.b is a finite number',
+    ])
+    // hitTest2DMode takes the BoxData array: the number fold covers its numeric leaves,
+    // and the plain-array boundary line states the trust its length and element reads
+    // rest on.
+    expect(analyzedFunction(report, 'hitTest2DMode').assumptions).toEqual([
+      'every property declared as a number in data holds a finite non-NaN number',
+      'data is a plain array — its length counts its elements, and every index below the length holds an element',
+      'pointerX is finite and not NaN',
+      'pointerY is finite and not NaN',
+    ])
   })
 
   test('reports inferred properties of a returned object', () => {
