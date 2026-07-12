@@ -2,6 +2,13 @@
 
 Freerange analyzes the numeric behavior of TypeScript functions. It reports conditions callers must satisfy, ranges and other facts about returned values, and the parts of a file it could not fully analyze.
 
+## Commands
+
+- `fr`: check for warning and errors in project
+- `fr --audit`: check for every function's contracts, and refactor suggestions
+
+Both commands can take a file to narrow the output to just info for that file.
+
 ## One production example
 
 Our production app positions an input bar, a tray below it, and the surrounding content from the window size. We added one line:
