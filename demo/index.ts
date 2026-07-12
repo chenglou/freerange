@@ -44,10 +44,10 @@ function springStep(config: Spring): Spring {
   const newV = v + a * t
   const newPos = pos + newV * t
 
-  return {...config, pos: newPos, v: newV}
+  return {pos: newPos, dest, v: newV, k, b}
 }
 function springGoToEnd(config: Spring): Spring {
-  return {...config, pos: config.dest, v: 0}
+  return {pos: config.dest, dest: config.dest, v: 0, k: config.k, b: config.b}
 }
 
 // === generic helpers
