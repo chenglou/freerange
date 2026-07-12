@@ -148,20 +148,73 @@ export function outOfBounds(): number {
   }
 })
 
-test('bare fr reports failures in module initialization', () => {
+test('module initialization failures are findings in project and file mode alike', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-initializer-'))
   try {
-    writeProject(projectDirectory, {'module-loop.ts': `while (true) {}
+    // Both loops provably never exit, so loading either module never finishes — a
+    // definite problem TypeScript accepts without complaint. Contracts moved behind
+    // `fr --audit`, so the findings mode must carry these itself at both granularities.
+    writeProject(projectDirectory, {
+      'module-loop.ts': `while (true) {}
 export function answer(): number { return 42 }
-`})
+`,
+      'stuck-counter.ts': `let ticks = 0
+while (ticks < 10) {
+  // ticks never advances
+}
+export function count(): number { return ticks }
+`,
+    })
 
     const result = runCli(projectDirectory)
 
     expect(result.exitCode).toBe(0)
     expect(result.stderr).toBe('')
-    expect(result.stdout).toContain('module-loop.ts(1,1): warning [non-exiting-loop]: loop in module initialization has no analyzable exit; it may never terminate')
+    const loopWarning = 'module-loop.ts(1,1): warning [non-exiting-loop]: loop in module initialization has no analyzable exit; it may never terminate'
+    const counterWarning = 'stuck-counter.ts(2,1): warning [non-exiting-loop]: loop in module initialization has no analyzable exit; it may never terminate'
+    expect(result.stdout).toContain(loopWarning)
+    expect(result.stdout).toContain(counterWarning)
     expect(result.stdout).not.toContain('No lint findings.')
-    expect(result.stdout).toContain('1 finding (0 errors, 1 warning, 0 notes).')
+    expect(result.stdout).toContain('2 findings (0 errors, 2 warnings, 0 notes).')
+
+    // The file mode prints the same finding line; a warning informs but does not gate.
+    const targeted = runCli(projectDirectory, 'stuck-counter.ts')
+    expect(targeted.exitCode).toBe(0)
+    expect(targeted.stdout).toContain(counterWarning)
+    expect(targeted.stdout).not.toContain('module-loop.ts')
+    expect(targeted.stdout).toContain('1 finding (0 errors, 1 warning, 0 notes).')
+  } finally {
+    rmSync(projectDirectory, {recursive: true, force: true})
+  }
+})
+
+test('ordinary initializer stops and skips do not mint findings', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-initializer-negative-'))
+  try {
+    writeProject(projectDirectory, {
+      // The top-level new Date() call is outside the analyzed subset, so the module
+      // analysis skips the statement — ordinary unsupported code, not a proven defect.
+      'skipped-statement.ts': `const startedAt = new Date().toISOString()
+export function label(): string { return startedAt }
+`,
+      // The top-level call stops because the callee reads a binding that is not yet
+      // initialized — a real crash at load, but the initializer only records the cascade
+      // (calls readLater, whose analysis stopped), which in general proves nothing, so
+      // no finding prints. The stop still surfaces through the audit's contracts.
+      'stopped-call.ts': `export function readLater(): number { return gap * 2 }
+const early = readLater()
+const gap = 24
+export function answer(): number { return early }
+`,
+    })
+
+    for (const arguments_ of [[], ['skipped-statement.ts'], ['stopped-call.ts']]) {
+      const result = runCli(projectDirectory, ...arguments_)
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('No lint findings.')
+    }
+    const audited = runCli(projectDirectory, '--audit', 'stopped-call.ts')
+    expect(audited.stdout).toContain('stopped: calls readLater, whose analysis stopped for this specific call')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
