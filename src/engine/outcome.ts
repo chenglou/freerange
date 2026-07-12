@@ -25,10 +25,10 @@ export type StopReason =
   // category: imported, an untracked object, an unsupported type, or read before its
   // initialization.
   | {kind: 'moduleRead'; binding: ModuleBindingID}
-  // A value reached an operation whose kind the analyzer's narrowing did not establish,
-  // though the checker's did — e.g. a guard shape the analysis does not model. The path
-  // stops; the rest of the function and file report normally.
-  | {kind: 'unmodeledNarrowing'}
+  // A value reached an operation that needs a concrete runtime kind, but the analysis
+  // carries it without one. This includes opaque values and narrowing shapes the engine
+  // does not model. The path stops; the rest of the function and file report normally.
+  | {kind: 'kindMismatch'}
   // A bare array read (arr[i]) remained possibly undefined and reached an operation that
   // needs a present value. This can be diagnostic-clean when noUncheckedIndexedAccess is
   // disabled, so it has its own actionable reason instead of looking like unsupported
@@ -82,7 +82,6 @@ export type FunctionAnalysis =
       preconditions: InferredPrecondition[]
       boundsAssumptions: BoundsAssumption[]
       returnValue: AbstractValue
-      sharedState: SharedState
     }
   // Some path stopped. The evidence fields share no names with the contract fields above,
   // so report code cannot consume them interchangeably: observedReturn describes only the
@@ -101,11 +100,13 @@ export type FunctionAnalysis =
   // defensive re-checks.
   | {kind: 'notLowered'; lowering: UnsupportedFunctionIR}
 
+export type LoweredFunctionAnalysis = Exclude<FunctionAnalysis, {kind: 'notLowered'}>
+
 export type ProgramAnalysis = {
   // Dense, index-aligned with ProgramIR.functions.
   functions: FunctionAnalysis[]
   // The synthetic module initializer's own analysis. Reports print it only when it stopped.
-  initializer: FunctionAnalysis
+  initializer: LoweredFunctionAnalysis
   // Indexed by ModuleBindingID: the exact value functions may trust, or null when only the
   // binding's declared kind is known. Reports use this to print assumes lines for reads of
   // assumed-finite module numbers.

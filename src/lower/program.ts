@@ -198,18 +198,15 @@ function lowerFunction(
   }
 }
 
-// The property names the declared return type exposes, for record returns — through a
-// `| null` / `| undefined` wrapper too, since the record inside the wrapper is what
-// callers read after their null check.
 function declaredRecordReturnNames(returnType: ts.Type, checker: ts.TypeChecker): string[] | null {
   const kind = valueKind(returnType, checker)
   if (kind === 'object') return checker.getPropertiesOfType(returnType).map(property => property.name)
   if (kind === 'nullable' && returnType.isUnion()) {
     const missing = ts.TypeFlags.Null | ts.TypeFlags.Undefined
-    const rest = returnType.types.filter(member => (member.flags & missing) === 0)
-    if (rest.length >= 1 && rest.every(member => valueKind(member, checker) === 'object')) {
+    const members = returnType.types.filter(member => (member.flags & missing) === 0)
+    if (members.length > 0 && members.every(member => valueKind(member, checker) === 'object')) {
       const names = new Set<string>()
-      for (const member of rest) {
+      for (const member of members) {
         for (const property of checker.getPropertiesOfType(member)) names.add(property.name)
       }
       return [...names]

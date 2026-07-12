@@ -9,6 +9,7 @@ import {
   completedEvaluation,
   type FunctionAnalysis,
   type FunctionEvaluation,
+  type LoweredFunctionAnalysis,
   type ProgramAnalysis,
   type Stop,
 } from './outcome.ts'
@@ -16,7 +17,6 @@ import {
   cloneSharedState,
   cloneState,
   emptySharedState,
-  freshSlotVersion,
   joinModuleSlots,
   joinStates,
   sameState,
@@ -29,7 +29,6 @@ import {
 import {
   asRefinableCheck,
   branchConditionOutcome,
-  collectNonCompareUses,
   evaluateInstruction,
   refineCheck,
   requiredValue,
@@ -50,7 +49,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
   for (let binding = 0; binding < program.moduleBindings.length; binding++) {
     const category = program.moduleBindings[binding]!.category
     if (category.kind === 'importedConstant') {
-      initializerState[binding] = {kind: 'value', value: constantNumber(category.value), version: freshSlotVersion()}
+      initializerState[binding] = {kind: 'value', value: constantNumber(category.value)}
     }
   }
   // The initializer runs first, so top-level calls into declared functions see the module
@@ -85,16 +84,16 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       argumentExpressions.push({kind: 'parameter', index})
     }
     const {evaluation} = runEvaluation(fn, functionID, arguments_, argumentExpressions, sharedState, program, [])
-    functions.push(publishedAnalysis(fn, evaluation, program.moduleBindings.length))
+    functions.push(publishedAnalysis(fn, evaluation))
   }
   return {
     functions,
-    initializer: publishedAnalysis(program.initializer, initializer.evaluation, program.moduleBindings.length),
+    initializer: publishedAnalysis(program.initializer, initializer.evaluation),
     moduleValues,
   }
 }
 
-function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation, moduleCount: number): FunctionAnalysis {
+function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): LoweredFunctionAnalysis {
   const completed = completedEvaluation(evaluation)
   if (completed != null) {
     return {
@@ -103,7 +102,6 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation, modul
       preconditions: completed.preconditions,
       boundsAssumptions: completed.boundsAssumptions,
       returnValue: completed.returnValue,
-      sharedState: completed.sharedState,
     }
   }
   const [firstStop, ...laterStops] = evaluation.stops
@@ -116,7 +114,6 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation, modul
       preconditions: evaluation.preconditions,
       boundsAssumptions: evaluation.boundsAssumptions,
       returnValue: {kind: 'void'},
-      sharedState: emptySharedState(moduleCount),
     }
   }
   if (firstStop == null) throw new Error(`Function ${fn.name} has no reachable return`)
@@ -137,13 +134,13 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation, modul
 function seedModuleSlots(program: ProgramIR, moduleValues: Array<AbstractValue | null>): ModuleSlot[] {
   return program.moduleBindings.map((binding, index) => {
     const published = moduleValues[index]
-    if (published != null) return {kind: 'value', value: published, version: freshSlotVersion()}
+    if (published != null) return {kind: 'value', value: published}
     if (binding.category.kind === 'importedConstant') {
-      return {kind: 'value', value: constantNumber(binding.category.value), version: freshSlotVersion()}
+      return {kind: 'value', value: constantNumber(binding.category.value)}
     }
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) return {kind: 'uninitialized'}
-    return {kind: 'value', value: declaredKindValue(declaredKind), version: freshSlotVersion()}
+    return {kind: 'value', value: declaredKindValue(declaredKind)}
   })
 }
 
@@ -158,8 +155,11 @@ function publishedModuleValues(
   evaluation: FunctionEvaluation,
 ): Array<AbstractValue | null> {
   const fn = program.initializer
-  const ends: ModuleSlot[][] = [...run.moduleEnds]
-  if (evaluation.normal != null) ends.push(evaluation.normal.sharedState)
+  const end = evaluation.normal == null
+    ? run.moduleEnd
+    : run.moduleEnd == null
+      ? evaluation.normal.sharedState
+      : joinModuleSlots(run.moduleEnd, evaluation.normal.sharedState)
 
   const demoted = new Set<ModuleBindingID>()
   const successors = blockSuccessors(fn)
@@ -197,13 +197,8 @@ function publishedModuleValues(
     // holdsMutableStructure, not a top-level tag check: a `number[] | null` binding is
     // nullish at the top level yet the array inside is exactly as alias-mutable.
     if (holdsMutableStructure(binding.category.declaredKind) && !fullyAnalyzed) return null
-    let joined: AbstractValue | null = null
-    for (const end of ends) {
-      const slot = end[index]!
-      if (slot.kind === 'uninitialized') return null
-      joined = joined == null ? slot.value : joinValues(joined, slot.value)
-    }
-    return joined
+    const slot = end?.[index]
+    return slot?.kind === 'value' ? slot.value : null
   })
 }
 
@@ -238,8 +233,8 @@ type EvaluationRun = {
   blocks: BlockRun[]
   queue: BlockID[]
   stops: Stop[]
-  // The module slots at every stop, joined with the normal end by the publish rule.
-  moduleEnds: ModuleSlot[][]
+  // Module slots joined across every stop, then with the normal end by the publish rule.
+  moduleEnd: ModuleSlot[] | null
 }
 
 function runEvaluation(
@@ -255,7 +250,7 @@ function runEvaluation(
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
   const initial: ExecutionState = {
-    frame: {values: [], readVersions: []},
+    frame: {values: []},
     shared: cloneSharedState(sharedState),
     // Call sites seed the caller's proven argument relations (keyed p0, p1, ... which is
     // exactly what canonicalValueKey produces for the parameters here).
@@ -264,7 +259,6 @@ function runEvaluation(
   for (let index = 0; index < fn.parameters.length; index++) {
     initial.frame.values[fn.parameters[index]!.value] = arguments_[index]!
   }
-  const usedOutsideCompare = collectNonCompareUses(fn)
   const expressionContext = createExpressionContext(fn, argumentExpressions)
   const preconditions: InferredPrecondition[] = []
   const boundsAssumptions: BoundsAssumption[] = []
@@ -273,7 +267,7 @@ function runEvaluation(
     blocks: fn.blocks.map(() => ({incoming: null, stopIndex: null, failedHeader: false, pendingReturn: null})),
     queue: [fn.entry],
     stops: [],
-    moduleEnds: [],
+    moduleEnd: null,
   }
   run.blocks[fn.entry]!.incoming = {state: initial, updateCount: 0}
   // Invariant for the whole evaluation (engineering.md's loop-invariant rule): built once
@@ -285,7 +279,6 @@ function runEvaluation(
     expressionContext,
     preconditions,
     boundsAssumptions,
-    usedOutsideCompare,
     evaluateFunction: (
       callee: FunctionID,
       values: AbstractValue[],
@@ -491,7 +484,7 @@ function addStop(
   if (block.stopIndex == null || instructionIndex < block.stopIndex) {
     block.stopIndex = instructionIndex
   }
-  run.moduleEnds.push(moduleCapture)
+  run.moduleEnd = run.moduleEnd == null ? moduleCapture : joinModuleSlots(run.moduleEnd, moduleCapture)
   // The first stop at a site wins, so re-visits (loop rounds, both arms of a branch
   // reaching one call) cannot grow the list past the function's site count. A linear scan,
   // like the precondition and bounds-assumption dedups: the list is small by the same bound.

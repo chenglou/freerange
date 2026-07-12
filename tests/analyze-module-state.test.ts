@@ -178,18 +178,17 @@ describe('module state and nullability', () => {
     expect(picked.ensures).toEqual(['return.x is a finite integer number from 1 through 3'])
   })
 
-  test('optional properties read, fill, and spread as maybe-undefined values', () => {
+  test('optional properties read and fill as maybe-undefined values', () => {
     // session?: boolean reads as boolean | undefined — exactly what the missing-value
     // machinery models. Object literals fill omitted optionals with an explicit undefined
-    // (so `omitted` proves exactly 5 through the ?? fallback), spreads copy them as their
-    // maybe-undefined values, and the assumes prose carries the honest condition. Sound
+    // (so `omitted` proves exactly 5 through the ?? fallback), and the assumes prose
+    // carries the honest condition. Sound
     // even when exactOptionalPropertyTypes is disabled: ordinary reads cannot distinguish
     // absence from explicit undefined, while supported presence checks stay conservative.
     const report = analyzeSource('optional-properties.ts', `
       type Config = {gain: number; volume?: number}
       export function effectiveVolume(): number {
-        const overrides: Config = {gain: 2, volume: 7}
-        const merged = {...overrides, gain: 1}
+        const merged: Config = {gain: 1}
         return merged.gain
       }
       export function readOptional(config: Config): number {
@@ -213,14 +212,17 @@ describe('module state and nullability', () => {
 
   test('optional properties inside tagged-union variants classify too', () => {
     const report = analyzeSource('optional-variant.ts', `
-      type Route = {type: 'style-creator'; sref?: string} | {type: 'home'; scroll: number}
+      type Route = {type: 'style-creator'; scroll?: number} | {type: 'home'; scroll: number}
       export function scrollOf(route: Route): number {
-        if (route.type === 'home') { return route.scroll }
-        return 0
+        if (route.type === 'home') return route.scroll
+        return route.scroll ?? 0
       }
     `)
     expect(analyzedFunction(report, 'scrollOf').assumptions)
-      .toEqual(["route.scroll is finite and not NaN (when route.type is 'home')"])
+      .toEqual([
+        "route.scroll is undefined or a finite non-NaN number (when route.type is 'style-creator')",
+        "route.scroll is finite and not NaN (when route.type is 'home')",
+      ])
     expect(analyzedFunction(report, 'scrollOf').ensures).toEqual(['return is a finite number'])
   })
 
@@ -499,7 +501,7 @@ describe('module state and nullability', () => {
       kind: 'partial',
       name: 'carriedOpaque',
       assumptions: ['flag is a boolean'],
-      stopped: [`narrows a value in a way the analysis does not model (at ${file}:5:16)`],
+      stopped: [`uses a value whose runtime kind the analysis cannot establish (at ${file}:5:16)`],
       // The branches merge before the multiply, and the joined n is opaque, so both
       // paths stop there — no completed return remains to report as evidence.
       observed: [],

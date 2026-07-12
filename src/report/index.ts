@@ -4,7 +4,7 @@ import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts
 import type {FunctionID, ValueID} from '../ir/ids.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
 import {forEachOperand} from '../ir/instructions.ts'
-import {declaredKindOf, formatSite, reportPath, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
+import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
@@ -17,7 +17,6 @@ export type FunctionReport =
   | {kind: 'partial'; name: string; assumptions: string[]; stopped: string[]; skipped?: string[]; observed: string[]}
 
 export type AnalysisReport = {
-  file: string
   functions: FunctionReport[]
 }
 
@@ -32,14 +31,18 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
   // read can miss.
   const initializerBounds = analysis.initializer.kind === 'analyzed'
     ? analysis.initializer.boundsAssumptions
-    : analysis.initializer.kind === 'partial' ? analysis.initializer.observedBoundsAssumptions : []
+    : analysis.initializer.observedBoundsAssumptions
   const initializerBoundsLines = initializerBounds.map(assumption => formatBoundsAssumption(assumption, program))
   // Top-level code runs before any function, so its entry comes first — but only when it
   // stopped or skipped statements. A fully analyzed initializer with nothing skipped is
   // invisible: its results show up as the exact module values other entries report, with
   // its bounds assumptions carried by the readers above.
-  const skippedLines = program.initializerSkips.map(skip =>
-    `${formatUnsupportedReason(skip.reason)} at ${formatSite(program, skip.site)}`)
+  // Like an unsupported function, show the first module blocker and let the coverage
+  // header carry the total. FileAudit.references retains every skip for structured use.
+  const firstSkip = program.initializerSkips[0]
+  const skippedLines = firstSkip == null
+    ? []
+    : [`${formatUnsupportedReason(firstSkip.reason)} at ${formatSite(program, firstSkip.site)}`]
   if (analysis.initializer.kind === 'partial' || skippedLines.length > 0) {
     const observed: string[] = []
     if (analysis.initializer.kind === 'partial') {
@@ -105,32 +108,14 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       }
     }
   }
-  return {file: reportPath(program), functions}
+  return {functions}
 }
-
-// The legend targets a reader — usually another model — that has never seen a freerange
-// report: each line kind in one sentence, so the report is self-describing. Audit runs
-// skip it (legend: false) because the audit preamble explains the same line kinds in
-// prose, once per run — the legend was 28% of the per-file report corpus, and every
-// reader learned to skip it.
-const reportLegend = [
-  '# freerange: static analysis of the numeric behavior of each top-level function.',
-  '# requires: conditions the caller must make true; given them, the ensures lines hold.',
-  '# ensures:  guarantees about the returned value whenever the function returns.',
-  '# assumes:  input conditions accepted without proof; no other line holds unless these do.',
-  '# unsupported: the function uses code outside the analyzed subset; the message names the construct and may include a short conditional hint.',
-  '# stopped:  analysis halted partway on some path; the entry describes only what ran before the stop.',
-  '# skipped:  a top-level statement the module analysis stepped over; anything it could write is distrusted.',
-  '# on analyzed paths: evidence from the paths that completed - not a guarantee for the whole function.',
-].join('\n')
 
 // Within an entry, line kinds print rarest-and-most-actionable first: requires (what the
 // caller must arrange), ensures (what it gets), assumes (what is being trusted — the
 // bulkiest kind, and the one every reader scans past to reach the other two).
-export function formatReport(report: AnalysisReport, options?: {legend?: boolean; file?: boolean}): string {
+export function formatReport(report: AnalysisReport): string {
   const lines: string[] = []
-  if (options?.legend !== false) lines.push(reportLegend)
-  if (options?.file !== false) lines.push(report.file)
   for (const fn of report.functions) {
     if (lines.length > 0) lines.push('')
     lines.push(fn.name)
@@ -226,13 +211,6 @@ function parameterReadPaths(fn: FunctionIR): string[][][] {
         case 'property': break
         // The tag read keeps nothing — see the rationale above.
         case 'tagCheck': break
-        // A presence check ('tab' in route) narrows by the checked property, so that
-        // property's presence-qualified lines stay.
-        case 'inCheck': {
-          const base = tracked.get(instruction.union)
-          if (base != null) reads[base.parameter]!.push([...base.segments, instruction.property])
-          break
-        }
         default: forEachOperand(instruction, markOperand)
       }
     }
@@ -550,10 +528,9 @@ function pushDeclaredAssumptions(path: string, segments: string[], declared: Dec
       // and not NaN (when route.type is 'lightbox')`. The tag property itself is skipped:
       // a string tag is an opaque leaf with no line anyway, and a boolean tag's "ok is a
       // boolean" would restate what the qualifier already pins. When several variants
-      // share one tag value (two shapes told apart by an in-check, or the expansion of a
-      // plain-boolean tag), the tag alone does not pin the shape, so each line adds a
-      // presence qualifier — the assumption then speaks only about values that actually
-      // carry the property.
+      // share one tag value, or when a plain-boolean tag expands into several shapes, the
+      // tag alone does not pin the shape. Each line then adds a presence qualifier, so
+      // the assumption speaks only about values that actually carry the property.
       // Reads mark a variant property's path with no variant attached (the narrow that
       // preceded the read is not tracked), so a read of one variant's property keeps the
       // same-named property's lines in every variant that declares it.
@@ -653,8 +630,8 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
     case 'outOfBoundsRead': {
       return `reads an element provably outside the array (at ${formatSite(program, stop.site)})`
     }
-    case 'unmodeledNarrowing': {
-      return `narrows a value in a way the analysis does not model (at ${formatSite(program, stop.site)})`
+    case 'kindMismatch': {
+      return `uses a value whose runtime kind the analysis cannot establish (at ${formatSite(program, stop.site)})`
     }
     case 'possiblyMissingElement': {
       return `uses a possibly missing array element without handling undefined (at ${formatSite(program, stop.site)})`
@@ -723,16 +700,17 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
       : `function parameter with type ${reason.typeText}`
     case 'parameterDefaultValue': return `default value for parameter ${reason.name}; supported defaults are literals provably inside the assumed kind (= 5 for a number, = null for a nullable) — otherwise drop the default and pass the argument explicitly`
     case 'missingReturn': return 'function path without a return (add a return on every path)'
-    case 'objectPropertyForm': return 'object property form (use plain data properties: name: value, shorthand, or spread)'
+    case 'objectPropertyForm': return 'object property form (use plain data properties: name: value or shorthand)'
     case 'computedPropertyName': return 'computed object property name'
-    case 'spreadAfterProperties': return 'a spread after other entries (the spread value can carry extra properties that override earlier entries at runtime; write the spread first, then override with explicit properties)'
-    case 'spreadOfExternalRecord': return 'a spread of a record the analysis cannot trace to a record literal built in this function (an external record — a parameter, a module binding, a call result — can hold its properties on a getter or the prototype, and object spread copies only own enumerable properties, leaving such a copy empty; a local record reassigned across branches or loop iterations also cannot be traced; to build exactly the declared record shape, list the fields explicitly, e.g. {gain: config.gain} instead of {...config})'
+    case 'objectSpread': return 'object spread (list every field explicitly, e.g. {gain: config.gain})'
     case 'asyncOrGeneratorFunction': return 'an async or generator function (the runtime result is a Promise or iterator, not the body\'s return value)'
     case 'typePredicate': return 'a type predicate (the checker takes the predicate on faith; return a plain boolean and check properties where they are read)'
     case 'protoProperty': return 'a property named __proto__ (prototype-setting syntax at runtime, not a data property)'
     case 'enumMemberRead': return 'an enum member read (replace the enum with plain module consts, e.g. const directionUp = 1)'
     case 'prototypeMemberRead': return `read of the inherited prototype member ${reason.property} (records carry only their own data properties)`
-    case 'binaryOperator': return `binary operator ${reason.operator} (supported: + - * / %, comparisons, and boolean && || !)`
+    case 'binaryOperator': return reason.operator === 'in'
+      ? 'the `in` operator (use a distinct string or boolean tag when property presence distinguishes union variants)'
+      : `binary operator ${reason.operator} (supported: + - * / %, comparisons, and boolean && || !)`
     case 'call': return reason.callee === 'Object.assign'
       ? 'function call Object.assign (object mutation is outside the subset; rebuilding a plain-data record may be suitable when identity and mutation are not observed)'
       : reason.arrayMethod != null
@@ -751,7 +729,6 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'evalInFile': return 'eval appears in this file; an eval string can rewrite any binding, so no function in the file is analyzed'
     case 'typeCheckSuppressed': return 'a @ts-ignore, @ts-expect-error, or @ts-nocheck comment turns off type checking in this file, so declared types cannot be trusted and no function is analyzed'
     case 'forLoopWithoutCondition': return 'for loop without a condition'
-    case 'forLoopWithoutIncrementor': return 'for loop without an incrementor'
     case 'variableDeclarationShape': return 'variables without identifier names and initializers'
     case 'expressionForm': return `expression (${reason.syntax})`
     case 'statementForm': return `statement (${reason.syntax})`
@@ -762,15 +739,12 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
   }
 }
 
-// The contract covers only what the declared return type exposes: a wider returned
-// record's extra properties are true facts, but not ones any type-checked caller can read.
 function declaredReturn(value: AbstractValue, lowering: FunctionIR): AbstractValue {
   if (lowering.returnPropertyNames == null) return value
   const declared = new Set(lowering.returnPropertyNames)
   if (value.kind === 'record') {
     return {kind: 'record', properties: value.properties.filter(property => declared.has(property.name))}
   }
-  // A {w: number} | null return carries the record inside the wrapper.
   if (value.kind === 'maybeNullish' && value.inner.kind === 'record') {
     return {
       ...value,
@@ -821,13 +795,13 @@ function returnSummaries(path: string, value: AbstractValue, program: ProgramIR)
       }
       const lines = [`${path}.${value.tagProperty} is ${uniqueTags.map(formatTagValue).join(' or ')}`]
       // Claims group by tag value, because the tag is all a caller can dispatch on: when
-      // several variants share one tag value (shapes told apart by an in-check, or the
-      // expansion of a plain-boolean tag), a property's claim must hold across the whole
-      // group — values join, and a property only some shapes carry gets a presence
-      // qualifier. A review round caught the per-variant version publishing two same-tag
-      // shapes' exclusive properties as unconditional: mutually exclusive claims, at
-      // least one false on every call. The tag property itself is skipped — the tags
-      // line and the qualifier already say its value.
+      // several variants share one tag value, or a plain-boolean tag expands into several
+      // shapes, a property's claim must hold across the whole group — values join, and a
+      // property only some shapes carry gets a presence qualifier. A review round caught
+      // the per-variant version publishing two same-tag shapes' exclusive properties as
+      // unconditional: mutually exclusive claims, at least one false on every call. The
+      // tag property itself is skipped — the tags line and the qualifier already say its
+      // value.
       for (const tagValue of uniqueTags) {
         const group = value.variants.filter(variant => variant.tagValue === tagValue)
         const names: string[] = []

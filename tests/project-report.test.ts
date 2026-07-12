@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test'
-import {existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs'
+import {existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {dirname, join} from 'node:path'
 import * as ts from 'typescript'
@@ -286,11 +286,8 @@ test('error-level findings gate the exit code while the audit stays informationa
 }
 `})
 
-    // Findings mode is the CI gate at both granularities.
-    expect(runCli(projectDirectory).exitCode).toBe(1)
+    // Findings mode is the CI gate; the audit reports the same file without gating.
     expect(runCli(projectDirectory, 'wrong.ts').exitCode).toBe(1)
-    // The audit reports the same file without gating; it fails only on TypeScript errors.
-    expect(runCli(projectDirectory, '--audit').exitCode).toBe(0)
     expect(runCli(projectDirectory, '--audit', 'wrong.ts').exitCode).toBe(0)
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
@@ -345,13 +342,14 @@ export function ignoresImplicitAny(value): number { return 1 }
   }
 })
 
-test('bare fr searches upward and solution configs include their project references', () => {
+test('solution configs include references and govern targeted formatting', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-upward-config-'))
   try {
     const packageDirectory = join(projectDirectory, 'packages', 'geometry')
     const nestedDirectory = join(packageDirectory, 'src', 'nested')
     mkdirSync(nestedDirectory, {recursive: true})
     writeFileSync(join(projectDirectory, 'tsconfig.json'), JSON.stringify({
+      compilerOptions: {pretty: false},
       files: [],
       references: [{path: './packages/geometry'}],
     }))
@@ -363,18 +361,20 @@ test('bare fr searches upward and solution configs include their project referen
         module: 'ESNext',
         rootDir: 'src',
         outDir: 'dist',
+        pretty: true,
       },
       include: ['src/**/*.ts'],
     }))
     writeFileSync(join(packageDirectory, 'src', 'answer.ts'),
       'export function answer(value: number, divisor: number): number { return value / divisor }\n')
 
-    const result = runCli(nestedDirectory)
+    const result = runCli(projectDirectory)
 
     expect(result.exitCode).toBe(0)
-    expect(result.stdout).toStartWith('../answer.ts(')
-    expect(result.stdout).not.toContain('packages/geometry/src/answer.ts')
+    expect(result.stdout).toStartWith('packages/geometry/src/answer.ts(')
     expect(result.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed')
+    const targeted = runCli(projectDirectory, 'packages/geometry/src/answer.ts')
+    expect(targeted.stdout.split('\n')[0]).toBe(result.stdout.split('\n')[0])
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
@@ -509,47 +509,35 @@ test('a nested strict tsconfig cannot fail a file the project run accepts', () =
     }
     expect(targeted.stdout).toContain('1 finding (0 errors, 0 warnings, 1 note).')
 
-    // The file audit unit is character-for-character a slice of the project audit.
-    const projectAudit = runCli(projectDirectory, '--audit')
-    expect(projectAudit.exitCode).toBe(0)
-    const fileAudit = runCli(projectDirectory, '--audit', 'sub/loose.ts')
-    expect(fileAudit.exitCode).toBe(0)
-    const unit = fileAudit.stdout.slice(auditPreamble.length).trim()
-    expect(unit.length).toBeGreaterThan(0)
-    expect(projectAudit.stdout).toContain(unit)
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
 })
 
-test('a file outside the project file set analyzes under the cwd-resolved options', () => {
-  // The fixture workflow: run `fr /tmp/fixture.ts` from a project root. The fixture is
-  // not in the project's file set, so it gets a single-file program — under the cwd
-  // project's compiler options, not options found near the file.
-  const strictDirectory = mkdtempSync(join(tmpdir(), 'freerange-outside-strict-'))
-  const laxDirectory = mkdtempSync(join(tmpdir(), 'freerange-outside-lax-'))
+test('a file outside the project is rejected in both file modes', () => {
+  // File mode is a subset of project mode. A file omitted by the cwd-resolved tsconfig
+  // has no project result to select, so it cannot silently become a separate program.
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-outside-project-'))
   const fixtureDirectory = mkdtempSync(join(tmpdir(), 'freerange-outside-fixture-'))
   try {
-    writeProject(strictDirectory, {'main.ts': 'export function ok(): number { return 1 }\n'})
-    writeProject(laxDirectory, {'main.ts': 'export function ok(): number { return 1 }\n'}, laxOptions)
+    writeProject(projectDirectory, {'main.ts': 'export function ok(): number { return 1 }\n'})
     const fixture = join(fixtureDirectory, 'fixture.ts')
     writeFileSync(fixture, nestedTsconfigSource)
+    const alias = join(fixtureDirectory, 'main-alias.ts')
+    symlinkSync(join(projectDirectory, 'main.ts'), alias)
 
-    const underStrict = runCli(strictDirectory, fixture)
-    expect(underStrict.exitCode).toBe(1)
-    expect(underStrict.stderr).toContain("error TS7006: Parameter 'amount' implicitly has an 'any' type.")
+    const throughAlias = runCli(projectDirectory, alias)
+    expect(throughAlias.exitCode).toBe(0)
+    expect(throughAlias.stdout).toContain('No lint findings.')
 
-    const underLax = runCli(laxDirectory, fixture)
-    expect(underLax.exitCode).toBe(0)
-    expect(underLax.stderr).toBe('')
-    expect(underLax.stdout).toContain('callers of divide must keep denominator is nonzero')
-
-    const auditUnderStrict = runCli(strictDirectory, '--audit', fixture)
-    expect(auditUnderStrict.exitCode).toBe(1)
-    expect(auditUnderStrict.stdout).toBe('')
+    for (const args of [[fixture], ['--audit', fixture]]) {
+      const result = runCli(projectDirectory, ...args)
+      expect(result.exitCode).toBe(1)
+      expect(result.stdout).toBe('')
+      expect(result.stderr).toContain('File is not part of the project resolved from')
+    }
   } finally {
-    rmSync(strictDirectory, {recursive: true, force: true})
-    rmSync(laxDirectory, {recursive: true, force: true})
+    rmSync(projectDirectory, {recursive: true, force: true})
     rmSync(fixtureDirectory, {recursive: true, force: true})
   }
 })

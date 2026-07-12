@@ -124,34 +124,6 @@ export function lowerStatementExpression(expression: ts.Expression, context: Fun
   lowerExpression(expression, context)
 }
 
-// Instructions lowered so far, indexed by result ValueID — the same producer table the
-// engine builds after sealing, assembled mid-lowering so the spread gate below can chase
-// a spread source through record literals. Block parameters have no producer and index
-// as undefined, which classifies them as not-a-literal, the conservative side.
-function producersByValue(context: FunctionContext): Array<InstructionIR | undefined> {
-  const producers: Array<InstructionIR | undefined> = []
-  for (const block of context.blocks) {
-    for (const instruction of block.instructions) producers[instruction.result] = instruction
-  }
-  return producers
-}
-
-// Resolves a value through property reads of record literals built in this function:
-// with `const wrapper = {inner: {x: 1}}`, the read wrapper.inner resolves to the inner
-// literal. Anything else — a parameter, a module binding, a call result — resolves to
-// itself.
-function resolveThroughRecordLiterals(value: ValueID, producers: Array<InstructionIR | undefined>): ValueID {
-  const producer = producers[value]
-  if (producer?.kind !== 'property') return value
-  const resolvedObject = resolveThroughRecordLiterals(producer.object, producers)
-  const objectProducer = producers[resolvedObject]
-  if (objectProducer?.kind === 'object') {
-    const source = objectProducer.properties.find(property => property.name === producer.property)
-    if (source != null) return resolveThroughRecordLiterals(source.value, producers)
-  }
-  return value
-}
-
 export function lowerExpression(expression: ts.Expression, context: FunctionContext): ValueID {
   const current = unwrap(expression, context.checker)
   if (ts.isNumericLiteral(current)) {
@@ -240,55 +212,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         properties.set(name, {name, value: lowerExpression(property.initializer, context)})
         continue
       }
-      // `{...template, width: 200}` over a record literal built in this function: the
-      // copy's property layout is known exactly, so a spread is one read per source
-      // property; later entries override earlier ones below.
-      if (ts.isSpreadAssignment(property)) {
-        // The spread must be the literal's first entry. Width subtyping lets the spread
-        // value carry properties its static type never names, and the runtime spread
-        // copies those too — so a spread after other entries could silently override them
-        // (`{...defaults, ...overrides}` where the overrides value carries a `volume` its
-        // type omits). With the spread first, whatever extras it copies are either
-        // overridden by the later explicit entries or unreadable through the result type.
-        if (properties.size > 0) {
-          throw unsupported(property, {kind: 'spreadAfterProperties'})
-        }
-        const sourceType = context.checker.getTypeAtLocation(property.expression)
-        if (valueKind(sourceType, context.checker) !== 'object') {
-          throw unsupported(property, {kind: 'valueType', typeText: context.checker.typeToString(sourceType)})
-        }
-        const source = lowerExpression(property.expression, context)
-        // The source must resolve to a record literal built in this function. Object
-        // spread copies only OWN enumerable properties, so for a record built elsewhere —
-        // a parameter, a module binding, a call result — a conforming value can hold its
-        // properties on a getter or the prototype and the copy comes out EMPTY:
-        // `class NumberBox { get gain(): number { return 10 } }` satisfies {gain: number}
-        // with zero casts, copy.gain is undefined at runtime, and the per-property reads
-        // lowered below would prove claims that runtime falsifies. The explicit-fields
-        // spelling {gain: config.gain} is the supported rewrite: the read genuinely
-        // happens, repairing the JavaScript itself, not just the analysis. A LOCAL
-        // literal's own-property layout is known exactly, so spreading one stays
-        // accepted.
-        const producers = producersByValue(context)
-        if (producers[resolveThroughRecordLiterals(source, producers)]?.kind !== 'object') {
-          throw unsupported(property, {kind: 'spreadOfExternalRecord'})
-        }
-        for (const member of context.checker.getPropertiesOfType(sourceType)) {
-          if (member.name === '__proto__') throw unsupported(property, {kind: 'protoProperty'})
-          // Each copied property's kind must be representable: a `value: number | boolean`
-          // property passes no read gate, so the record join may have dropped it, and the
-          // spread's own read would be the one ungated path to the dropped property.
-          const memberType = context.checker.getTypeOfSymbol(member)
-          if (valueKind(memberType, context.checker) == null) {
-            throw unsupported(property, {kind: 'valueType', typeText: context.checker.typeToString(memberType)})
-          }
-          properties.set(member.name, {
-            name: member.name,
-            value: addInstruction(context, property, {kind: 'property', object: source, property: member.name}),
-          })
-        }
-        continue
-      }
+      if (ts.isSpreadAssignment(property)) throw unsupported(property, {kind: 'objectSpread'})
       throw unsupported(property, {kind: 'objectPropertyForm'})
     }
     // A literal written where a tagged union is expected ({type: 'sidebar', width: 240}
@@ -338,9 +262,8 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         // the tag position provides it (the same trust rule tag-check comparisons and
         // switch labels follow). The variant's own optionals fill from every contextual
         // member whose tag values include the written one, so a duplicate-tag literal
-        // covers both shapes' optionals; filling never breaks the in-check split — an
-        // optional property reads as unknown presence either way. Rebuild spreads carry
-        // their source's filled optionals along, so they need no filling here.
+        // covers both shapes' optionals. An optional property reads as possibly undefined
+        // either way.
         const ownLiteral = writtenTagLiteral(current, tagProperty, context)
         if (ownLiteral != null) {
           for (const member of contextMembers) {
@@ -398,7 +321,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     }
     const left = lowerExpression(current.left, context)
     const notMissing = addInstruction(context, current, {kind: 'nullishCheck', value: left, sentinel: 'nullish', negated: true})
-    // The true arm re-reads a's slot, which the branch refinement has unwrapped.
+    // The true arm uses the left value refined by the nullish check.
     return lowerValueBranch(
       current,
       notMissing,
@@ -422,8 +345,6 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     }
     const tagComparison = tagCheckComparison(current, context)
     if (tagComparison != null) return tagComparison
-    const presence = inCheckExpression(current, context)
-    if (presence != null) return presence
     const opaqueComparison = opaqueEqualityCheck(current, context)
     if (opaqueComparison != null) return opaqueComparison
     // `width + 'px'`: string building with + is everywhere in UI code, and the template
@@ -963,9 +884,9 @@ export function nonMissingUnionMembers(type: ts.UnionType): readonly ts.Type[] {
 // member, typed as a single string literal in each. The first property (in the first
 // member's declaration order) that qualifies wins — by convention the tag comes first
 // (`type: 'lightbox'`). Two members MAY share a tag value (`{type: 'updates'; tab} |
-// {type: 'updates'; article}`): a tag check then keeps both, and telling them apart takes
-// an `in` check, exactly as it does in TypeScript's own narrowing. Null when no property
-// qualifies.
+// {type: 'updates'; article}`): a tag check then keeps both. Code that must tell them apart
+// needs a distinct tag value; `in` checks are outside the subset because width subtyping
+// permits undeclared extra properties. Null when no property qualifies.
 // Keyed on the members ARRAY: a union type's .types array is interned by the checker, so
 // the reference identifies the member set exactly. Nullable unions use the stable array
 // from nonMissingUnionMembers; any other freshly built array simply misses.
@@ -1253,20 +1174,6 @@ function tagCheckComparison(expression: ts.BinaryExpression, context: FunctionCo
     }
   }
   return null
-}
-
-// `'tab' in route` on a tagged union: the branches split the variants that declare the
-// property from those that do not. Any other use of `in` stays rejected (the binary
-// operator catch-all): on a plain record the answer is always yes for declared
-// properties, and dynamic keys are outside the subset.
-function inCheckExpression(expression: ts.BinaryExpression, context: FunctionContext): ValueID | null {
-  if (expression.operatorToken.kind !== ts.SyntaxKind.InKeyword) return null
-  const key = unwrap(expression.left, context.checker)
-  if (!ts.isStringLiteral(key) && !ts.isNoSubstitutionTemplateLiteral(key)) return null
-  const objectType = context.checker.getTypeAtLocation(expression.right)
-  if (valueKind(objectType, context.checker) !== 'taggedUnion') return null
-  const union = lowerExpression(expression.right, context)
-  return addInstruction(context, expression, {kind: 'inCheck', union, property: key.text})
 }
 
 // `mode === 'compact'`: comparing two carried-without-claims values yields a boolean the

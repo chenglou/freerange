@@ -224,6 +224,14 @@ describe('acceptance and module safety', () => {
       expect(fn.kind).toBe(fn.name === 'module initialization' ? 'partial' : 'unsupported')
     }
     expect(formatReport(report)).toContain('a @ts-ignore, @ts-expect-error, or @ts-nocheck comment turns off type checking')
+
+    const mentionedOnly = analyzeSource('suppression-text.ts', `
+      const documentation = '@ts-ignore is a TypeScript directive'
+      // // @ts-expect-error disabled during migration
+      export function width(): number { return documentation.length }
+    `)
+    expect(analyzedFunction(mentionedOnly, 'width').ensures)
+      .toEqual(['return is a finite integer number from 0 through 9007199254740991'])
   })
 
   test('records a kind-changing non-null assertion as unsupported', () => {
@@ -458,10 +466,7 @@ describe('acceptance and module safety', () => {
       name: 'module initialization',
       assumptions: [],
       stopped: [],
-      skipped: [
-        `function call window.addEventListener at ${file}:3:7`,
-        `a write into an object (mutation is outside the subset; rebuilding a plain-data record may be suitable when identity and mutation are not observed) at ${file}:6:7`,
-      ],
+      skipped: [`function call window.addEventListener at ${file}:3:7`],
       observed: [],
     })
     // Bindings around the skipped statements still publish exactly...
@@ -490,26 +495,6 @@ describe('acceptance and module safety', () => {
     `)
     expect(analyzedFunction(report, 'getDoubled').ensures)
       .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
-  })
-
-  test('divisions consumed only by comparisons need no requirement', () => {
-    // A NaN or Infinity quotient just makes the comparison true or false, which the
-    // boolean domain covers; the non-finiteness cannot reach a return value or a write.
-    const report = analyzeSource('compare-only.ts', `
-      export function threshold(a: number, b: number): number {
-        return a / b > 5 ? 1 : 0
-      }
-      export function propertyGuard(grid: {cols: number}, w: number): number {
-        if (w / grid.cols > 5) return 1
-        return 0
-      }
-    `)
-    const threshold = analyzedFunction(report, 'threshold')
-    expect(threshold.requires).toEqual([])
-    expect(threshold.ensures).toEqual(['return is a finite integer number from 0 through 1'])
-    const guard = analyzedFunction(report, 'propertyGuard')
-    expect(guard.requires).toEqual([])
-    expect(guard.ensures).toEqual(['return is a finite integer number from 0 through 1'])
   })
 
   test('a floored divisor mints a requirement and a finite quotient', () => {
@@ -610,76 +595,46 @@ describe('acceptance and module safety', () => {
       .toEqual(['return is a finite number at least 10'])
   })
 
-  test('object spread is confined to local literals; the update idiom spells its fields', () => {
-    // Object spread copies only OWN enumerable properties, so a spread rejects unless the
-    // source is traced to a record literal built in this function: an external record can
-    // hold the declared properties on a getter or the prototype and the copy comes out
-    // empty (see the values tests for the falsification shape), and a local record
-    // reassigned across branches has no single literal to trace to. The update idiom
-    // rebuilds with explicit fields instead. A spread of a LOCAL literal stays accepted —
-    // its own-property layout is known — with later entries overriding.
+  test('object spread rejects; explicit-field rebuilding analyzes', () => {
     const report = analyzeSource('spread.ts', `
       type Spring = {pos: number; dest: number; v: number}
-      const defaultSpring = {pos: 0, dest: 0, v: 0}
-      function makeSpring(): Spring {
-        return {pos: 0, dest: 0, v: 0}
-      }
       export function settleSpread(s: Spring): Spring {
         return {...s, pos: s.dest, v: 0}
       }
-      export function settleModuleSpread(): Spring {
-        return {...defaultSpring, v: 1}
-      }
-      export function settleCallSpread(): Spring {
-        return {...makeSpring(), v: 1}
-      }
-      export function settleRebound(flag: boolean): number {
-        let spring = {pos: 1}
-        if (flag) {
-          spring = {pos: 2}
-        }
-        const copy = {...spring}
-        return copy.pos
-      }
-      export function settle(s: Spring): Spring {
+      export function settleExplicit(s: Spring): Spring {
         return {pos: s.dest, dest: s.dest, v: 0}
       }
-      export function overridden(): number {
+      export function localSpread(): number {
         const defaults = {width: 300, height: 200}
         const sized = {...defaults, width: 150}
         return sized.width + sized.height
       }
-      export function merged(b: {x: number; y: number}): number {
-        const a = {x: 1}
-        const both = {...a, ...b}
-        return Math.min(both.x, both.y)
-      }
     `)
     expect(report.functions.find(candidate => candidate.name === 'settleSpread')?.kind).toBe('unsupported')
-    // The boundary has three external source clauses — a parameter (settleSpread), a
-    // module binding (settleModuleSpread), a call result (settleCallSpread) — and each
-    // needs its own pin: a gate weakened to reject only producer-less sources kept the
-    // whole suite green while re-admitting module-binding spreads, the exact getter
-    // falsification the rule exists to prevent.
-    expect(report.functions.find(candidate => candidate.name === 'settleModuleSpread')?.kind).toBe('unsupported')
-    expect(report.functions.find(candidate => candidate.name === 'settleCallSpread')?.kind).toBe('unsupported')
-    // A local record reassigned across branches is built in the function but cannot be
-    // traced to one literal (the join has no producer), so the spread rejects on the
-    // conservative side — and the message must stay honest about that trigger too.
-    expect(report.functions.find(candidate => candidate.name === 'settleRebound')?.kind).toBe('unsupported')
-    expect(formatReport(report)).toContain('a spread of a record the analysis cannot trace to a record literal built in this function (an external record — a parameter, a module binding, a call result — can hold its properties on a getter or the prototype, and object spread copies only own enumerable properties, leaving such a copy empty; a local record reassigned across branches or loop iterations also cannot be traced; to build exactly the declared record shape, list the fields explicitly, e.g. {gain: config.gain} instead of {...config})')
-    expect(analyzedFunction(report, 'settle').ensures).toEqual([
+    expect(report.functions.find(candidate => candidate.name === 'localSpread')?.kind).toBe('unsupported')
+    expect(formatReport(report)).toContain('object spread (list every field explicitly')
+    expect(analyzedFunction(report, 'settleExplicit').ensures).toEqual([
       'return.pos is a finite number',
       'return.dest is a finite number',
       'return.v is a finite integer number from 0 through 0',
     ])
-    expect(analyzedFunction(report, 'overridden').ensures)
-      .toEqual(['return is a finite integer number from 350 through 350'])
-    // The second spread rejects even over a local first spread: at runtime it also
-    // copies properties b's type never names, which could override entries from a.
-    const mergedFn = report.functions.find(candidate => candidate.name === 'merged')
-    expect(mergedFn?.kind).toBe('unsupported')
-    expect(formatReport(report)).toContain('a spread after other entries (the spread value can carry extra properties that override earlier entries at runtime; write the spread first, then override with explicit properties)')
+  })
+
+  test('rejects in-operator narrowing over record unions', () => {
+    // Width subtyping permits a value of the second variant to carry an extra x property,
+    // so runtime presence cannot prove which declared variant the value inhabits.
+    const report = analyzeSource('in-check.ts', `
+      type Route = {type: 'withX'; x: number} | {type: 'withoutX'; y: number}
+      export function readX(route: Route): number {
+        if ('x' in route) return route.x
+        return 0
+      }
+    `)
+    expect(report.functions).toEqual([{
+      kind: 'unsupported',
+      name: 'readX',
+      unsupported: 'the `in` operator (use a distinct string or boolean tag when property presence distinguishes union variants) at in-check.ts:4:13',
+    }])
   })
 
   test('carries a module read assumption to callers of the reading function', () => {

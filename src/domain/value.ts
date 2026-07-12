@@ -97,9 +97,9 @@ export type AbstractTaggedUnion = {
   kind: 'taggedUnion'
   tagProperty: string
   // Declared order; the tuple form carries the non-emptiness so consumers need no
-  // defensive emptiness handling. Two variants MAY share a tag value (they then differ by
-  // which properties they carry, told apart by an in-check), so joins pair variants by
-  // tag AND property-name shape, never by tag alone.
+  // defensive emptiness handling. Two declared variants MAY share a tag value while
+  // carrying different properties, so joins pair variants by tag AND property-name
+  // shape, never by tag alone.
   variants: [TaggedVariant, ...TaggedVariant[]]
 }
 
@@ -229,11 +229,11 @@ export function tryJoinValues(left: AbstractValue, right: AbstractValue): Abstra
 // shape joining a branch that built the archive shape carries both, each shape's facts
 // intact — and two variants sharing a tag ({type: 'updates'; tab} | {type: 'updates';
 // article}) stay separate, because pairing them by tag alone would intersect away the
-// very properties an in-check tells them apart by (a self-join would then prune a
-// reachable branch). The list can only hold shapes some side already had — analysis never
-// invents a variant — so it stays bounded by the declared type. Mismatched tag properties
-// cannot meet through the gates; null degrades the surrounding structure like any other
-// kind mismatch.
+// properties that distinguish the declared shapes (a self-join would then prune a
+// reachable branch). The list can only hold shapes some side already had — analysis
+// never invents a variant — so it stays bounded by the declared type. Mismatched tag
+// properties cannot meet through the gates; null degrades the surrounding structure
+// like any other kind mismatch.
 function joinTaggedUnions(left: AbstractTaggedUnion, right: AbstractTaggedUnion): AbstractTaggedUnion | null {
   if (left.tagProperty !== right.tagProperty) return null
   const pairWithRight = (variant: TaggedVariant): TaggedVariant => {

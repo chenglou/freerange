@@ -7,9 +7,8 @@ export type CheckedSource = {
   checker: ts.TypeChecker
 }
 
-// When no tsconfig is in scope at all, single-file analysis gets the recommended
-// authoring checks. When a tsconfig does resolve from the current directory, the caller
-// passes that project's options instead, so one configuration governs every file.
+// When no tsconfig is in scope, single-file analysis gets the recommended authoring
+// checks. Project file mode uses the project's existing Program instead of this helper.
 const fallbackOptions: ts.CompilerOptions = {
   target: ts.ScriptTarget.ESNext,
   module: ts.ModuleKind.ESNext,
@@ -23,10 +22,10 @@ const fallbackOptions: ts.CompilerOptions = {
   types: [],
 }
 
-export function checkFile(file: string, options: ts.CompilerOptions = fallbackOptions): CheckedSource {
+export function checkFile(file: string): CheckedSource {
   const absoluteFile = resolve(file)
-  const program = ts.createProgram([absoluteFile], options)
-  return checkedSource(program, absoluteFile, options)
+  const program = ts.createProgram([absoluteFile], fallbackOptions)
+  return checkedSource(program, absoluteFile, fallbackOptions)
 }
 
 export function checkSource(file: string, source: string): CheckedSource {

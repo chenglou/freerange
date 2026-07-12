@@ -19,11 +19,20 @@ import {
   type AbstractNumber,
 } from '../domain/number.ts'
 import {
+  joinValues,
+  recordProperty,
+  recordValue,
   tryJoinValues,
-  type AbstractTaggedUnion,joinValues, recordProperty, recordValue, unknownBoolean, type AbstractBoolean, type AbstractRecord, type AbstractValue, type TaggedVariant} from '../domain/value.ts'
+  unknownBoolean,
+  type AbstractBoolean,
+  type AbstractRecord,
+  type AbstractTaggedUnion,
+  type AbstractValue,
+  type TaggedVariant,
+} from '../domain/value.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
-import {forEachOperand, type ComparisonOperator, type EdgeIR, type InstructionIR} from '../ir/instructions.ts'
-import {coveringKindValue, declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
+import {coveringKindValue, declaredKindOf, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
   peelNonzero,
@@ -33,7 +42,14 @@ import {
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {completedEvaluation, type FunctionEvaluation, type Stop} from './outcome.ts'
-import {addValidIndexPair, cloneState, dropModuleRootedPairs, freshSlotVersion, hasValidIndexPair, mixedSlotVersion, type ExecutionState, type SharedState, type ValidIndexPair} from './state.ts'
+import {
+  addValidIndexPair,
+  cloneState,
+  hasValidIndexPair,
+  type ExecutionState,
+  type SharedState,
+  type ValidIndexPair,
+} from './state.ts'
 
 type EvaluateFunction = (
   functionID: FunctionID,
@@ -52,12 +68,6 @@ export type TransferContext = {
   // Element reads the engine could not prove in bounds — the peer of preconditions,
   // accumulated per evaluation and adopted from completed callees the same way.
   boundsAssumptions: BoundsAssumption[]
-  // By ValueID: whether any consumer other than a compare instruction reads the value. A
-  // division consumed only by comparisons needs no nonzero requirement: a NaN or Infinity
-  // quotient just makes the comparison false-or-true, which the boolean domain already
-  // covers, and the non-finiteness cannot reach a return value or a write. This is the
-  // first piece of deriving requirements from the final guarantee instead of the operation.
-  usedOutsideCompare: boolean[]
   evaluateFunction: EvaluateFunction
 }
 
@@ -120,31 +130,6 @@ function withLossBlame(result: AbstractNumber, operands: AbstractNumber[], site:
   return annotated
 }
 
-// See TransferContext.usedOutsideCompare. Terminator uses (return values, branch
-// conditions, block-parameter arguments) all count as outside; the per-instruction operand
-// enumeration lives with the instruction type (forEachOperand), so only the compare
-// exemption is decided here.
-export function collectNonCompareUses(fn: FunctionIR): boolean[] {
-  const used: boolean[] = []
-  const markEdge = (edge: EdgeIR): void => {
-    for (const argument of edge.arguments) used[argument] = true
-  }
-  for (const block of fn.blocks) {
-    for (const instruction of block.instructions) {
-      if (instruction.kind === 'compare') continue
-      forEachOperand(instruction, operand => { used[operand] = true })
-    }
-    switch (block.terminator.kind) {
-      case 'return': if (block.terminator.value != null) used[block.terminator.value] = true; break
-      case 'branch': used[block.terminator.condition] = true; markEdge(block.terminator.whenTrue); markEdge(block.terminator.whenFalse); break
-      case 'jump': markEdge(block.terminator.target); break
-      case 'stop': break
-      case 'thrown': break
-    }
-  }
-  return used
-}
-
 export function evaluateInstruction(
   instruction: InstructionIR,
   state: ExecutionState,
@@ -162,7 +147,7 @@ export function evaluateInstruction(
       if (missingElementSite != null) {
         return {kind: 'stop', stop: {site: missingElementSite, reason: {kind: 'possiblyMissingElement'}}}
       }
-      return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'unmodeledNarrowing'}}}
+      return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'kindMismatch'}}}
     }
     throw error
   }
@@ -208,8 +193,8 @@ function evaluateInstructionKinded(
         || (index.integer && !index.mayBeNaN && index.lower >= 0
           && hasValidIndexPair(
             state.validIndexPairs,
-            canonicalValueKey(instruction.index, context.expressionContext, state),
-            canonicalValueKey(instruction.array, context.expressionContext, state),
+            canonicalValueKey(instruction.index, context.expressionContext),
+            canonicalValueKey(instruction.array, context.expressionContext),
           ))
       // A provably out-of-bounds read: for the asserted form the assertion lied; for the
       // bare form the value is exactly undefined. An empty sequence is the special case
@@ -267,29 +252,6 @@ function evaluateInstructionKinded(
         ? {kind: 'boolean', canBeTrue: equals.canBeFalse, canBeFalse: equals.canBeTrue}
         : equals)
     }
-    case 'inCheck': {
-      const operand = requiredValue(state, instruction.union)
-      // A plain record answers presence in ONE direction only (see the tagCheck arm for
-      // how one gets here): a property present in the abstract record was present on
-      // every joined source, so 'in' is definitely true — but a MISSING name proves
-      // nothing, because record joins drop the properties the sides disagree on, and
-      // claiming the branch dead published a wrong ensures on the builder idiom (a review
-      // round caught it: joined {kind, scroll} and {kind, tab} lose 'tab', while runtime
-      // 'tab' in route is true half the time). Absent answers unknown.
-      if (operand.kind === 'record') {
-        const presence = variantPropertyPresence(operand, instruction.property)
-        return value({kind: 'boolean', canBeTrue: true, canBeFalse: presence !== 'present'})
-      }
-      const union = requiredTaggedUnion(state, instruction.union)
-      let hasIt = false
-      let lacksIt = false
-      for (const variant of union.variants) {
-        const presence = variantPropertyPresence(variant.record, instruction.property)
-        if (presence !== 'absent') hasIt = true
-        if (presence !== 'present') lacksIt = true
-      }
-      return value({kind: 'boolean', canBeTrue: hasIt, canBeFalse: lacksIt})
-    }
     case 'nullishCheck': {
       const operand = requiredValue(state, instruction.value)
       // Opaque carries no claims, so the runtime value may itself be null or undefined —
@@ -324,9 +286,6 @@ function evaluateInstructionKinded(
       if (slot.kind === 'uninitialized') {
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'moduleRead', binding: instruction.binding}}}
       }
-      // Remember which slot version this read observed; a later refinement of the read's
-      // result narrows the slot only while the version still matches (see ModuleSlot).
-      state.frame.readVersions[instruction.result] = slot.version
       return passthroughValue(slot.value)
     }
     case 'moduleWrite': {
@@ -340,11 +299,8 @@ function evaluateInstructionKinded(
       // category is single-kind: value/kind writes are type-checked against the declared
       // number, boolean, or record shape.
       if (binding.category.kind !== 'opaque') {
-        state.shared[instruction.binding] = {kind: 'value', value: assigned, version: freshSlotVersion()}
+        state.shared[instruction.binding] = {kind: 'value', value: assigned}
       }
-      // A bounds check proven against the binding's previous value must not survive the
-      // rebind: `data = [7]` can shrink the array under a recorded pair.
-      state.validIndexPairs = dropModuleRootedPairs(state.validIndexPairs, instruction.binding)
       return passthroughValue(assigned)
     }
     case 'moduleHavoc': {
@@ -355,8 +311,7 @@ function evaluateInstructionKinded(
       // any assumes line, so the reset must include NaN and infinities.
       state.shared[instruction.binding] = declaredKind == null
         ? {kind: 'uninitialized'}
-        : {kind: 'value', value: coveringKindValue(declaredKind), version: freshSlotVersion()}
-      state.validIndexPairs = dropModuleRootedPairs(state.validIndexPairs, instruction.binding)
+        : {kind: 'value', value: coveringKindValue(declaredKind)}
       return value({kind: 'void'})
     }
     case 'object': {
@@ -503,7 +458,7 @@ function evaluateInstructionKinded(
       // through argument values: every argument pair whose valid-index relation holds
       // here seeds the same relation on the callee's parameters, so a guarded call site
       // discharges the callee's element read instead of inheriting its requirement.
-      const argumentKeys = instruction.arguments.map(id => canonicalValueKey(id, context.expressionContext, state))
+      const argumentKeys = instruction.arguments.map(id => canonicalValueKey(id, context.expressionContext))
       const seededIndexPairs: ValidIndexPair[] = []
       for (let indexPosition = 0; indexPosition < argumentKeys.length; indexPosition++) {
         for (let arrayPosition = 0; arrayPosition < argumentKeys.length; arrayPosition++) {
@@ -534,9 +489,6 @@ function evaluateInstructionKinded(
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
-      // The callee may have rebound any module binding; only module-rooted pairs are at
-      // risk (parameter- and value-rooted pairs name immutable values).
-      state.validIndexPairs = dropModuleRootedPairs(state.validIndexPairs, null)
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
       return passthroughValue(completed.returnValue)
@@ -555,7 +507,6 @@ function evaluateInstructionKinded(
       if (
         (instruction.operator === 'divide' || instruction.operator === 'remainder')
         && includesZero(right)
-        && context.usedOutsideCompare[instruction.result] === true
       ) {
         const operation = instruction.operator === 'divide' ? 'division' : 'remainder'
         const expression = numericExpression(instruction.right, context.expressionContext)
@@ -631,48 +582,6 @@ function refineTagCheck(
   const union = requiredTaggedUnion(result, check.union)
   const wantMatch = truth !== check.negated
   const [firstKept, ...restKept] = union.variants.filter(variant => (variant.tagValue === check.tagValue) === wantMatch)
-  if (firstKept == null) return null
-  writeThroughProducers(result, check.union, {kind: 'taggedUnion', tagProperty: union.tagProperty, variants: [firstKept, ...restKept]}, producers)
-  return result
-}
-
-// Whether 'x' in value holds for a variant: a property the variant never declares is
-// absent, a required one is present, and an OPTIONAL one (its value carries the undefined
-// sentinel) is unknown — at runtime the property may genuinely not exist, so the check
-// must not claim either way, and the variant survives both branches unrefined. (A
-// required `x: number | undefined` also reads as maybe-undefined and lands in the unknown
-// bucket — conservative, since for it `in` is actually always true.)
-function variantPropertyPresence(record: AbstractRecord, name: string): 'present' | 'absent' | 'unknown' {
-  const property = recordProperty(record, name)
-  if (property == null) return 'absent'
-  const maybeUndefined = (property.kind === 'nullish' || property.kind === 'maybeNullish')
-    && (property.sentinels === 'undefined' || property.sentinels === 'both')
-  return maybeUndefined ? 'unknown' : 'present'
-}
-
-// The branch where 'tab' in route held keeps the variants declaring the property; the
-// other branch keeps the rest, and variants whose property is optional survive both.
-function refineInCheck(
-  state: ExecutionState,
-  check: Extract<InstructionIR, {kind: 'inCheck'}>,
-  truth: boolean,
-  producers: Array<InstructionIR | undefined>,
-): ExecutionState | null {
-  const result = cloneState(state)
-  const recordOperand = requiredValue(result, check.union)
-  if (recordOperand.kind === 'record') {
-    // Only the present direction decides (a join never invents a property); a missing
-    // name may be a join casualty, so it prunes nothing.
-    const presence = variantPropertyPresence(recordOperand, check.property)
-    if (presence === 'present' && !truth) return null
-    return result
-  }
-  const union = requiredTaggedUnion(result, check.union)
-  const [firstKept, ...restKept] = union.variants.filter(variant => {
-    const presence = variantPropertyPresence(variant.record, check.property)
-    if (presence === 'unknown') return true
-    return (presence === 'present') === truth
-  })
   if (firstKept == null) return null
   writeThroughProducers(result, check.union, {kind: 'taggedUnion', tagProperty: union.tagProperty, variants: [firstKept, ...restKept]}, producers)
   return result
@@ -799,24 +708,6 @@ function writeThroughProducers(
       if (source != null) writeThroughProducers(state, source.value, met, producers)
     }
     return
-  }
-  // A module read's refinement narrows the SLOT, so the fact carries to later re-reads —
-  // the parse-then-throw top-level guard publishes its laundered value, and the
-  // read-check-read spelling narrows without a local copy. The version guard is what
-  // makes it sound: a refinement can fire AFTER a rebind (read a snapshot, write the
-  // binding, then branch on the snapshot), and clobbering the fresh slot with the refined
-  // stale value published a false ensures (a review round ran the counterexample). The
-  // slot narrows only while its version matches the one the read observed — no write in
-  // between, on every path the state covers (see ModuleSlot on why versions rather than
-  // object identity). The slot's value can meanwhile be tighter than this read's frame
-  // value (another read's refinement of the same slot landed first), so the write meets
-  // the two covers instead of overwriting.
-  if (producer?.kind === 'moduleRead') {
-    const slot = state.shared[producer.binding]
-    const observed = state.frame.readVersions[id]
-    if (slot?.kind === 'value' && observed != null && observed !== mixedSlotVersion && slot.version === observed) {
-      state.shared[producer.binding] = {kind: 'value', value: meetValues(slot.value, met), version: slot.version}
-    }
   }
   if (producer?.kind === 'arrayLength' && met.kind === 'number') {
     const parent = state.frame.values[producer.array]
@@ -1045,8 +936,8 @@ function refineComparison(
     if (rightProducer?.kind === 'arrayLength') {
       addValidIndexPair(
         result.validIndexPairs,
-        canonicalValueKey(comparison.left, expressionContext, result),
-        canonicalValueKey(rightProducer.array, expressionContext, result),
+        canonicalValueKey(comparison.left, expressionContext),
+        canonicalValueKey(rightProducer.array, expressionContext),
       )
     }
   }
@@ -1055,8 +946,8 @@ function refineComparison(
     if (leftProducer?.kind === 'arrayLength') {
       addValidIndexPair(
         result.validIndexPairs,
-        canonicalValueKey(comparison.right, expressionContext, result),
-        canonicalValueKey(leftProducer.array, expressionContext, result),
+        canonicalValueKey(comparison.right, expressionContext),
+        canonicalValueKey(leftProducer.array, expressionContext),
       )
     }
   }
@@ -1092,7 +983,7 @@ function refineComparison(
 // source of truth: the branch terminator asks membership here, and refineCheck's switch
 // is exhaustive over exactly these kinds — a new check kind added to the list gets a
 // compile error until refineCheck says how it refines.
-const refinableCheckKinds = ['compare', 'nullishCheck', 'numberCheck', 'tagCheck', 'inCheck'] as const
+const refinableCheckKinds = ['compare', 'nullishCheck', 'numberCheck', 'tagCheck'] as const
 export type RefinableCheck = Extract<InstructionIR, {kind: (typeof refinableCheckKinds)[number]}>
 
 export function asRefinableCheck(instruction: InstructionIR | undefined): RefinableCheck | undefined {
@@ -1115,7 +1006,6 @@ export function refineCheck(
     case 'nullishCheck': return refineNullishCheck(state, check, truth, expressionContext.instructionByValue)
     case 'numberCheck': return refineNumberCheck(state, check, truth, expressionContext.instructionByValue)
     case 'tagCheck': return refineTagCheck(state, check, truth, expressionContext.instructionByValue)
-    case 'inCheck': return refineInCheck(state, check, truth, expressionContext.instructionByValue)
   }
 }
 
@@ -1155,7 +1045,7 @@ export function branchConditionOutcome(
       if (missingElementSite != null) {
         return {kind: 'stop', stop: {site: missingElementSite, reason: {kind: 'possiblyMissingElement'}}}
       }
-      return {kind: 'stop', stop: {site, reason: {kind: 'unmodeledNarrowing'}}}
+      return {kind: 'stop', stop: {site, reason: {kind: 'kindMismatch'}}}
     }
     throw error
   }

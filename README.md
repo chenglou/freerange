@@ -4,8 +4,8 @@ Freerange analyzes the numeric behavior of TypeScript functions. It reports cond
 
 ## Commands
 
-- `fr`: check for warning and errors in project
-- `fr --audit`: check for every function's contracts, and refactor suggestions
+- `fr`: print TypeScript errors, Freerange findings, and coverage for the project
+- `fr --audit`: print every function's contracts and applicable refactoring suggestions
 
 Both commands can take a file to narrow the output to just info for that file.
 
@@ -33,7 +33,7 @@ TypeScript can tell you that a value is a number. Freerange tells you which numb
 ## Running it
 
 - Like `tsc`, `bun fr.ts` searches the current directory and then its parents for the nearest `tsconfig.json`. It analyzes that project and its declared project references, then prints lint findings and coverage.
-- `bun fr.ts src/some/file.ts` prints the project's lint findings narrowed to that file, under the same `tsconfig.json` a bare `bun fr.ts` finds — the file argument never changes which configuration governs. Without a config, it uses Freerange's fallback TypeScript settings.
+- `bun fr.ts src/some/file.ts` prints the project's lint findings narrowed to that file, under the same `tsconfig.json` a bare `bun fr.ts` finds — the file argument never changes which configuration governs. When a config exists, the file must belong to that project. Without a config, Freerange analyzes the file with its fallback TypeScript settings.
 - `bun fr.ts --audit` prints every function's contracts and the refactoring suggestions that apply, one unit per file, with project coverage at the end.
 - `bun fr.ts --audit src/some/file.ts` prints exactly that file's unit of the project audit. Use this while moving a calculation into the supported subset.
 - TypeScript diagnostics use TypeScript's own formatting. Freerange findings follow its plain and pretty location and color conventions; the project's `pretty` setting wins, otherwise `NO_COLOR`, `FORCE_COLOR`, and terminal detection decide. A file-specific error skips that file while clean files still analyze. A project-wide diagnostic, such as a missing package named in `compilerOptions.types`, skips that project's files because their type information cannot be trusted. The command exits with status 1 when TypeScript reports an error.
@@ -76,7 +76,9 @@ Guard the exact value an operation uses. For example, if the divisor is `oldMax 
 
 Be careful with precomputed ratios. Two positive numbers can divide to an exact result so tiny that JavaScript rounds it to zero. In image layout, `(frameWidth * imageHeight) / imageWidth` can therefore be easier to verify than `frameWidth / (imageWidth / imageHeight)` once the original dimensions are checked. The two expressions may round differently, so precision-sensitive code must choose its evaluation order intentionally.
 
-Treat values as immutable after construction inside analyzed code. Rebuilding a plain record with `{...layout, width}` is appropriate when callers should receive a new value. It is not a general replacement for mutation when callers observe object identity, prototypes, accessors, proxies, or the mutation itself. Array writes often need a larger algorithm change rather than a mechanical rewrite.
+Treat values as immutable after construction inside analyzed code. Rebuild a plain record by listing its fields, e.g. `{width, height: layout.height}`. Object spread is outside the supported subset because its runtime rules for inherited and enumerable properties are easy to model incorrectly. Rebuilding is not a general replacement for mutation when callers observe object identity or the mutation itself. Array writes often need a larger algorithm change rather than a mechanical rewrite.
+
+Copy module state to a local before checking and using it. For example, write `const currentScale = scale; if (currentScale !== null) return currentScale`, rather than checking one read of `scale` and returning a second read. Freerange treats separate module reads as separate values; the local snapshot makes the intended identity explicit.
 
 Use direct control flow. Write the numeric condition you mean instead of relying on truthiness, use exhaustive tagged-union switches without fallthrough, and use explicit loops for simple dense-array aggregation. Array callbacks are not automatically equivalent to loops because holes, callback arguments, returned arrays, and side effects can be observable.
 
@@ -87,6 +89,8 @@ Do not use casts or `any` as proof. Freerange carries those values without numer
 Freerange tracks each value's range, integer status, possible `NaN`, possible Infinity, and a small amount of branch information. It does not keep arbitrary formulas or relationships between separate values. When branches meet, the result covers every branch. Loop ranges become more conservative until the analysis stabilizes; Freerange does not derive a closed formula for the loop.
 
 Function calls are analyzed when Freerange can see and support the callee. Unknown calls, callback order, mutation through aliases, and most framework effects stop the affected path or function. An imported constant is followed only when its initializer is a plain numeric literal, e.g. `export const GAP = 24`; calculated constants and imported function behavior are not inferred.
+
+Freerange assumes that repeated reads of a property stay stable during one analyzed synchronous calculation. Snapshot framework or reactive state into plain local values before handing it to a numeric helper when that stability is not guaranteed.
 
 An `ensures` line assumes its `requires` and `assumes`. A `requires` line may be a real API condition, or it may expose a relationship Freerange cannot currently prove. An `assumes` line may identify an unchecked program boundary or an analysis limitation. Neither should be changed automatically without deciding what the program should do for that input.
 

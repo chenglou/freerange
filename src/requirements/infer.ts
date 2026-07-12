@@ -1,4 +1,3 @@
-import {mixedSlotVersion, type ExecutionState} from '../engine/state.ts'
 import type {SiteID, ValueID} from '../ir/ids.ts'
 import type {InstructionIR} from '../ir/instructions.ts'
 import type {FunctionIR} from '../ir/program.ts'
@@ -89,7 +88,6 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       case 'parsedNumber':
       case 'numberCheck':
       case 'tagCheck':
-      case 'inCheck':
       case 'nullishCheck':
       case 'arrayLiteral':
       case 'arrayIndex': return null
@@ -118,29 +116,15 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
 // A stable name for the runtime value an IR value holds, used to key valid-index pairs:
 // two reads of config.sizes lower to distinct IR values, but both canonicalize to the
 // same key, so the bounds-check guard matches the element read. Sound because the walked
-// forms cannot change between occurrences — parameters and module reads resolve by
-// binding identity, and a property read off the same base names the same immutable
-// record's property. A rebound local resolves to a different underlying value, giving a
-// different key by construction.
-export function canonicalValueKey(value: ValueID, context: ExpressionContext, state: ExecutionState): string {
+// forms cannot change between occurrences: parameters and local values are immutable, and
+// a property read off the same base names the same immutable record property. Module reads
+// stay value-keyed because the binding may change; snapshot a module value into a local
+// before checking and using it when the two reads must match.
+export function canonicalValueKey(value: ValueID, context: ExpressionContext): string {
   const parameterIndex = context.parameterIndexByValue[value]
   if (parameterIndex != null) return `p${parameterIndex}`
   const producer = context.instructionByValue[value]
-  if (producer?.kind === 'property') return `${canonicalValueKey(producer.object, context, state)}.${producer.property}`
-  if (producer?.kind === 'moduleRead') {
-    // The binding name (m3) speaks for the binding's CURRENT content, but a read taken
-    // before a rebind still flows around as a value (`const alias = arr; arr = [7]`), and
-    // naming that stale read m3 would let a bounds pair proven against the old array
-    // certify element reads of the new, shorter one (a review round ran the
-    // counterexample). The slot-narrowing version guard decides: the key is
-    // binding-rooted only while no write intervened since this read; otherwise it names
-    // the immutable value itself, which a fresh read of the binding never matches.
-    const slot = state.shared[producer.binding]
-    const observed = state.frame.readVersions[value]
-    if (slot?.kind === 'value' && observed != null && observed !== mixedSlotVersion && slot.version === observed) {
-      return `m${producer.binding}`
-    }
-  }
+  if (producer?.kind === 'property') return `${canonicalValueKey(producer.object, context)}.${producer.property}`
   return `v${value}`
 }
 

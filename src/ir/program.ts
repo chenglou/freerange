@@ -37,10 +37,8 @@ export type FunctionIR = {
   kind: 'lowered'
   name: string
   parameters: ParameterIR[]
-  // Property names of the declared return type when it is a record, else null. The report
-  // prints ensures lines only for these: a function declared to return {w: number} may
-  // return a wider literal, and the extra properties — true facts, but outside the type —
-  // are not part of the contract the caller can see.
+  // Property names of the declared return type when it is a record, else null. Reports
+  // omit wider runtime properties that a type-checked caller cannot read.
   returnPropertyNames: string[] | null
   entry: BlockID
   blocks: BlockIR[]
@@ -74,18 +72,10 @@ export type UnsupportedReason =
   | {kind: 'parameterDefaultValue'; name: string}
   // A non-void function has a path that falls off the end without returning.
   | {kind: 'missingReturn'}
-  // Spread, method, or accessor in an object literal.
+  // Method or accessor in an object literal.
   | {kind: 'objectPropertyForm'}
   | {kind: 'computedPropertyName'}
-  | {kind: 'spreadAfterProperties'}
-  // A spread whose source is not a record literal built in this function — a parameter, a
-  // module binding, a call result. Object spread copies only OWN enumerable properties,
-  // so a conforming value holding its properties on a getter or the prototype leaves the
-  // copy empty — copy.gain is undefined at runtime — while the lowering modeled the
-  // spread as one genuine read per declared property. The explicit-fields spelling
-  // {gain: config.gain} is the supported rewrite: each read genuinely happens, repairing
-  // the JavaScript itself, not just the analysis.
-  | {kind: 'spreadOfExternalRecord'}
+  | {kind: 'objectSpread'}
   | {kind: 'asyncOrGeneratorFunction'}
   | {kind: 'typePredicate'}
   | {kind: 'protoProperty'}
@@ -145,7 +135,6 @@ export type UnsupportedReason =
   // fresh object with explicit fields, e.g. `config = {pos: 1, dest: config.dest}`.
   | {kind: 'propertyWrite'}
   | {kind: 'forLoopWithoutCondition'}
-  | {kind: 'forLoopWithoutIncrementor'}
   // Destructuring pattern or a declaration without an initializer.
   | {kind: 'variableDeclarationShape'}
   // Catch-alls carry the ts.SyntaxKind name, e.g. 'FalseKeyword', 'WhileStatement'.

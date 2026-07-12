@@ -5,7 +5,7 @@
 // version narrowed to that file: same configuration, same content kinds, same line
 // formats, one file's slice.
 
-import {existsSync} from 'node:fs'
+import {existsSync, realpathSync} from 'node:fs'
 import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
@@ -351,39 +351,42 @@ type TargetFile = {detailed: DetailedAnalysis; pretty: boolean}
 // The configuration rule: like a bare `fr`, the tsconfig is resolved from the current
 // directory, never from the file's own directory. The file argument narrows the output,
 // not the configuration, so a nested tsconfig near the file cannot make `fr sub/file.ts`
-// disagree with what `fr` reports for that same file. A file inside the project's file
-// set is analyzed through the same project program a project run builds; a file outside
-// it (e.g. a fixture under /tmp) is analyzed as a single-file program under the same
-// cwd-resolved compiler options.
+// disagree with what `fr` reports for that same file. When a project exists, the file
+// must belong to it; otherwise there is no project result for file mode to be a subset of.
 function analyzeTargetFile(file: string): TargetFile | null {
   const absoluteFile = resolve(file)
   if (!existsSync(absoluteFile)) throw new Error(`File not found: ${absoluteFile}`)
   const configPath = findTypeScriptConfig(process.cwd())
-  if (configPath == null) return analyzeFileAlone(absoluteFile, undefined)
+  if (configPath == null) return analyzeFileAlone(absoluteFile)
 
   const projects = loadTypeScriptProjectGraph(configPath)
-  const source = projectSources(projects).find(candidate => resolve(candidate.sourceFile.fileName) === absoluteFile)
-  if (source == null) return analyzeFileAlone(absoluteFile, projects.at(-1)!.parsed.options)
+  const rootProject = projects.at(-1)!
+  const targetPath = canonicalFilePath(absoluteFile)
+  const source = projectSources(projects).find(candidate =>
+    canonicalFilePath(candidate.sourceFile.fileName) === targetPath)
+  if (source == null) {
+    throw new Error(`File is not part of the project resolved from ${configPath}: ${absoluteFile}`)
+  }
   const diagnostics = ts.getPreEmitDiagnostics(source.project.program, source.sourceFile)
-  printTypeScriptDiagnostics(diagnostics, source.project.parsed.options, process.cwd())
+  printTypeScriptDiagnostics(diagnostics, rootProject.parsed.options, process.cwd())
   if (hasErrorDiagnostics(diagnostics)) return null
   return {
     detailed: analyzeProjectSource(source, process.cwd()),
-    pretty: usePrettyOutput(source.project.parsed.options['pretty']),
+    pretty: usePrettyOutput(rootProject.parsed.options['pretty']),
   }
 }
 
-// A single-file program for a file no project covers. Passing undefined options means no
-// tsconfig resolved from the current directory at all, so the recommended fallback
-// options apply; otherwise the cwd project's options govern this file like any other.
-function analyzeFileAlone(absoluteFile: string, options: ts.CompilerOptions | undefined): TargetFile | null {
+function canonicalFilePath(file: string): string {
+  const real = realpathSync.native(file)
+  return ts.sys.useCaseSensitiveFileNames ? real : real.toLowerCase()
+}
+
+// A single-file program when no tsconfig resolves from the current directory.
+function analyzeFileAlone(absoluteFile: string): TargetFile | null {
   try {
     return {
-      detailed: analyzeCheckedSource(
-        options == null ? checkFile(absoluteFile) : checkFile(absoluteFile, options),
-        process.cwd(),
-      ),
-      pretty: usePrettyOutput(options?.['pretty']),
+      detailed: analyzeCheckedSource(checkFile(absoluteFile), process.cwd()),
+      pretty: usePrettyOutput(undefined),
     }
   } catch (error) {
     if (!(error instanceof TypeScriptDiagnosticsError)) throw error

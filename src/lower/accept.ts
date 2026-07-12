@@ -58,16 +58,45 @@ export function assertAccepted(root: ts.Node): void {
   visit(root)
 }
 
-// The other file-wide rule: a `@ts-ignore`, `@ts-expect-error`, or `@ts-nocheck` comment
-// turns off type checking somewhere in the file, and every guarantee is built on the
-// checker's word — e.g. `// @ts-expect-error` above `let width: number = true` puts a
-// boolean where every number invariant applies, with no `any` in sight. A full-text scan
-// deliberately over-rejects (the directive could sit inside a string); rejecting a file
-// that merely spells the directive is the cheap side of the trade.
-const suppressionDirective = /@ts-(?:nocheck|ignore|expect-error)/
+// The other file-wide rule: a directive that actually suppresses TypeScript checking
+// voids the checker word every guarantee relies on. Match TypeScript's comment syntax,
+// rather than raw source text: documentation strings and `// // @ts-ignore` do nothing.
+const lineSuppression = /^\/\/\/?\s*@(ts-expect-error|ts-ignore)/
+const blockSuppression = /^(?:\/|\*)*\s*@(ts-expect-error|ts-ignore)/
+const noCheck = /^\/\/\/?\s*@ts-nocheck/
 export function typeCheckSuppressionMention(sourceFile: ts.SourceFile): {start: number; end: number} | null {
-  const match = suppressionDirective.exec(sourceFile.getFullText())
-  return match == null ? null : {start: match.index, end: match.index + match[0].length}
+  const text = sourceFile.text
+  const matchRanges = (
+    ranges: readonly ts.CommentRange[] | undefined,
+    includeNoCheck: boolean,
+  ): {start: number; end: number} | null => {
+    for (const range of ranges ?? []) {
+      const comment = text.slice(range.pos, range.end)
+      const lastLine = comment.slice(Math.max(comment.lastIndexOf('\n'), comment.lastIndexOf('\r')) + 1)
+      if (lineSuppression.test(comment)
+        || blockSuppression.test(lastLine)
+        || (includeNoCheck && noCheck.test(comment))) {
+        return {start: range.pos, end: range.end}
+      }
+    }
+    return null
+  }
+
+  const firstStatement = sourceFile.statements[0]
+  const topLevel = matchRanges(
+    ts.getLeadingCommentRanges(text, firstStatement?.getFullStart() ?? 0),
+    true,
+  )
+  if (topLevel != null) return topLevel
+
+  let found: {start: number; end: number} | null = null
+  const visit = (node: ts.Node): void => {
+    if (found != null) return
+    found = matchRanges(ts.getLeadingCommentRanges(text, node.getFullStart()), false)
+    if (found == null) ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return found
 }
 
 // The eval file-wide rule: any mention of `eval` puts the whole file outside the subset,

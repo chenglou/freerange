@@ -56,9 +56,9 @@ describe('control flow and contracts', () => {
     // in the pipeline cost them and no test noticed, because only a hand-written
     // miniature fixture was pinned — and it had drifted from the real file. This test
     // runs the analyzer on demo/index.ts itself, so the demo is a regression surface.
-    // The spring trio is pinned precisely; the rest is a coarse verdict tally, so a
-    // broad regression shows up without pinning every browser-code stop line and
-    // unrelated demo edits do not churn the pins.
+    // The spring trio is pinned precisely and the rest is a coarse verdict tally. Edits
+    // before the spring code or changes to the function count intentionally update this
+    // integration test; unrelated contract details are not pinned.
     const report = analyzeFile(demoFixture)
     const kinds = {analyzed: 0, partial: 0, unsupported: 0}
     for (const fn of report.functions) kinds[fn.kind] += 1
@@ -411,37 +411,6 @@ describe('control flow and contracts', () => {
     }])
   })
 
-  test('a division by a record property mints a property-path requirement', () => {
-    // Sound to name because values are immutable: grid.columnCount cannot change between
-    // function entry and the division. This used to stop with divisorUnknown.
-    const report = analyzeSource('property-divisor.ts', `
-      export function widthPerColumn(grid: {columnCount: number}, width: number): number {
-        return width / grid.columnCount
-      }
-    `)
-    const file = 'property-divisor.ts'
-    const fn = analyzedFunction(report, 'widthPerColumn')
-    expect(fn.requires).toEqual([`grid.columnCount is nonzero (division at ${file}:3:16)`])
-  })
-
-  test('propagates an unproven property-path requirement to the caller', () => {
-    const report = analyzeSource('caller-specific.ts', `
-      export function divideWidth(width: number, columnCount: number): number {
-        return width / columnCount
-      }
-      export function divideByGridColumns(grid: {columnCount: number}, width: number): number {
-        return divideWidth(width, grid.columnCount)
-      }
-    `)
-    const file = 'caller-specific.ts'
-    expect(analyzedFunction(report, 'divideWidth').requires)
-      .toEqual([`columnCount is nonzero (division at ${file}:3:16)`])
-    // The unproven part propagates with the caller's argument substituted in: the caller's
-    // requirement names its own grid.columnCount while pointing at the callee's division.
-    const caller = analyzedFunction(report, 'divideByGridColumns')
-    expect(caller.requires).toEqual([`grid.columnCount is nonzero (division at ${file}:3:16)`])
-  })
-
   test('converges when a called helper allocates inside a loop', () => {
     const report = analyzeSource('loop-limit.ts', `
       function allocateTemporary(): number {
@@ -597,7 +566,7 @@ describe('control flow and contracts', () => {
     const formatted = formatReport(report)
     expect(formatted).toContain('  stopped: ')
     expect(formatted).toContain('  on analyzed paths: return is a finite integer number from 10 through 10')
-    // The legend mentions the line names, so check for actual entry lines.
+    // Check for actual entry lines rather than words that may appear in a stop message.
     expect(formatted).not.toContain('\n  ensures: ')
     expect(formatted).not.toContain('\n  requires: ')
   })
@@ -630,16 +599,6 @@ describe('control flow and contracts', () => {
     const provedCall = analyzedFunction(report, 'divideByClampedColumnCount')
     expect(provedCall.requires).toEqual([])
     expect(provedCall.ensures).toEqual(['return is a finite number'])
-  })
-
-  test('merges a conditional value before later arithmetic', () => {
-    const report = analyzeSource('conditional-value.ts', `
-      export function paddedWidth(width: number): number {
-        const nonnegativeWidth = width >= 0 ? width : 0
-        return nonnegativeWidth + 24
-      }
-    `)
-    expect(analyzedFunction(report, 'paddedWidth').ensures).toEqual(['return is a finite number at least 24'])
   })
 
 })

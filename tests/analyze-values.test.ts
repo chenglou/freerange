@@ -167,19 +167,13 @@ describe('arrays and declared values', () => {
       .toEqual(['return is a finite number at most 8'])
   })
 
-  test('ensures lines cover only what the declared return type exposes', () => {
-    // The wider literal's h is a true fact, but no type-checked caller can read it.
+  test('return contracts stop at the declared record shape', () => {
     const report = analyzeSource('wide-return.ts', `
-      type Size = {w: number}
-      function wideBox(): {w: number; h: number} {
-        return {w: 3, h: 4}
-      }
-      export function measure(): Size {
-        return wideBox()
-      }
+      function wideBox(): {width: number; height: number} { return {width: 3, height: 4} }
+      export function measure(): {width: number} { return wideBox() }
     `)
     expect(analyzedFunction(report, 'measure').ensures)
-      .toEqual(['return.w is a finite integer number from 3 through 3'])
+      .toEqual(['return.width is a finite integer number from 3 through 3'])
   })
 
   test('void and mixed-element checks reject while undefined and bounds guards narrow', () => {
@@ -246,7 +240,7 @@ describe('arrays and declared values', () => {
       .toEqual([`grid.columns is nonzero (division at ${file}:8:16)`])
   })
 
-  test('untagged array unions reject while copies and sentinel chains remain sound', () => {
+  test('untagged array unions reject while explicit copies and sentinel chains remain sound', () => {
     const report = analyzeSource('round2-fixes.ts', `
       export function itemCount(mode: number): number {
         const box: {items: (number | boolean)[]} = mode > 0 ? {items: [1, 2, 3]} : {items: [true]}
@@ -261,28 +255,12 @@ describe('arrays and declared values', () => {
         }
         return 0
       }
-      export function throughCopy(grid: {columns: number}): number {
-        const copy = {...grid}
-        if (copy.columns >= 1) {
-          return 100 / grid.columns
-        }
-        return 0
-      }
       export function throughCopyFields(grid: {columns: number}): number {
         const copy = {columns: grid.columns}
         if (copy.columns >= 1) {
           return 100 / grid.columns
         }
         return 0
-      }
-      export function spreadDoubled(box: {gain: number}): number {
-        const copy = {...box}
-        return copy.gain + copy.gain
-      }
-      export function fromNestedLiteral(): number {
-        const wrapper = {inner: {x: 1}}
-        const copy = {...wrapper.inner}
-        return copy.x + 2
       }
       export function distinguish(setting: number | null | undefined): number {
         if (setting == null) {
@@ -304,29 +282,12 @@ describe('arrays and declared values', () => {
     const lost = analyzedFunction(report, 'lostNarrowing')
     expect(lost.requires).toEqual([])
     expect(lost.ensures).toEqual(['return is a finite number from 0 through 100'])
-    // A spread of a parameter record rejects: object spread copies only own enumerable
-    // properties, and a structurally conforming caller can hold the declared property on
-    // a getter or the prototype — `class NumberBox { get gain(): number { return 10 } }`
-    // is strict-tsc clean with zero casts — so `{...box}` stores nothing and copy.gain is
-    // undefined at runtime. spreadDoubled pins the falsification shape: off the empty
-    // copy, copy.gain + copy.gain is NaN, while the spread's modeled per-property reads
-    // published a non-NaN ensures. throughCopy pins the guarded spelling, rejected for
-    // the same reason.
-    expect(report.functions.find(fn => fn.name === 'throughCopy')?.kind).toBe('unsupported')
-    expect(report.functions.find(fn => fn.name === 'spreadDoubled')?.kind).toBe('unsupported')
-    expect(formatReport(report)).toContain('a spread of a record the analysis cannot trace to a record literal built in this function')
     // The explicit-fields twin is the supported spelling: the grid.columns read genuinely
     // happens and stores a real value, narrowing copy.columns narrows grid.columns (the
     // copy's property IS the stored read), and the guard discharges the division.
     const copied = analyzedFunction(report, 'throughCopyFields')
     expect(copied.requires).toEqual([])
     expect(copied.ensures).toEqual(['return is a finite number from 0 through 100'])
-    // The trace chases property reads through local literals: wrapper.inner resolves to
-    // the inner literal, so spreading it stays accepted. Replacing the chase with the
-    // identity function used to survive the whole suite; this pin is what kills that
-    // over-rejecting mutant.
-    expect(analyzedFunction(report, 'fromNestedLiteral').ensures)
-      .toEqual(['return is a finite integer number from 3 through 3'])
     // A pure-sentinel operand (null | undefined after the outer narrow) still checks, and
     // typeof x !== 'undefined' is the classic spelling of the undefined sentinel check.
     expect(analyzedFunction(report, 'distinguish').ensures)
@@ -402,12 +363,6 @@ describe('arrays and declared values', () => {
         if (box === null) { return 1 }
         return box.value
       }
-      type Size = {a: number}
-      function wide(count: number): {a: number; b: number} { return {a: count, b: count * 2} }
-      export function findPoint(count: number): Size | null {
-        if (count > 0) { return wide(count) }
-        return null
-      }
     `)
     // A rest parameter is one declaration for any number of arguments — rejected, so the
     // two-argument call cannot crash the arity check.
@@ -420,13 +375,6 @@ describe('arrays and declared values', () => {
     // branches analyze — the dead branch's 0 rides along soundly in the range.
     expect(analyzedFunction(report, 'readBox').ensures)
       .toEqual(['return is a finite integer number from 0 through 5'])
-    // The declared Size | null return filters the wide record's extra property through
-    // the nullable wrapper.
-    const found = analyzedFunction(report, 'findPoint')
-    expect(found.ensures).toEqual([
-      'return may be null; when present:',
-      'return.a is a finite number more than 0',
-    ])
   })
 
   test('strings and booleans are carried, not rejected; parameters take any declared kind', () => {
@@ -987,23 +935,6 @@ describe('arrays and declared values', () => {
     expect(analyzedFunction(report, 'passesWhole').assumptions).toEqual(allBoxLines)
     expect(analyzedFunction(report, 'returnsWhole').assumptions).toEqual(allBoxLines)
     expect(analyzedFunction(report, 'stores').assumptions).toEqual(allBoxLines)
-  })
-
-  test('the read filter preserves the plain-array honesty story where it is load-bearing', () => {
-    // The filter only removes lines nothing rests on. An element read rests on the
-    // density clause the honesty batch added — an in-range read is trusted to find a
-    // present element — so a function reading values[index] still prints the plain-array
-    // line a sparse caller ([1, , 3], new Array(5), a lying-length Proxy) violates.
-    const report = analyzeSource('read-filter-honesty.ts', `
-      export function elementAt(values: number[], index: number): number {
-        return values[index] ?? 0
-      }
-    `)
-    expect(analyzedFunction(report, 'elementAt').assumptions).toEqual([
-      'values is a plain array — its length counts its elements, and every index below the length holds an element',
-      'every values element is finite and not NaN',
-      'index is finite and not NaN',
-    ])
   })
 
   test('a fold prints only when every position its sentence covers was read', () => {

@@ -2,6 +2,7 @@ import type {ProgramAnalysis, Stop, StopReason} from './engine/outcome.ts'
 import type {SiteID} from './ir/ids.ts'
 import {
   formatSite,
+  reportPath,
   type ProgramIR,
   type UnsupportedReason,
 } from './ir/program.ts'
@@ -147,7 +148,7 @@ export type AuditCoverage = {
   analyzed: number
   partial: number
   unsupported: number
-  initializer: 'analyzed' | 'partial' | 'unsupported'
+  initializer: 'analyzed' | 'partial'
   initializerSkips: number
 }
 
@@ -244,12 +245,6 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
       addAssumption(program.initializer.name, assumption)
     }
     for (const stop of analysis.initializer.stops) addStop(program.initializer.name, stop)
-  } else if (analysis.initializer.kind === 'notLowered') {
-    addReference(
-      program.initializer.name,
-      analysis.initializer.lowering.site,
-      {kind: 'unsupported', reason: analysis.initializer.lowering.reason},
-    )
   }
   for (const skip of program.initializerSkips) {
     addReference(
@@ -259,9 +254,7 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
     )
   }
 
-  const initializer = analysis.initializer.kind === 'analyzed'
-    ? 'analyzed'
-    : analysis.initializer.kind === 'partial' ? 'partial' : 'unsupported'
+  const initializer = analysis.initializer.kind
   const functions = analysis.functions.length
   const initializerSkips = program.initializerSkips.length
   references.sort((left, right) => left.span.start - right.span.start || left.span.end - right.span.end)
@@ -272,7 +265,7 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
     }
   }
   return {
-    file: contracts.file,
+    file: reportPath(program),
     coverage: {
       functions,
       analyzed,
@@ -292,9 +285,7 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
 // `fr --audit` and `fr --audit <file>` print it, so a file's unit below stays identical
 // between the two outputs.
 export const auditPreamble = [
-  '# Freerange audit',
-  '',
-  'Freerange tracks number ranges, integer values, NaN, Infinity, and supported branch checks through synchronous named top-level function declarations. It does not guess through unknown calls, callback order, mutation through aliases, or arbitrary algebraic relationships between separately computed values.',
+  'Freerange tracks number ranges, integer values, NaN, Infinity, and supported branch checks through synchronous named top-level function declarations. It does not guess through unknown calls, callback order, mutation through aliases, or arbitrary algebraic relationships between separately computed values. Reports assume that repeated reads of a property stay stable during one analyzed calculation.',
   '',
   'Each file below gets one unit: its contracts, then the refactoring suggestions that apply to it. In a contract entry, `requires` are caller conditions; `ensures` hold when the function returns and its `requires` and `assumes` are true; `assumes` are input conditions accepted without proof. An `unsupported` entry names the first construct outside the analyzed subset that blocked the function, so fix one blocker and rerun. `stopped` means analysis halted partway on some path, and `on analyzed paths` is evidence from the paths that completed, not a contract for the whole function. `skipped` marks a top-level statement the module analysis stepped over; values it could write are not trusted.',
   '',
@@ -322,27 +313,17 @@ function formatAuditCoverage(coverage: AuditCoverage): string {
 // auditPreamble once above, which keeps a file's unit identical in the two outputs.
 export function formatFileAuditUnit(audit: FileAudit): string {
   const {coverage} = audit
-  const complete = coverage.analyzed === coverage.functions
-    && coverage.initializer === 'analyzed'
-    && coverage.initializerSkips === 0
   const lines = [`# ${audit.file} (${formatAuditCoverage(coverage)})`]
   if (audit.contracts.functions.length > 0) {
     lines.push(
       '',
       '## Contracts',
       '',
-      formatReport(audit.contracts, {legend: false, file: false}),
+      formatReport(audit.contracts),
     )
   }
 
-  if (audit.guideIDs.length === 0 && !complete) {
-    lines.push(
-      '',
-      '## Refactoring suggestions',
-      '',
-      'No checked refactoring pattern applies automatically to this file. Read the first `unsupported`, `stopped`, or `skipped` line and decide whether that code contains numeric behavior worth analyzing. If it does, isolate the calculation when practical and rerun the audit.',
-    )
-  } else if (audit.guideIDs.length > 0) {
+  if (audit.guideIDs.length > 0) {
     const primaryGuideIDs: RefactorGuideID[] = []
     for (const reference of audit.references) {
       const primary = reference.guideIDs[0]
@@ -451,8 +432,7 @@ function guidesForUnsupportedReason(reason: UnsupportedReason): RefactorGuideID[
     case 'missingReturn':
     case 'objectPropertyForm':
     case 'computedPropertyName':
-    case 'spreadAfterProperties':
-    case 'spreadOfExternalRecord':
+    case 'objectSpread':
     case 'asyncOrGeneratorFunction':
     case 'typePredicate':
     case 'protoProperty':
@@ -471,7 +451,6 @@ function guidesForUnsupportedReason(reason: UnsupportedReason): RefactorGuideID[
     case 'evalInFile':
     case 'typeCheckSuppressed':
     case 'forLoopWithoutCondition':
-    case 'forLoopWithoutIncrementor':
     case 'variableDeclarationShape':
     case 'expressionForm':
     case 'statementForm':
@@ -492,7 +471,7 @@ function guidesForStop(reason: StopReason): RefactorGuideID[] {
     case 'calleeStopped':
     case 'loopLimit':
     case 'nonExitingLoop':
-    case 'unmodeledNarrowing': return []
+    case 'kindMismatch': return []
   }
 }
 

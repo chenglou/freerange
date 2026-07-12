@@ -239,7 +239,7 @@ test('file audits lead with honest coverage and route only relevant checked patt
     }
   `)
   expect(unsupportedWithoutGuide.guideIDs).toEqual([])
-  expect(formatFileAuditUnit(unsupportedWithoutGuide)).toContain('No checked refactoring pattern applies automatically')
+  expect(formatFileAuditUnit(unsupportedWithoutGuide)).not.toContain('## Refactoring suggestions')
 })
 
 test('audit references preserve each propagated requirement payload', () => {
@@ -327,7 +327,7 @@ test('zero function coverage does not claim skipped callable forms are absent', 
   const output = formatFileAuditUnit(audit)
   expect(output).toStartWith('# arrow.ts (no named function declarations')
   expect(output).toContain('1 module statement skipped')
-  expect(output).toContain('`unsupported`, `stopped`, or `skipped`')
+  expect(output).not.toContain('## Refactoring suggestions')
 
   const constantsOnly = formatFileAuditUnit(auditSource('constants.ts', 'export const width = 24'))
   expect(constantsOnly).not.toContain('## Contracts')
