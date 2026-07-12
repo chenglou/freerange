@@ -541,6 +541,18 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
     }
     case 'tuple': {
       if (cutByAncestor(seen, type)) return null
+      // The tuple target's elementFlags say what each written position is: required,
+      // optional ([number, number?]), or a rest element ([number, ...number[]]). The type
+      // ARGUMENTS alone cannot: an optional slot and a rest slot each contribute one
+      // argument, so counting arguments read both examples as fixed pairs — the engine
+      // seeded .length as exactly 2 and published 'return is a finite integer number
+      // from 2 through 2' for a bare pair.length return, which the LEGAL cast-free
+      // caller passing [5] falsifies with every printed assumes line holding. Only
+      // all-required tuples keep the exact positional model; a tuple with any optional,
+      // rest, or variadic position leaves the classified subset (owner decision: reject
+      // rather than model an arity range — no measured corpus function uses the shapes,
+      // and widening later is cheap).
+      if (tupleHasOptionalOrRestPositions(type, checker)) return null
       const elements: DeclaredKind[] = []
       for (const elementType of checker.getTypeArguments(type as ts.TypeReference)) {
         const element = declaredKind(elementType, checker, [...seen, type])
@@ -582,6 +594,16 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
     }
     case null: return null
   }
+}
+
+// Whether a tuple type has a position that is not plainly required: optional
+// ([number, number?]), rest ([number, ...number[]]), or an unresolved generic spread
+// (TypeScript's Variadic flag). Such a tuple's runtime length is a range rather than the
+// written position count, so the declared-kind classification leaves the type out; the
+// parameter rejection calls this to attach the rewrite hint to its message.
+export function tupleHasOptionalOrRestPositions(type: ts.Type, checker: ts.TypeChecker): boolean {
+  if (!checker.isTupleType(type)) return false
+  return (type as ts.TupleTypeReference).target.elementFlags.some(flags => (flags & ts.ElementFlags.Required) === 0)
 }
 
 // A binding with an unaccounted write cannot publish its value: it keeps only its declared

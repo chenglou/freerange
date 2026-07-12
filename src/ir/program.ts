@@ -63,7 +63,11 @@ export type UnsupportedReason =
   | {kind: 'functionWithoutBody'}
   | {kind: 'destructuredParameter'}
 
-  | {kind: 'parameterType'; typeText: string}
+  // optionalOrRestTuple marks a parameter type that failed classification because it is a
+  // tuple with an optional or rest position ([number, number?], [number, ...number[]]) —
+  // the runtime length is a range the exact positional model cannot carry, and the
+  // message names the rewrite toward number[] or a fixed tuple.
+  | {kind: 'parameterType'; typeText: string; optionalOrRestTuple: boolean}
   // A default value (`zoom: number = 5`) applies whenever a caller omits the argument, and
   // the analysis never evaluates the initializer expression — accepting one would let
   // `zoom: number = Infinity` falsify the assumed-finite parameter seeding.

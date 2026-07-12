@@ -4,7 +4,7 @@ import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
 import {addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {valueKind} from './expression.ts'
-import {declaredKind, lowerModuleInitializer, scanModuleBindings, type ModuleScan} from './module.ts'
+import {declaredKind, lowerModuleInitializer, scanModuleBindings, tupleHasOptionalOrRestPositions, type ModuleScan} from './module.ts'
 import {lowerStatements} from './statements.ts'
 
 export function lowerSource(checked: CheckedSource, baseDirectory: string = process.cwd()): ProgramIR {
@@ -158,7 +158,7 @@ function lowerFunction(
     // A rest parameter is one declaration for any number of arguments; the engine's
     // one-value-per-parameter seeding cannot represent that.
     if (parameter.dotDotDotToken != null) {
-      throw unsupported(parameter, {kind: 'parameterType', typeText: `...${checker.typeToString(checker.getTypeAtLocation(parameter))}`})
+      throw unsupported(parameter, {kind: 'parameterType', typeText: `...${checker.typeToString(checker.getTypeAtLocation(parameter))}`, optionalOrRestTuple: false})
     }
     const type = lowerParameterType(parameter, checker)
     // A default value applies whenever a caller omits the argument, and the analysis never
@@ -222,9 +222,14 @@ function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.Type
   // The same recursive classification module bindings use: numbers, booleans, records
   // (opaque leaves included — an id: string property is carried, not rejected), nullable
   // wrappers, arrays, tuples, and bare opaque (a plain string parameter).
-  const declared = declaredKind(checker.getTypeAtLocation(parameter), checker, [])
+  const type = checker.getTypeAtLocation(parameter)
+  const declared = declaredKind(type, checker, [])
   if (declared == null) {
-    throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(checker.getTypeAtLocation(parameter))})
+    throw unsupported(parameter, {
+      kind: 'parameterType',
+      typeText: checker.typeToString(type),
+      optionalOrRestTuple: tupleHasOptionalOrRestPositions(type, checker),
+    })
   }
   return declared
 }

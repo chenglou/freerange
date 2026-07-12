@@ -24,6 +24,74 @@ describe('arrays and declared values', () => {
       .toEqual(['return is a finite integer number from 12 through 72'])
   })
 
+  test('optional and rest tuple positions leave the classified subset', () => {
+    // The tuple arm of the declared-kind classification used to walk
+    // checker.getTypeArguments only, and an optional slot and a rest slot each contribute
+    // one type argument — so [number, number?] and [number, ...number[]] both modeled as
+    // fixed pairs whose .length reads as exactly 2. The LEGAL cast-free caller
+    // optionalLength([5]) then falsified the printed 'ensures: return is a finite integer
+    // number from 2 through 2' while every printed assumes line held. Arity lives in the
+    // tuple target's elementFlags; rather than model an arity range, tuples with any
+    // optional, rest, or variadic position leave the subset (owner decision — no measured
+    // corpus function uses the shapes, and widening later is cheap). Each position then
+    // takes the existing fallback: a parameter rejects with the rewrite hint, a record
+    // property is carried without claims, and an unclassifiable module binding's reads
+    // stop — so no exact-length claim survives anywhere for these shapes.
+    const report = analyzeSource('tuple-arity.ts', `
+      export function optionalLength(pair: [number, number?]): number {
+        return pair.length
+      }
+      export function restLength(values: [number, ...number[]]): number {
+        return values.length
+      }
+      export function pairLength(pair: [number, number]): number {
+        return pair.length
+      }
+      type Box = {gap: number; pair: [number, number?]; spans: [number, ...number[]]}
+      export function boxGap(box: Box): number {
+        return box.gap
+      }
+      export function asConstPair(): number {
+        const pair = [3, 5] as const
+        return pair.length * pair[1]!
+      }
+    `)
+    const hint = 'a tuple position marked optional or rest makes the runtime length a range, which is outside the analyzed subset; model the value as number[], or as a fixed tuple like [number, number]'
+    const optional = report.functions.find(fn => fn.name === 'optionalLength')
+    if (optional?.kind !== 'unsupported') throw new Error('expected optionalLength to reject')
+    expect(optional.unsupported).toBe(`function parameter with type [number, number?] (${hint}) at tuple-arity.ts:2:38`)
+    const rest = report.functions.find(fn => fn.name === 'restLength')
+    if (rest?.kind !== 'unsupported') throw new Error('expected restLength to reject')
+    expect(rest.unsupported).toBe(`function parameter with type [number, ...number[]] (${hint}) at tuple-arity.ts:5:34`)
+    // The all-required tuple keeps the exact positional model: its length really is 2 on
+    // every legal value the analysis models (push-grown callers violate the printed
+    // exact-count assumes line).
+    expect(analyzedFunction(report, 'pairLength').ensures)
+      .toEqual(['return is a finite integer number from 2 through 2'])
+    // The same shapes as record properties are carried without claims: the record's
+    // numeric contract survives, and nothing anywhere states a length for pair or spans.
+    const gap = analyzedFunction(report, 'boxGap')
+    expect(gap.assumptions).toEqual(['box.gap is finite and not NaN'])
+    expect(gap.ensures).toEqual(['return is a finite number'])
+    // An as-const local tuple is built in this function, so its arity is exact by
+    // construction, not by boundary trust — the classification change must not touch it.
+    expect(analyzedFunction(report, 'asConstPair').ensures)
+      .toEqual(['return is a finite integer number from 10 through 10'])
+
+    // A module binding of an optional-position tuple type fails classification the way
+    // any unrepresentable declared type does: the binding stays opaque and reads stop.
+    const moduleReport = analyzeSource('tuple-arity-module.ts', `
+      const fallbackPair: [number, number?] = [5]
+      export function fallbackCount(): number {
+        return fallbackPair.length
+      }
+    `)
+    const reader = moduleReport.functions.find(fn => fn.name === 'fallbackCount')
+    if (reader?.kind !== 'partial') throw new Error('expected fallbackCount to stop')
+    expect(reader.stopped)
+      .toEqual(['reads fallbackPair, whose value the analysis does not track (read at tuple-arity-module.ts:4:16)'])
+  })
+
   test('for-of desugars to a counter loop: in bounds by construction, empty arrays prune', () => {
     const report = analyzeSource('for-of.ts', `
       export function total(values: number[]): number {
