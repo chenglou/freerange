@@ -13,6 +13,7 @@ import {
   type FunctionContext,
 } from './context.ts'
 import {annotationForExpression, type StaticAnnotation} from './static-intrinsics.ts'
+import {numericLiteralValue, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
 
 // The only entry point through which assignments lower. Statement positions (expression
 // statements, for-loop incrementors) call this; everything else goes through
@@ -402,10 +403,11 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         const argument = current.arguments[index]
         if (argument == null) {
           if (parameter.initializer != null) {
-            if (!supportedParameterDefault(parameter.initializer, context.checker)) {
+            const default_ = parameterDefaultLiteral(parameter.initializer, context.checker)
+            if (default_ == null) {
               throw unsupported(current, {kind: 'callWithFewerArguments', callee: current.expression.text})
             }
-            arguments_.push(lowerExpression(parameter.initializer, context))
+            arguments_.push(lowerParameterDefault(default_, parameter.initializer, context))
             continue
           }
           if (parameter.questionToken != null) {
@@ -415,8 +417,10 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           throw unsupported(current, {kind: 'callWithFewerArguments', callee: current.expression.text})
         }
         const value = lowerExpression(argument, context)
-        if (parameter.initializer == null
-          || !supportedParameterDefault(parameter.initializer, context.checker)
+        const default_ = parameter.initializer == null
+          ? null
+          : parameterDefaultLiteral(parameter.initializer, context.checker)
+        if (default_ == null
           || !typeCanIncludeUndefined(context.checker.getTypeAtLocation(argument))) {
           arguments_.push(value)
           continue
@@ -434,7 +438,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           argument,
           supplied,
           () => value,
-          () => lowerExpression(parameter.initializer!, context),
+          () => lowerParameterDefault(default_, parameter.initializer!, context),
           context,
         ))
       }
@@ -623,27 +627,23 @@ function staticRequirementParameterValue(expression: ts.Expression, context: Fun
   return value != null && context.parameters.some(parameter => parameter.value === value) ? value : null
 }
 
-function staticFiniteValue(expression: ts.Expression, context: FunctionContext): number | null {
+function staticFiniteValue(
+  expression: ts.Expression,
+  context: FunctionContext,
+  seen: Set<ts.Symbol> = new Set(),
+): number | null {
+  const literal = numericLiteralValue(expression)
+  if (literal != null) return Number.isFinite(literal) ? literal : null
   const current = unwrapParentheses(expression)
-  if (ts.isNumericLiteral(current)) {
-    const value = Number(current.text)
-    return Number.isFinite(value) ? value : null
-  }
-  if (ts.isPrefixUnaryExpression(current)
-    && (current.operator === ts.SyntaxKind.PlusToken || current.operator === ts.SyntaxKind.MinusToken)) {
-    const operand = unwrapParentheses(current.operand)
-    if (!ts.isNumericLiteral(operand)) return null
-    const value = Number(operand.text) * (current.operator === ts.SyntaxKind.MinusToken ? -1 : 1)
-    return Number.isFinite(value) ? value : null
-  }
   if (!ts.isIdentifier(current)) return null
   const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current), context.checker)
-  const declaration = symbol?.valueDeclaration
+  if (symbol == null || seen.has(symbol)) return null
+  const declaration = symbol.valueDeclaration
   if (declaration == null || !ts.isVariableDeclaration(declaration)
     || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0
     || declaration.getSourceFile().isDeclarationFile
     || declaration.initializer == null) return null
-  return staticFiniteValue(declaration.initializer, context)
+  return staticFiniteValue(declaration.initializer, context, new Set([...seen, symbol]))
 }
 
 function lowerWrittenRequirement(condition: ts.Expression, context: FunctionContext): ValueID {
@@ -975,19 +975,17 @@ function typeCanIncludeUndefined(type: ts.Type): boolean {
   return type.isUnion() && type.types.some(typeCanIncludeUndefined)
 }
 
-function supportedParameterDefault(initializer: ts.Expression, checker: ts.TypeChecker): boolean {
-  const current = unwrapParentheses(initializer)
-  if (ts.isNumericLiteral(current)) return Number.isFinite(Number(current.text))
-  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
-    const operand = unwrapParentheses(current.operand)
-    return ts.isNumericLiteral(operand) && Number.isFinite(-Number(operand.text))
+function lowerParameterDefault(
+  default_: ParameterDefaultLiteral,
+  node: ts.Expression,
+  context: FunctionContext,
+): ValueID {
+  switch (default_.kind) {
+    case 'number': return addInstruction(context, node, {kind: 'constant', value: default_.value})
+    case 'boolean': return addInstruction(context, node, {kind: 'booleanConstant', value: default_.value})
+    case 'opaque': return addInstruction(context, node, {kind: 'opaqueConstant', content: default_.content})
+    case 'nullish': return addInstruction(context, node, {kind: 'nullishConstant', sentinel: default_.sentinel})
   }
-  return current.kind === ts.SyntaxKind.TrueKeyword
-    || current.kind === ts.SyntaxKind.FalseKeyword
-    || current.kind === ts.SyntaxKind.NullKeyword
-    || ts.isStringLiteral(current)
-    || ts.isNoSubstitutionTemplateLiteral(current)
-    || isUndefinedGlobal(current, checker)
 }
 
 // The single value kind a type describes, or null when the type mixes kinds (a union like

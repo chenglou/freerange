@@ -53,7 +53,7 @@ These commands write no files. Redirect stdout when you deliberately want a snap
 
 Freerange treats a direct call to the standard `console.assert(condition)` as a static assertion when the call has exactly one argument, is a standalone statement, and appears in a named top-level function declaration. A local or imported value named `console` is not treated specially.
 
-Consecutive assertions at the very start of the function declare caller requirements. A requirement may be `Number.isInteger(parameter)` or one strict comparison between a parameter and a finite numeric literal. Requirements narrow that parameter, print as `requires`, and are checked when Freerange analyzes a supported same-file call. Any assertion after another statement asks Freerange to prove the condition at that point:
+Consecutive assertions at the very start of the function declare caller requirements. A requirement may be `Number.isInteger(parameter)` or one strict comparison between a parameter and a fixed finite number. The number may be written directly or named by an immutable same-project constant whose initializer ultimately resolves to a numeric literal. Calculated and mutable constants are not accepted. Requirements narrow that parameter, print as `requires`, and are checked when Freerange analyzes a supported same-file call. Any assertion after another statement asks Freerange to prove the condition at that point:
 
 ```ts
 export function itemColumn(itemIndex: number, columnCount: number): number {
@@ -124,7 +124,7 @@ Project-owned record, tuple, array, and tagged-union types are followed through 
 
 A caller requirement can follow local calculations, e.g. division by `width - 1` can report `width is not 1`. Freerange limits that expansion to the number of instructions in the function so repeated calculations cannot produce exponentially large text. A larger expansion prints a local `assumes` line instead. Guard the final local value inside the function when the condition belongs there.
 
-Function calls are analyzed when Freerange can see and support the callee. A same-file call must currently pass every declared parameter explicitly, even when an optional parameter or default value lets JavaScript omit the argument. Unknown calls, callback order, mutation through aliases, and most framework effects stop the affected path or function. An imported constant is followed only when its initializer is a plain numeric literal, e.g. `export const GAP = 24`; calculated constants and imported function behavior are not inferred.
+Function calls are analyzed when Freerange can see and support the callee. A same-file call may omit an optional parameter, which supplies `undefined`, or a parameter with a supported literal default. Supplying `undefined` also selects the default; `null` remains an ordinary argument. Object and calculated defaults remain unsupported, so pass those arguments explicitly. Unknown calls, callback order, mutation through aliases, and most framework effects stop the affected path or function. An imported constant is normally followed only when its initializer is a plain numeric literal, e.g. `export const GAP = 24`; calculated constants and imported function behavior are not inferred.
 
 Freerange assumes that repeated reads of a property stay stable during one analyzed synchronous calculation. Snapshot framework or reactive state into plain local values before handing it to a numeric helper when that stability is not guaranteed.
 

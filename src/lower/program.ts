@@ -4,6 +4,7 @@ import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
 import {addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {valueKind} from './expression.ts'
+import {parameterDefaultFits, parameterDefaultLiteral} from './literals.ts'
 import {declaredKind, lowerModuleInitializer, scanModuleBindings, tupleHasOptionalOrRestPositions, type ModuleScan} from './module.ts'
 import {scanStaticAnnotations, type StaticAnnotation} from './static-intrinsics.ts'
 import {lowerStatements} from './statements.ts'
@@ -198,14 +199,15 @@ function lowerFunction(
       throw unsupported(parameter, {kind: 'parameterType', typeText: `...${checker.typeToString(checker.getTypeAtLocation(parameter))}`, optionalOrRestTuple: false})
     }
     const type = lowerParameterType(parameter, checker)
-    // A default value applies whenever a caller omits the argument, and the analysis never
-    // evaluates the initializer expression. A literal default that provably satisfies the
-    // declared assumptions is safe to ignore: `zoom: number = 5` supplies a finite number,
-    // exactly what the assumes line already states. Anything else — `= Infinity`,
-    // `= readConfig()` — could falsify the seeding on the zero-argument call, so it
-    // rejects. (Zero-argument calls within the file reject separately at the call site.)
-    if (parameter.initializer != null && !defaultSatisfiesDeclaredAssumptions(parameter.initializer, type, checker)) {
-      throw unsupported(parameter, {kind: 'parameterDefaultValue', name: parameter.name.text})
+    // A default value applies whenever a caller omits the argument. Literal defaults can
+    // be represented exactly and checked against the declared assumptions: `zoom: number
+    // = 5` supplies a finite number. Anything else — `= Infinity`, `= readConfig()` —
+    // rejects because it could falsify those assumptions or hide unsupported behavior.
+    if (parameter.initializer != null) {
+      const default_ = parameterDefaultLiteral(parameter.initializer, checker)
+      if (default_ == null || !parameterDefaultFits(default_, type)) {
+        throw unsupported(parameter, {kind: 'parameterDefaultValue', name: parameter.name.text})
+      }
     }
     const value = context.nextValue++
     context.bindings.set(requiredSymbol(parameter.name, checker), value)
@@ -267,45 +269,6 @@ function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.Type
     })
   }
   return declared
-}
-
-function defaultSatisfiesDeclaredAssumptions(initializer: ts.Expression, declared: DeclaredKind, checker: ts.TypeChecker): boolean {
-  switch (declared.kind) {
-    case 'number': {
-      const literal = ts.isPrefixUnaryExpression(initializer) && initializer.operator === ts.SyntaxKind.MinusToken
-        ? initializer.operand
-        : initializer
-      // Numeric literals cannot be NaN, but they can overflow to Infinity (`5e999`), and
-      // numeric separators need stripping before Number can read the text.
-      return ts.isNumericLiteral(literal) && Number.isFinite(Number(literal.text.replaceAll('_', '')))
-    }
-    case 'boolean':
-      return initializer.kind === ts.SyntaxKind.TrueKeyword || initializer.kind === ts.SyntaxKind.FalseKeyword
-    // Nothing is claimed about an opaque parameter, so any string default is fine — but
-    // only a literal one: a call like `= readLabel()` could hide unvetted constructs.
-    case 'opaque':
-      return ts.isStringLiteral(initializer) || ts.isNoSubstitutionTemplateLiteral(initializer)
-    case 'nullish': {
-      // `deadline: number | null = null`: the null literal is one of the declared
-      // sentinels, as provably inside the kind as `= 5` is for `number`. Any other
-      // literal checks against the inner kind (`zoom: number | null = 5`). The
-      // undefined check goes through the type's Undefined flag, not the identifier
-      // text, because a shadowing binding named undefined would type differently.
-      if (initializer.kind === ts.SyntaxKind.NullKeyword) {
-        return declared.sentinels === 'null' || declared.sentinels === 'both'
-      }
-      if (ts.isIdentifier(initializer) && initializer.text === 'undefined'
-        && (checker.getTypeAtLocation(initializer).flags & ts.TypeFlags.Undefined) !== 0) {
-        return declared.sentinels === 'undefined' || declared.sentinels === 'both'
-      }
-      return defaultSatisfiesDeclaredAssumptions(initializer, declared.inner, checker)
-    }
-    case 'record':
-    case 'tuple':
-    case 'array':
-    case 'taggedUnion':
-      return false
-  }
 }
 
 function functionReturnType(declaration: ts.FunctionDeclaration, checker: ts.TypeChecker): ts.Type {

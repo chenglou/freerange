@@ -215,7 +215,7 @@ describe('control flow and contracts', () => {
     // A maybe-undefined argument keeps both paths, while a bare optional receives exact
     // undefined when omitted.
     const report = analyzeSource('default-parameter.ts', `
-      function scaled(width: number = 5): number {
+      function scaled(width: number = 5 as const): number {
         return width * 2
       }
       export function callNoArg(): number {

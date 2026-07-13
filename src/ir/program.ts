@@ -94,11 +94,9 @@ export type UnsupportedReason =
   // guide; every other method stays distinct from a general unknown call without routing
   // on the display-only callee text.
   | {kind: 'call'; callee: string; arrayMethod?: 'reduce' | 'other'}
-  // A call passing fewer arguments than the callee declares. TypeScript accepts the shorter
-  // call when the omitted parameters have default values, e.g. scaled() calling
-  // `function scaled(width: number = 5)`, but lowering never reads parameter initializers,
-  // so the callee would receive fewer abstract values than it has parameters. The callee
-  // itself still lowers and analyzes; only the shorter call stops.
+  // A call omitting a required parameter, or a parameter whose default initializer is
+  // outside the supported literal subset. Supported optional and literal-defaulted
+  // parameters are filled before the call instruction is emitted.
   | {kind: 'callWithFewerArguments'; callee: string}
   // A position that must hold a number (operand, supported Math argument) typed otherwise,
   // e.g. the left side of `events.keydown == null` with type KeyboardEvent | null. The site

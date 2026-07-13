@@ -13,6 +13,7 @@ import {
   type SourceSpan,
 } from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
+import {numericLiteralValue} from './literals.ts'
 import {declaredOnlyInDeclarationFiles} from './platform.ts'
 import {addInstruction, addSite, createFunctionContext, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type TopLevelFunction} from './context.ts'
 import {lowerExpression, nonMissingUnionMembers, tagLiteralValues, taggedUnionProperty, valueKind} from './expression.ts'
@@ -122,29 +123,6 @@ function importedCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleB
   if (declaration.initializer == null) return {kind: 'import'}
   const value = numericLiteralValue(declaration.initializer)
   return value == null ? {kind: 'import'} : {kind: 'importedConstant', value}
-}
-
-// The exact value of a numeric-literal initializer, unwrapping parentheses and `as`
-// assertions — both value-preserving, so `export const PILL_BUTTON = 40 as const`
-// initializes to exactly 40. Unwrapping EVERY `as` here deliberately diverges from the
-// main pipeline's assertions-erase rule: erasure exists because an assertion changes what
-// the checker's word is worth, but this walk never consults the checker — the runtime
-// value of `40 as unknown as number` is 40 no matter what the types say, and only that
-// runtime value is published. A leading minus on the literal is folded, e.g. `-1`.
-// Anything else — arithmetic, identifier references, `Infinity` and `NaN` (identifiers,
-// not literals) — returns null.
-function numericLiteralValue(expression: ts.Expression): number | null {
-  let unwrapped = expression
-  while (ts.isParenthesizedExpression(unwrapped) || ts.isAsExpression(unwrapped)) unwrapped = unwrapped.expression
-  if (ts.isNumericLiteral(unwrapped)) return Number(unwrapped.text)
-  if (
-    ts.isPrefixUnaryExpression(unwrapped)
-    && unwrapped.operator === ts.SyntaxKind.MinusToken
-    && ts.isNumericLiteral(unwrapped.operand)
-  ) {
-    return -Number(unwrapped.operand.text)
-  }
-  return null
 }
 
 // The writes the given node itself performs to module bindings (not its children's writes;

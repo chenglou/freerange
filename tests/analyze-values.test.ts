@@ -475,11 +475,13 @@ describe('arrays and declared values', () => {
   })
 
   test('parameter defaults must be literals inside the declared kind', () => {
-    // The analysis never evaluates a default initializer. `= 5` provably satisfies the
-    // assumed-finite seeding, so ignoring the expression is sound; `= Number.POSITIVE_INFINITY`
-    // would falsify the ensures on a zero-argument call, so the function rejects.
+    // Literal defaults can be represented exactly. A computed Infinity or a cast that
+    // lies about a boolean's runtime kind would falsify the declared numeric assumptions.
     const report = analyzeSource('bad-default.ts', `
       export function scaled(zoom: number = Number.POSITIVE_INFINITY): number {
+        return zoom
+      }
+      export function disguisedBoolean(zoom: number = true as unknown as number): number {
         return zoom
       }
       export function remaining(deadline: number | null = null): number {
@@ -492,6 +494,11 @@ describe('arrays and declared values', () => {
     const scaled = report.functions.find(fn => fn.name === 'scaled')!
     if (scaled.kind !== 'unsupported') throw new Error(`expected scaled to be unsupported, got ${scaled.kind}`)
     expect(scaled.unsupported).toContain('default value for parameter zoom')
+    const disguisedBoolean = report.functions.find(fn => fn.name === 'disguisedBoolean')!
+    if (disguisedBoolean.kind !== 'unsupported') {
+      throw new Error(`expected disguisedBoolean to be unsupported, got ${disguisedBoolean.kind}`)
+    }
+    expect(disguisedBoolean.unsupported).toContain('default value for parameter zoom')
     expect(analyzedFunction(report, 'remaining').assumptions).toEqual(['deadline is null or a finite non-NaN number'])
     expect(analyzedFunction(report, 'zoomOr').ensures).toEqual(['return is a finite number'])
   })

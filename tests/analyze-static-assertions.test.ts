@@ -52,8 +52,10 @@ describe('static console.assert contracts', () => {
 
   test('leading requirements accept literal const names and see parameter defaults', () => {
     const report = analyzeSource('requirement-defaults.ts', `
-      const MINIMUM_WIDTH = 0
+      const BASE_MINIMUM = +0
+      const MINIMUM_WIDTH = BASE_MINIMUM
       const COMPUTED_MINIMUM = 0 + 0
+      let MUTABLE_MINIMUM = 0
 
       function bounded(width: number = 5): number {
         console.assert(width >= MINIMUM_WIDTH)
@@ -76,6 +78,10 @@ describe('static console.assert contracts', () => {
         console.assert(width >= COMPUTED_MINIMUM)
         return width
       }
+      export function mutableConstant(width: number): number {
+        console.assert(width >= MUTABLE_MINIMUM)
+        return width
+      }
     `)
 
     expect(analyzedFunction(report, 'bounded').requires[0]).toContain('width >= 0')
@@ -91,6 +97,9 @@ describe('static console.assert contracts', () => {
     const computed = report.functions.find(fn => fn.name === 'computedConstant')
     if (computed?.kind !== 'unsupported') throw new Error('Expected computedConstant to be unsupported')
     expect(computed.unsupported).toContain('console.assert')
+    const mutable = report.functions.find(fn => fn.name === 'mutableConstant')
+    if (mutable?.kind !== 'unsupported') throw new Error('Expected mutableConstant to be unsupported')
+    expect(mutable.unsupported).toContain('console.assert')
   })
 
   test('leading requirements accept imported numeric literal constants', () => {
