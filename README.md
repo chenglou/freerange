@@ -53,6 +53,8 @@ These commands write no files. Redirect stdout when you deliberately want a snap
 
 Freerange is deliberately designed for code that can be refactored, especially code written or maintained by agents. The goal is not to accept every TypeScript pattern. The goal is to make the useful boundary predictable and make good rewrites cheap.
 
+The supported subset is a small set of general rules, not a list copied from the current example projects. A rule can be worthwhile when only one current function needs it if the rule is simple, complete, and easy to predict. Conversely, many matching call sites do not justify a collection of special cases. The examples below demonstrate the rules; they do not define them.
+
 **Keep the numeric part small and explicit.** Put important calculations in synchronous named top-level function declarations with explicit inputs. A React component, callback, or async function can call the helper even when the surrounding framework code remains unsupported. Unsupported framework code does not need to be rewritten unless its numeric behavior needs a contract.
 
 For example, keep image fitting in a plain function and let the component use its result:

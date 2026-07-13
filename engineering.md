@@ -136,6 +136,8 @@ You can, but do not use enough of, small prototypes to validate your ideas. Star
 
 Speaking of estimates: you also underestimate your ability to just directly write the final code, then come back and judge in hindsight. Sometime the devil's in the detail and you have to do the full task instead of guesstimating. Action produces information. So your way of estimating works much better if you do a few prototypes or maybe even the final code instead of doubting either way.
 
+Real usage is evidence, not the feature specification. Do not overfit by adding a collection of rules for the exact expressions found in the current corpus. Do not underfit by rejecting a small, general rule merely because only one current call site needs it. This matters especially for tools used by agents: prefer a small written subset whose behavior is complete and predictable. Use real repositories to decide whether the subset is useful and to find missing categories, then state the boundary independently of those repositories. If only part of a familiar rule is supported, either describe the exact supported part or reject the rule until the boundary can be made clear.
+
 When you launch long-running task, unless the task's scope and structure is certain (e.g. known tasks, repeated tasks, etc.), you should be checking back more often than you think. For example, for a training run, don't just launch and check every 30m. Check every other minute if you have to, for blowups and others, then do back offs when you're more certain that the task won't drift.
 
 ### Exploration
