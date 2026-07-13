@@ -654,6 +654,13 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
         case 'unproven': return `could not express or prove ${callee}'s declared requirement (call at ${callSite}; declared at ${declarationSite})`
       }
     }
+    case 'zeroDivisor': {
+      return `${reason.operation} has a divisor that is definitely zero (at ${formatSite(program, stop.site)})`
+    }
+    case 'callZeroDivisor': {
+      const callee = functionName(program, reason.callee)
+      return `call to ${callee} violates its nonzero divisor requirement (call at ${formatSite(program, stop.site)}; ${reason.operation} at ${formatSite(program, reason.operationSite)})`
+    }
     case 'loopLimit': {
       return `the loop at ${formatSite(program, stop.site)} did not converge after ${reason.updates} updates`
     }

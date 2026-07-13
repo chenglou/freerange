@@ -51,7 +51,7 @@ type ErrorLintFinding = {
   file: string
   line: number
   column: number
-  rule: 'console-assert' | 'declared-requirement'
+  rule: 'console-assert' | 'declared-requirement' | 'inferred-requirement'
   message: string
   related?: {label: string; line: number; column: number}
 }
@@ -231,6 +231,26 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
               ? `call to ${callee.name} makes its declared requirement definitely false`
               : `could not express or prove ${callee.name}'s declared requirement at this call`,
             {label: 'declared at', ...declaration},
+          )
+          break
+        }
+        case 'zeroDivisor': {
+          addError(
+            stop.site,
+            'inferred-requirement',
+            `${reason.operation} has a divisor that is definitely zero in ${fn.lowering.name}`,
+          )
+          break
+        }
+        case 'callZeroDivisor': {
+          const callee = program.functions[reason.callee]
+          if (callee == null) throw new Error(`Unknown function ${reason.callee}`)
+          const operation = siteLocation(program, reason.operationSite)
+          addError(
+            stop.site,
+            'inferred-requirement',
+            `call to ${callee.name} violates its nonzero divisor requirement`,
+            {label: `${reason.operation} at`, ...operation},
           )
           break
         }

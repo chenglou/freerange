@@ -46,6 +46,16 @@ export type StopReason =
       declarationSite: SiteID
       status: 'refuted' | 'unproven'
     }
+  // An inferred nonzero-divisor requirement was evaluated with an exact zero. The direct
+  // form points at the operation; calls preserve that site while naming the visible
+  // callee whose arguments violate it.
+  | {kind: 'zeroDivisor'; operation: 'division' | 'remainder'}
+  | {
+      kind: 'callZeroDivisor'
+      callee: FunctionID
+      operationSite: SiteID
+      operation: 'division' | 'remainder'
+    }
   // An asserted element read (arr[i]!) whose index is provably outside the array — there
   // is no element the assertion could produce. An empty array is the special case where
   // every read qualifies.

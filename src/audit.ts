@@ -496,6 +496,8 @@ function guidesForStop(reason: StopReason): RefactorGuideID[] {
     case 'refutedRequirement':
     case 'unrefinableRequirement':
     case 'callRequirement':
+    case 'zeroDivisor':
+    case 'callZeroDivisor':
     case 'moduleRead':
     case 'recursion':
     case 'calleeStopped':

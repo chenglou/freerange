@@ -209,6 +209,7 @@ export function lowerModuleInitializer(
     } catch (error) {
       if (!(error instanceof LoweringStop)) throw error
       restoreLowering(context, recovery)
+      lowerSupportedArgumentsOfSkippedTopLevelCall(statement, error, context)
       skips.push({site: addSite(context, error.node), reason: error.reason})
       // Demote what the statement writes directly, then reset the slots of everything the
       // statement could have written — its own targets plus, since it may call any
@@ -246,6 +247,42 @@ export function lowerModuleInitializer(
     },
     skips,
   }
+}
+
+// A direct top-level call evaluates its arguments before invoking the callee. When the
+// outer call is unsupported, keep each fully lowered argument up to the first unsupported
+// one. The outer call remains an initializer skip, and later arguments are not retained
+// because the unsupported argument may throw before JavaScript reaches them.
+function lowerSupportedArgumentsOfSkippedTopLevelCall(
+  statement: ts.Statement,
+  stop: LoweringStop,
+  context: FunctionContext,
+): void {
+  if (!ts.isExpressionStatement(statement)) return
+  let expression = statement.expression
+  while (ts.isParenthesizedExpression(expression)) expression = expression.expression
+  if (!ts.isCallExpression(expression)
+    || expression !== stop.node
+    || expression.questionDotToken != null
+    || !plainCallTarget(expression.expression)) return
+  for (const argument of expression.arguments) {
+    const recovery = snapshotLowering(context)
+    try {
+      lowerExpression(argument, context)
+    } catch (error) {
+      if (!(error instanceof LoweringStop)) throw error
+      restoreLowering(context, recovery)
+      return
+    }
+  }
+}
+
+function plainCallTarget(expression: ts.Expression): boolean {
+  if (ts.isIdentifier(expression)) return true
+  if (ts.isParenthesizedExpression(expression)) return plainCallTarget(expression.expression)
+  return ts.isPropertyAccessExpression(expression)
+    && expression.questionDotToken == null
+    && plainCallTarget(expression.expression)
 }
 
 function lowerTopLevelDeclarations(statement: ts.VariableStatement, context: FunctionContext, scan: ModuleScan): void {

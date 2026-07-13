@@ -11,6 +11,7 @@ import {
   divideNumbersNonzeroDivisor,
   floorNumber,
   includesZero,
+  isDefinitelyZero,
   isFiniteNumber,
   maximumNumbers,
   minimumNumbers,
@@ -534,9 +535,24 @@ function evaluateInstructionKinded(
         const requirementFailure = evaluation.stops.find(stop =>
           stop.reason.kind === 'refutedRequirement'
             || stop.reason.kind === 'unrefinableRequirement'
-            || stop.reason.kind === 'callRequirement')
+            || stop.reason.kind === 'callRequirement'
+            || stop.reason.kind === 'zeroDivisor'
+            || stop.reason.kind === 'callZeroDivisor')
         if (requirementFailure != null) {
           const failure = requirementFailure.reason
+          if (failure.kind === 'zeroDivisor' || failure.kind === 'callZeroDivisor') {
+            return {kind: 'stop', stop: {
+              site: instruction.site,
+              reason: {
+                kind: 'callZeroDivisor',
+                callee: instruction.function,
+                operationSite: failure.kind === 'zeroDivisor'
+                  ? requirementFailure.site
+                  : failure.operationSite,
+                operation: failure.operation,
+              },
+            }}
+          }
           let status: 'refuted' | 'unproven'
           let declarationSite: SiteID
           if (failure.kind === 'callRequirement') {
@@ -575,6 +591,18 @@ function evaluateInstructionKinded(
         const squared = multiplyNumbers(left, right)
         const clamped = squared.lower < 0 ? {...squared, lower: 0} : squared
         return computedNumber(clamped, [left, right], instruction.site)
+      }
+      if (
+        (instruction.operator === 'divide' || instruction.operator === 'remainder')
+        && isDefinitelyZero(right)
+      ) {
+        return {kind: 'stop', stop: {
+          site: instruction.site,
+          reason: {
+            kind: 'zeroDivisor',
+            operation: instruction.operator === 'divide' ? 'division' : 'remainder',
+          },
+        }}
       }
       if (
         (instruction.operator === 'divide' || instruction.operator === 'remainder')

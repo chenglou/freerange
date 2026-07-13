@@ -325,6 +325,13 @@ export function includesZero(value: AbstractNumber): boolean {
   return value.lower <= 0 && value.upper >= 0 && value.excludesPoint !== 0
 }
 
+export function isDefinitelyZero(value: AbstractNumber): boolean {
+  return value.lower === 0
+    && value.upper === 0
+    && !value.mayBeNaN
+    && value.excludesPoint !== 0
+}
+
 // Whether the abstract value provably never holds the point — by its bounds, by the
 // integer flag against a fractional point, or by the excluded-point cut.
 export function pointExcluded(value: AbstractNumber, point: number): boolean {

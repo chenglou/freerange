@@ -359,6 +359,89 @@ console.assert(true)
   }
 })
 
+test('definitely false inferred divisor requirements gate lint at visible call sites', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-inferred-requirement-'))
+  try {
+    writeProject(projectDirectory, {
+      'requirements.ts': `function aspectRatio(width: number, height: number): number {
+  return width / height
+}
+
+function wrappedAspectRatio(width: number, height: number): number {
+  return aspectRatio(width, height)
+}
+
+function remainder(value: number, divisor: number): number {
+  return value % divisor
+}
+
+export function impossible(): number {
+  return 1 / 0
+}
+
+export function badDirect(): number {
+  return aspectRatio(10, 0)
+}
+
+export function badWrapped(): number {
+  return wrappedAspectRatio(10, 0)
+}
+
+export function badRemainder(): number {
+  return remainder(10, 0)
+}
+
+export function safe(): number {
+  return aspectRatio(10, 2)
+}
+`,
+      'skipped.ts': `function aspectRatio(width: number, height: number): number {
+  return width / height
+}
+
+console.log(aspectRatio(10, 0))
+export {}
+`,
+      'safe-skips.ts': `function aspectRatio(width: number, height: number): number {
+  return width / height
+}
+
+function logger(): Console {
+  return console
+}
+
+console.log(aspectRatio(10, 2))
+console.log(Math.hypot(3, 4), aspectRatio(10, 0))
+logger().log(aspectRatio(10, 0))
+export {}
+`,
+    })
+
+    const lint = runCli(projectDirectory)
+    expect(lint.exitCode).toBe(1)
+    expect(lint.stderr).toBe('')
+    expect(lint.stdout).toContain('requirements.ts(14,10): error [inferred-requirement]: division has a divisor that is definitely zero in impossible')
+    expect(lint.stdout).toContain('requirements.ts(18,10): error [inferred-requirement]: call to aspectRatio violates its nonzero divisor requirement')
+    expect(lint.stdout).toContain('requirements.ts(22,10): error [inferred-requirement]: call to wrappedAspectRatio violates its nonzero divisor requirement')
+    expect(lint.stdout).toContain('requirements.ts(26,10): error [inferred-requirement]: call to remainder violates its nonzero divisor requirement')
+    expect(lint.stdout).toContain('skipped.ts(5,13): error [inferred-requirement]: call to aspectRatio violates its nonzero divisor requirement')
+    expect(lint.stdout).not.toContain('requirements.ts(30,10): error')
+    expect(lint.stdout).not.toContain('safe-skips.ts(9')
+    expect(lint.stdout).not.toContain('safe-skips.ts(10')
+    expect(lint.stdout).not.toContain('safe-skips.ts(11')
+    expect(lint.stdout).toContain('note [caller-contract]: callers of aspectRatio must keep height is nonzero')
+
+    const audit = runCli(projectDirectory, '--audit')
+    expect(audit.exitCode).toBe(0)
+    expect(audit.stderr).toBe('')
+    expect(audit.stdout).toContain('call to aspectRatio violates its nonzero divisor requirement')
+    expect(audit.stdout).toContain('function call console.log at skipped.ts:5:1')
+    expect(audit.stdout).toContain('function call console.log at safe-skips.ts:9:1')
+  } finally {
+    rmSync(projectDirectory, {recursive: true, force: true})
+  }
+})
+
 test('project mode requires strict null checks but respects other project options', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-options-'))
   try {
