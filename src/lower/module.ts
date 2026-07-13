@@ -332,13 +332,9 @@ function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleB
   return declared == null ? {kind: 'opaque'} : {kind: 'value', declaredKind: declared}
 }
 
-// The declared kind of one type, or null when the type is not representable — which makes
-// the binding opaque. Record shapes must be fully representable: every property required
-// and itself of a representable kind, so `let cursor = {x: 0, y: 0}` qualifies while
-// `let events = {keydown: KeyboardEvent | null}` does not (the leaf fails), and neither do
-// arrays, functions, or Date (their method properties fail the same leaf check). An empty
-// property set is rejected too — it covers `{}` and index-signature-only types, neither of
-// which a record value can say anything about.
+// The properties of one record type. A property whose type cannot be represented becomes
+// opaque so the record can keep claims about its supported properties. An empty property
+// set is rejected: `{}` and index-signature-only types have no named values to track.
 function declaredRecordProperties(
   type: ts.Type,
   checker: ts.TypeChecker,
@@ -466,6 +462,12 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
       if (!type.isUnion()) return null
       const rest = nonMissingUnionMembers(type)
       if (rest.length === 0) return null
+      // A nullable wrapper can hide the recursive edge from the exact-type ancestor
+      // check. Cut before expanding the same record or tagged union again.
+      if (rest.some(member => seen.includes(member))) {
+        ancestorCuts += 1
+        return null
+      }
       let inner: DeclaredKind | null
       if (rest.length === 1) {
         inner = declaredKind(rest[0]!, checker, seen)
@@ -549,11 +551,9 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
       // contracts on shapes it does not own. (Math and friends never reach here — value
       // reads of them are gated elsewhere.)
       if (declaredOnlyInDeclarationFiles(type.getSymbol() ?? type.aliasSymbol)) return {kind: 'opaque'}
-      // A recursive declared type (e.g. a linked list) would nest forever; the binding
-      // stays opaque. The seen check catches direct recursion; the depth cap catches
-      // recursive generics, whose every level is a fresh instantiation the seen check
-      // cannot recognize (and whose instantiation chain would otherwise run away inside
-      // the checker itself). No real state tree nests eight records deep.
+      // A recursive property becomes opaque. The ancestor check catches direct recursion;
+      // the depth cap catches recursive generics, whose every level is a fresh
+      // instantiation that exact type identity cannot recognize.
       const properties = declaredRecordProperties(type, checker, seen)
       return properties == null ? null : {kind: 'record', properties}
     }

@@ -98,6 +98,9 @@ export type UnsupportedReason =
   // outside the supported literal subset. Supported optional and literal-defaulted
   // parameters are filled before the call instruction is emitted.
   | {kind: 'callWithFewerArguments'; callee: string}
+  // An overload accepts more arguments than its implementation names. JavaScript still
+  // evaluates them, but the fixed-arity call model has no corresponding parameters.
+  | {kind: 'callWithMoreArguments'; callee: string}
   // A position that must hold a number (operand, supported Math argument) typed otherwise,
   // e.g. the left side of `events.keydown == null` with type KeyboardEvent | null. The site
   // points at the exact operand, so no role tag is needed.

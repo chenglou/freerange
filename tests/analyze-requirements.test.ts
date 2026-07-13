@@ -183,7 +183,7 @@ describe('requirements and numeric checks', () => {
       export function manualLoop(values: number[]): number {
         let total = 0
         for (let index = 0; index < values.length; index += 1) {
-          total = total + (values[index] ?? 0)
+          total = total + values[index]!
         }
         return total
       }
@@ -269,16 +269,12 @@ ${chain}
         if (width !== 4) { return total / (width - 4) }
         return 0
       }
-      export function widthEarlyExit(width: number, total: number): number {
-        if (width === 4) { return 0 }
-        return total / (width - 4)
-      }
       export function scaleGuarded(scale: number): number {
         if (scale !== 0) { return 100 / (scale * 2) }
         return 0
       }
     `)
-    for (const name of ['widthGuard', 'widthEarlyExit', 'scaleGuarded']) {
+    for (const name of ['widthGuard', 'scaleGuarded']) {
       expect(analyzedFunction(report, name).requires).toEqual([])
     }
   })

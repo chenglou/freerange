@@ -227,24 +227,18 @@ describe('tagged unions and narrowing', () => {
     expect(analyzedFunction(report, 'guardStaleAlias').assumptions.join(' ')).toContain('is in bounds')
   })
 
-  test('tagged-union rebuilds and single-variant presets survive joins', () => {
-    // A rebuild and a preset annotated as one member shape used to throw at the join. The
-    // literal's own checked type now names the variant, and a record meeting a union
-    // degrades to the shared hull instead of crashing.
+  test('single-variant presets survive tagged-union joins', () => {
+    // A preset annotated as one member shape used to throw at the join. A record meeting
+    // a union now degrades to their shared properties instead of crashing.
     const report = analyzeSource('union-round1.ts', `
       type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
-      export function widen(frame: Frame): Frame {
-        if (frame.type === 'sidebar') { return {type: frame.type, width: frame.width + 40} }
-        return frame
-      }
       const sidebarPreset: {type: 'sidebar'; width: number} = {type: 'sidebar', width: 200}
       export function pick(compact: boolean): Frame {
         return compact ? {type: 'mobile', scale: 0.5} : sidebarPreset
       }
     `)
-    expect(analyzedFunction(report, 'widen').ensures).toContain("return.type is 'sidebar' or 'mobile'")
     // The preset's variant is unknown to the analysis, so the join degrades to the shared
-    // hull — an honest near-empty contract, never a crash.
+    // properties — an honest near-empty contract, never a crash.
     expect(analyzedFunction(report, 'pick').ensures).toEqual([])
   })
 

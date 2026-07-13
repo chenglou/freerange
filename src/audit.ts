@@ -465,6 +465,7 @@ function guidesForUnsupportedReason(reason: UnsupportedReason): RefactorGuideID[
     case 'prototypeMemberRead':
     case 'binaryOperator':
     case 'callWithFewerArguments':
+    case 'callWithMoreArguments':
     case 'nonNumberOperand':
     case 'valueType':
     case 'kindChangingAssertion':

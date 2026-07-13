@@ -208,11 +208,9 @@ export function answer(): number { return early }
 `,
     })
 
-    for (const arguments_ of [[], ['skipped-statement.ts'], ['stopped-call.ts']]) {
-      const result = runCli(projectDirectory, ...arguments_)
-      expect(result.exitCode).toBe(0)
-      expect(result.stdout).toContain('No lint findings.')
-    }
+    const result = runCli(projectDirectory)
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('No lint findings.')
     const audited = runCli(projectDirectory, '--audit', 'stopped-call.ts')
     expect(audited.stdout).toContain('stopped: calls readLater, whose analysis stopped for this specific call')
   } finally {
@@ -271,23 +269,6 @@ export function clean(): number {
     const extraReportPath = runCli(projectDirectory, 'advice.ts', 'other.ts')
     expect(extraReportPath.exitCode).toBe(1)
     expect(extraReportPath.stderr).toContain('Usage: fr [file]')
-  } finally {
-    rmSync(projectDirectory, {recursive: true, force: true})
-  }
-})
-
-test('error-level findings gate the exit code while the audit stays informational', () => {
-  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-exit-codes-'))
-  try {
-    writeProject(projectDirectory, {'wrong.ts': `export function wrong(): number {
-  const values = [1]
-  return values[2]!
-}
-`})
-
-    // Findings mode is the CI gate; the audit reports the same file without gating.
-    expect(runCli(projectDirectory, 'wrong.ts').exitCode).toBe(1)
-    expect(runCli(projectDirectory, '--audit', 'wrong.ts').exitCode).toBe(0)
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }

@@ -7,10 +7,11 @@ import {analyzedFunction} from './analyze-helpers.ts'
 
 const fixture = new URL('./fixtures/console-assertions.ts', import.meta.url).pathname
 const importedFixture = new URL('./fixtures/console-assertions-imported.ts', import.meta.url).pathname
+const fixtureReport = analyzeFile(fixture)
 
 describe('static console.assert contracts', () => {
   test('leading requirements narrow the body and propagate through calls', () => {
-    const report = analyzeFile(fixture)
+    const report = fixtureReport
 
     const declared = analyzedFunction(report, 'requiredNonnegative')
     expect(declared.requires).toHaveLength(1)
@@ -133,7 +134,7 @@ describe('static console.assert contracts', () => {
   })
 
   test('assertions report every verdict without narrowing later code', () => {
-    const report = analyzeFile(fixture)
+    const report = fixtureReport
     expect(analyzedFunction(report, 'unprovenThenProven').assertions?.map(assertion => assertion.verdict))
       .toEqual(['unproven', 'proven'])
     expect(analyzedFunction(report, 'refuted').assertions?.map(assertion => assertion.verdict))
@@ -147,7 +148,7 @@ describe('static console.assert contracts', () => {
   })
 
   test('asserted functions must complete without site-specific assumptions', () => {
-    const report = analyzeFile(fixture)
+    const report = fixtureReport
     const verdicts = (name: string): string[] => {
       const fn = report.functions.find(candidate => candidate.name === name)
       if (fn == null || fn.kind !== 'partial') throw new Error(`Expected ${name} to be partial`)

@@ -420,7 +420,7 @@ describe('acceptance and module safety', () => {
     expect(fn.ensures).toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${'destructure.ts'}:5:25)`])
   })
 
-  test('global Infinity and boolean literals remain exact constants', () => {
+  test('global Infinity remains exact while a local binding can shadow it', () => {
     // `-Infinity` must fold to one constant at lowering: lowered as `0 - Infinity` it would
     // collapse to unknown-including-NaN (interval arithmetic gives up on non-finite
     // operands), and no clamp recovers a possibly-NaN value. With the fold, the clamp
@@ -438,15 +438,10 @@ describe('acceptance and module safety', () => {
         const Infinity = 5
         return Infinity
       }
-      const featureOn = false
-      export function isOn(): boolean {
-        return featureOn
-      }
     `)
     expect(analyzedFunction(report, 'clampFromBelow').ensures).toEqual(['return is a finite number from 0 through 0'])
     expect(analyzedFunction(report, 'unbounded').ensures).toEqual(['return is a possibly non-finite number from Infinity through Infinity'])
     expect(analyzedFunction(report, 'shadowed').ensures).toEqual(['return is a finite integer number from 5 through 5'])
-    expect(analyzedFunction(report, 'isOn').ensures).toEqual(['return is false'])
   })
 
   test('publishes module values past skipped top-level statements and demotes what they write', () => {

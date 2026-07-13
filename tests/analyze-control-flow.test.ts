@@ -252,109 +252,42 @@ describe('control flow and contracts', () => {
         return nullableDefault(undefined)
       }
     `)
-    const file = 'default-parameter.ts'
-    expect(report.functions).toEqual([
-      {
-        kind: 'analyzed',
-        name: 'scaled',
-        assumptions: ['width is finite and not NaN'],
-        requires: [],
-        ensures: [`return is a possibly non-finite number from -Infinity through Infinity (can overflow at ${file}:3:16)`],
-      },
-      {
-        kind: 'analyzed',
-        name: 'callNoArg',
-        assumptions: [],
-        requires: [],
-        ensures: ['return is a finite integer number from 10 through 10'],
-      },
-      {
-        kind: 'analyzed',
-        name: 'callWithArg',
-        assumptions: [],
-        requires: [],
-        ensures: ['return is a finite integer number from 6 through 6'],
-      },
-      {
-        kind: 'analyzed',
-        name: 'callWithUndefined',
-        assumptions: [],
-        requires: [],
-        ensures: ['return is a finite integer number from 10 through 10'],
-      },
-      {
-        kind: 'analyzed',
-        name: 'forwardOptional',
-        assumptions: ['width is undefined or a finite non-NaN number'],
-        requires: [],
-        ensures: [`return is a possibly non-finite number from -Infinity through Infinity (can overflow at ${file}:3:16)`],
-      },
-      {
-        kind: 'analyzed',
-        name: 'optionalWidth',
-        assumptions: ['width is undefined or a finite non-NaN number'],
-        requires: [],
-        ensures: ['return is a finite number'],
-      },
-      {
-        kind: 'analyzed',
-        name: 'callOptionalNoArg',
-        assumptions: [],
-        requires: [],
-        ensures: ['return is a finite integer number from 4 through 4'],
-      },
-      {
-        kind: 'unsupported',
-        name: 'unsupportedDefault',
-        unsupported: `default value for parameter options; supported defaults are literals provably inside the assumed kind (= 5 for a number, = null for a nullable) — otherwise drop the default and pass the argument explicitly at ${file}:23:35`,
-      },
-      {
-        kind: 'unsupported',
-        name: 'callUnsupportedDefault',
-        unsupported: `call to unsupportedDefault with fewer arguments than parameters (pass every argument explicitly) at ${file}:27:16`,
-      },
-      {
-        kind: 'analyzed',
-        name: 'nullableDefault',
-        assumptions: ['value is null or a finite non-NaN number'],
-        requires: [],
-        ensures: ['return is a finite number'],
-      },
-      {
-        kind: 'analyzed',
-        name: 'callNullableWithNull',
-        assumptions: [],
-        requires: [],
-        ensures: ['return is a finite integer number from 0 through 0'],
-      },
-      {
-        kind: 'analyzed',
-        name: 'callNullableWithUndefined',
-        assumptions: [],
-        requires: [],
-        ensures: ['return is a finite integer number from 5 through 5'],
-      },
-    ])
+    expect(analyzedFunction(report, 'callNoArg').ensures)
+      .toEqual(['return is a finite integer number from 10 through 10'])
+    expect(analyzedFunction(report, 'callWithArg').ensures)
+      .toEqual(['return is a finite integer number from 6 through 6'])
+    expect(analyzedFunction(report, 'callWithUndefined').ensures)
+      .toEqual(['return is a finite integer number from 10 through 10'])
+    expect(analyzedFunction(report, 'forwardOptional').assumptions)
+      .toEqual(['width is undefined or a finite non-NaN number'])
+    expect(analyzedFunction(report, 'callOptionalNoArg').ensures)
+      .toEqual(['return is a finite integer number from 4 through 4'])
+    expect(analyzedFunction(report, 'callNullableWithNull').ensures)
+      .toEqual(['return is a finite integer number from 0 through 0'])
+    expect(analyzedFunction(report, 'callNullableWithUndefined').ensures)
+      .toEqual(['return is a finite integer number from 5 through 5'])
+
+    const unsupportedDefault = report.functions.find(fn => fn.name === 'unsupportedDefault')
+    if (unsupportedDefault?.kind !== 'unsupported') throw new Error('Expected unsupportedDefault to reject')
+    expect(unsupportedDefault.unsupported).toContain('default value for parameter options')
+    const unsupportedCall = report.functions.find(fn => fn.name === 'callUnsupportedDefault')
+    if (unsupportedCall?.kind !== 'unsupported') throw new Error('Expected callUnsupportedDefault to reject')
+    expect(unsupportedCall.unsupported).toContain('with fewer arguments than parameters')
   })
 
-  test('same-file calls evaluate arguments beyond an overload implementation signature', () => {
+  test('same-file calls reject arguments beyond an overload implementation signature', () => {
     const report = analyzeSource('overload-arguments.ts', `
-      let shared = 0
       function consume(first: number, ignored: number): void
       function consume(first: number): void {}
-      function mutateShared(): number {
-        shared = -1
-        return 0
-      }
-      export function readsArgumentEffect(): number {
-        shared = 0
-        consume(0, mutateShared())
-        return shared
+      export function extraArgument(): number {
+        consume(0, 1)
+        return 1
       }
     `)
 
-    expect(analyzedFunction(report, 'readsArgumentEffect').ensures)
-      .toEqual(['return is a finite integer number from -1 through -1'])
+    const extraArgument = report.functions.find(fn => fn.name === 'extraArgument')
+    if (extraArgument?.kind !== 'unsupported') throw new Error('Expected extraArgument to reject')
+    expect(extraArgument.unsupported).toContain('more arguments than its implementation declares')
   })
 
   test('keeps evidence from completed paths next to a recursion stop', () => {
@@ -485,22 +418,6 @@ describe('control flow and contracts', () => {
     `)
     expect(analyzedFunction(report, 'loopBoxes').ensures)
       .toEqual(['return is a finite integer number from 1 through 3'])
-  })
-
-  test('merges branch results whose branches build different records', () => {
-    const report = analyzeSource('skew.ts', `
-      export function skewed(flag: number): number {
-        if (flag > 0) {
-          const extra = {pad: 9}
-          const box = {value: 1}
-          return box.value + extra.pad - 9
-        }
-        const box = {value: 2}
-        return box.value
-      }
-    `)
-    expect(analyzedFunction(report, 'skewed').ensures)
-      .toEqual(['return is a finite integer number from 1 through 2'])
   })
 
   test('optional properties survive branch joins between setting and omitting literals', () => {

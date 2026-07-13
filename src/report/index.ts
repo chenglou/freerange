@@ -735,6 +735,7 @@ export function formatUnsupportedReason(reason: UnsupportedReason): string {
         ? `function call ${reason.callee} (array methods are outside the subset; a for loop may suit simple dense-array aggregation)`
         : `function call ${reason.callee}`
     case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters (pass every argument explicitly)`
+    case 'callWithMoreArguments': return `call to ${reason.callee} with more arguments than its implementation declares`
     case 'nonNumberOperand': return `non-number operand of type ${reason.typeText}`
     case 'nonBooleanCondition': return `condition of type ${reason.typeText} (compare explicitly, e.g. width > 0 or mode !== undefined)`
     case 'valueType': return `value of type ${reason.typeText}`

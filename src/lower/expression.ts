@@ -404,6 +404,9 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current.expression), context.checker)
       const callee = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
       if (callee == null) throw unsupported(current, {kind: 'call', callee: current.expression.text})
+      if (current.arguments.length > callee.declaration.parameters.length) {
+        throw unsupported(current, {kind: 'callWithMoreArguments', callee: current.expression.text})
+      }
       const arguments_: ValueID[] = []
       for (let index = 0; index < callee.declaration.parameters.length; index++) {
         const parameter = callee.declaration.parameters[index]!
@@ -448,12 +451,6 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           () => lowerParameterDefault(default_, parameter.initializer!, context),
           context,
         ))
-      }
-      // Overload signatures may admit more arguments than the implementation declares.
-      // JavaScript still evaluates those expressions left-to-right even though the callee
-      // receives no named parameter for them, so preserve their effects before the call.
-      for (let index = callee.declaration.parameters.length; index < current.arguments.length; index++) {
-        lowerExpression(current.arguments[index]!, context)
       }
       return addInstruction(context, current, {kind: 'call', function: callee.id, arguments: arguments_})
     }
