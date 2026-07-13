@@ -126,7 +126,9 @@ Function calls are analyzed when Freerange can see and support the callee. A sam
 
 Freerange assumes that repeated reads of a property stay stable during one analyzed synchronous calculation. Snapshot framework or reactive state into plain local values before handing it to a numeric helper when that stability is not guaranteed.
 
-Assertions can additionally prove a small set of local ordering patterns common in UI calculations: values selected by `Math.min` or `Math.max`, adding or subtracting a nonnegative value, matching multiplication by a nonnegative factor, positive remainder bounds, and fields read from a fresh record. This producer walk is available only while the assertion is checked. It does not add relationships to ordinary branches or return-contract inference, and it does not retain a proved assertion for later statements.
+Assertions can additionally prove a small set of local ordering patterns common in UI calculations: values selected by `Math.min` or `Math.max`, corresponding `Math.min` operands written in the same order, adding or subtracting a nonnegative value, matching multiplication by a nonnegative factor, positive remainder bounds, and fields read from a fresh record. These rules compose through named calculations without a proof-depth cutoff. They do not provide general transitivity: two guards proving `left <= middle` and `middle <= right` do not by themselves prove `left <= right`.
+
+The producer walk is available only while the assertion is checked. It does not add relationships to ordinary branches or return-contract inference, and it does not retain a proved assertion for later statements.
 
 An `ensures` line assumes its `requires` and `assumes`. A `requires` line may be a real API condition, or it may expose a relationship Freerange cannot currently prove. An `assumes` line may identify an unchecked program boundary or an analysis limitation. Neither should be changed automatically without deciding what the program should do for that input.
 

@@ -311,6 +311,20 @@ describe('static console.assert contracts', () => {
       .toEqual(['proven'])
   })
 
+  test('producer composition does not become general transitivity', () => {
+    const report = analyzeSource('assertion-transitivity.ts', `
+      export function noStoredRelation(left: number, middle: number, right: number): number {
+        if (left > middle) throw new Error('out of order')
+        if (middle > right) throw new Error('out of order')
+        console.assert(left <= right)
+        return right
+      }
+    `)
+
+    expect(analyzedFunction(report, 'noStoredRelation').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['unproven'])
+  })
+
   test('the assertion-only ordering rules hold at floating-point boundaries', () => {
     const bases = [
       Number.NEGATIVE_INFINITY,
