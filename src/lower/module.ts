@@ -77,9 +77,7 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
 
   // Demote bindings that functions write.
   const visit = (node: ts.Node, insideFunction: boolean): void => {
-    if (insideFunction) {
-      for (const written of moduleWritesIn(node, checker, bindingsBySymbol)) demote(bindings, written)
-    }
+    if (insideFunction) demoteModuleWritesInNode(node, checker, bindingsBySymbol, bindings)
     const enteringFunction = insideFunction || ts.isFunctionLike(node)
     ts.forEachChild(node, child => { visit(child, enteringFunction) })
   }
@@ -125,22 +123,21 @@ function importedCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleB
   return value == null ? {kind: 'import'} : {kind: 'importedConstant', value}
 }
 
-// The writes the given node itself performs to module bindings (not its children's writes;
-// the caller walks). Any write-position form we do not recognize must count as a write —
-// missing one publishes a stale value.
-function moduleWritesIn(
+// Demotes module bindings the given node itself writes (not its children's writes; the
+// caller walks). Missing a write-position form would publish a stale value.
+function demoteModuleWritesInNode(
   node: ts.Node,
   checker: ts.TypeChecker,
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
-): ModuleBindingID[] {
-  const written: ModuleBindingID[] = []
+  bindings: ModuleBindingIR[],
+): void {
   const target = (expression: ts.Expression): void => {
     // An assignment target can be a plain identifier or a destructuring pattern; every
     // identifier inside a pattern is conservatively a write.
     if (ts.isIdentifier(expression)) {
       const symbol = checker.getSymbolAtLocation(expression)
       const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-      if (binding != null) written.push(binding)
+      if (binding != null) demote(bindings, binding)
       return
     }
     const visitPattern = (child: ts.Node): void => {
@@ -149,14 +146,14 @@ function moduleWritesIn(
       if (ts.isShorthandPropertyAssignment(child)) {
         const symbol = checker.getShorthandAssignmentValueSymbol(child)
         const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-        if (binding != null) written.push(binding)
+        if (binding != null) demote(bindings, binding)
         ts.forEachChild(child, visitPattern)
         return
       }
       if (ts.isIdentifier(child)) {
         const symbol = checker.getSymbolAtLocation(child)
         const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-        if (binding != null) written.push(binding)
+        if (binding != null) demote(bindings, binding)
         return
       }
       ts.forEachChild(child, visitPattern)
@@ -177,7 +174,6 @@ function moduleWritesIn(
   if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && ts.isExpression(node.initializer)) {
     target(node.initializer)
   }
-  return written
 }
 
 // Lowers the module's top-level runtime code into one synthetic function. A statement that
@@ -225,9 +221,7 @@ export function lowerModuleInitializer(
       // position, `scores.push(999)` in receiver position, and an alias variant mentions
       // it nowhere — so no mention scan is sound for them. Scalars are copied on read;
       // only a write-position form can change one, and those are collected above.
-      for (const written of allModuleWritesIn(statement, checker, scan.bindingsBySymbol)) {
-        demote(scan.bindings, written)
-      }
+      demoteAllModuleWrites(statement, checker, scan.bindingsBySymbol, scan.bindings)
       for (let binding = 0; binding < scan.bindings.length; binding++) {
         const category = scan.bindings[binding]!.category
         const declared = declaredKindOf(category)
@@ -307,24 +301,23 @@ function skippedAtTopLevel(statement: ts.Statement): boolean {
     || ts.isExportDeclaration(statement)
 }
 
-function allModuleWritesIn(
+function demoteAllModuleWrites(
   root: ts.Node,
   checker: ts.TypeChecker,
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
-): ModuleBindingID[] {
-  const written: ModuleBindingID[] = []
+  bindings: ModuleBindingIR[],
+): void {
   const visit = (node: ts.Node): void => {
-    written.push(...moduleWritesIn(node, checker, bindingsBySymbol))
+    demoteModuleWritesInNode(node, checker, bindingsBySymbol, bindings)
     // A never-lowered declarator counts as a write to its own binding.
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const symbol = checker.getSymbolAtLocation(node.name)
       const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-      if (binding != null) written.push(binding)
+      if (binding != null) demote(bindings, binding)
     }
     ts.forEachChild(node, visit)
   }
   visit(root)
-  return written
 }
 
 function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleBindingCategory {

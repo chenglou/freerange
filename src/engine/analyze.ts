@@ -20,9 +20,7 @@ import {
   cloneState,
   emptySharedState,
   joinModuleSlots,
-  joinStates,
-  sameState,
-  widenState,
+  mergeStates,
   type ExecutionState,
   type ModuleSlot,
   type SharedState,
@@ -66,6 +64,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     [],
   )
   const moduleValues = publishedModuleValues(program, initializer.run, initializer.evaluation)
+  const functionEntrySharedState = seedModuleSlots(program, moduleValues)
   const readsModules = functionsReadingModules(functionUsage(program))
   const initializerBounds = initializer.evaluation.boundsAssumptions
   const functions: FunctionAnalysis[] = []
@@ -77,7 +76,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     }
     const arguments_: AbstractValue[] = []
     const argumentExpressions: Array<NumericExpression | null> = []
-    const sharedState = seedModuleSlots(program, moduleValues)
+    const sharedState = cloneSharedState(functionEntrySharedState)
     for (let index = 0; index < fn.parameters.length; index++) {
       const parameter = fn.parameters[index]!
       // Seeded from the declared kind — the same assumed-finite constructor module hedges
@@ -180,18 +179,22 @@ function publishedModuleValues(
 
   const demoted = new Set<ModuleBindingID>()
   const successors = blockSuccessors(fn)
+  const stoppingBlocks: BlockID[] = []
   for (let blockID = 0; blockID < fn.blocks.length; blockID++) {
     const stopIndex = run.blocks[blockID]!.stopIndex
     if (stopIndex == null) continue
-    for (const instruction of fn.blocks[blockID]!.instructions.slice(stopIndex)) {
+    stoppingBlocks.push(blockID)
+    const instructions = fn.blocks[blockID]!.instructions
+    for (let index = stopIndex; index < instructions.length; index++) {
+      const instruction = instructions[index]!
       if (instruction.kind === 'moduleWrite') demoted.add(instruction.binding)
     }
-    const reached = reachableFrom(successors, blockID)
-    for (let target = 0; target < fn.blocks.length; target++) {
-      if (reached[target] !== true) continue
-      for (const instruction of fn.blocks[target]!.instructions) {
-        if (instruction.kind === 'moduleWrite') demoted.add(instruction.binding)
-      }
+  }
+  const reachedAfterStops = reachableAfter(successors, stoppingBlocks)
+  for (let target = 0; target < fn.blocks.length; target++) {
+    if (reachedAfterStops[target] !== true) continue
+    for (const instruction of fn.blocks[target]!.instructions) {
+      if (instruction.kind === 'moduleWrite') demoted.add(instruction.binding)
     }
   }
 
@@ -437,22 +440,20 @@ function runEvaluation(
   // propagated returns downstream. Any header on a cycle through a stopping block is
   // therefore failed too. Slightly conservative: evidence from the path where the loop body
   // runs zero times is also suppressed when the stop existed from the first round.
-  // Reachability from each stopping block is computed once, and the whole pass is skipped
-  // when nothing stopped (a stop always sets both a stops entry and its block's stopIndex).
+  // Reverse edges answer whether a stopping block can return to each header without a
+  // separate traversal from every stop. The whole pass is skipped when nothing stopped.
   const suppressed: boolean[] = []
   if (run.stops.length > 0) {
-    const reachedFromStop: Array<boolean[] | undefined> = []
-    for (let stopBlock = 0; stopBlock < run.blocks.length; stopBlock++) {
-      if (run.blocks[stopBlock]!.stopIndex != null) reachedFromStop[stopBlock] = reachableFrom(successors, stopBlock)
-    }
+    const predecessors = reverseEdges(successors)
     for (let headerID = 0; headerID < fn.blocks.length; headerID++) {
       if (fn.blocks[headerID]!.loopHeader == null) continue
       const header = run.blocks[headerID]!
       const reachedFromHeader = header.failedHeader ? undefined : reachableFrom(successors, headerID)
       if (reachedFromHeader != null) {
+        const returnsToHeader = reachableFrom(predecessors, headerID)
         for (let stopBlock = 0; stopBlock < run.blocks.length; stopBlock++) {
           if (run.blocks[stopBlock]!.stopIndex == null || reachedFromHeader[stopBlock] !== true) continue
-          if (reachedFromStop[stopBlock]![headerID] === true) {
+          if (returnsToHeader[stopBlock] === true) {
             header.failedHeader = true
             break
           }
@@ -489,17 +490,19 @@ function runEvaluation(
   // (e.g. `for (; index < 10 ? true : index >= 0; )`) puts the body/exit branch in a
   // continuation block, not on the tagged header.
   if (normal == null && run.stops.length === 0) {
+    const predecessors = reverseEdges(successors)
     for (let headerID = 0; headerID < fn.blocks.length; headerID++) {
       const header = fn.blocks[headerID]!
       const entry_ = run.blocks[headerID]!.incoming
       if (header.loopHeader == null || entry_ == null) continue
       const downstream = reachableFrom(successors, headerID)
+      const returnsToHeader = reachableFrom(predecessors, headerID)
       let visitedDownstream = false
       let stuckInCycle = true
       for (let block = 0; block < fn.blocks.length; block++) {
         if (downstream[block] !== true || run.blocks[block]!.incoming == null) continue
         visitedDownstream = true
-        if (reachableFrom(successors, block)[headerID] !== true) {
+        if (returnsToHeader[block] !== true) {
           stuckInCycle = false
           break
         }
@@ -618,10 +621,8 @@ function propagate(
     run.queue.push(edge.block)
     return
   }
-  const joined = target.loopHeader != null && previous.updateCount >= 1
-    ? widenState(previous.state, candidate)
-    : joinStates(previous.state, candidate)
-  if (!sameState(previous.state, joined)) {
+  const update = mergeStates(previous.state, candidate, target.loopHeader != null && previous.updateCount >= 1)
+  if (update.changed) {
     if (target.loopHeader != null && previous.updateCount >= maximumLoopHeaderUpdates) {
       addStop(
         run,
@@ -633,7 +634,7 @@ function propagate(
       run.blocks[edge.block]!.failedHeader = true
       return
     }
-    run.blocks[edge.block]!.incoming = {state: joined, updateCount: previous.updateCount + 1}
+    run.blocks[edge.block]!.incoming = {state: update.state, updateCount: previous.updateCount + 1}
     run.queue.push(edge.block)
   }
 }
@@ -650,12 +651,18 @@ function blockSuccessors(fn: FunctionIR): BlockID[][] {
   })
 }
 
-// Every block reachable from `start` through one or more static CFG edges. Static rather
-// than visited-during-analysis edges: a body whose back edge never fired because the body
-// stopped must still count as inside its loop.
-function reachableFrom(successors: BlockID[][], start: BlockID): boolean[] {
+function reverseEdges(successors: BlockID[][]): BlockID[][] {
+  const predecessors: BlockID[][] = successors.map(() => [])
+  for (let source = 0; source < successors.length; source++) {
+    for (const target of successors[source]!) predecessors[target]!.push(source)
+  }
+  return predecessors
+}
+
+function reachableAfter(successors: BlockID[][], starts: BlockID[]): boolean[] {
   const reached: boolean[] = []
-  const queue = [...successors[start]!]
+  const queue: BlockID[] = []
+  for (const start of starts) queue.push(...successors[start]!)
   let index = 0
   while (index < queue.length) {
     const block = queue[index++]!
@@ -664,4 +671,11 @@ function reachableFrom(successors: BlockID[][], start: BlockID): boolean[] {
     queue.push(...successors[block]!)
   }
   return reached
+}
+
+// Every block reachable from `start` through one or more static CFG edges. Static rather
+// than visited-during-analysis edges: a body whose back edge never fired because the body
+// stopped must still count as inside its loop.
+function reachableFrom(successors: BlockID[][], start: BlockID): boolean[] {
+  return reachableAfter(successors, [start])
 }

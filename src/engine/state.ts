@@ -63,23 +63,56 @@ export function cloneState(state: ExecutionState): ExecutionState {
   }
 }
 
-export function joinStates(left: ExecutionState, right: ExecutionState): ExecutionState {
+// A new state field must participate in both the merged value and `changed`. Listing the
+// fields here makes that review mandatory when ExecutionState grows.
+const mergedStateFields: Record<keyof ExecutionState, true> = {frame: true, shared: true, validIndexPairs: true}
+
+// Joins one incoming state into the block's previous state and reports whether the block
+// must run again. The comparison happens while each joined value is already in hand, so
+// propagation does not walk the complete historical frame a second time.
+export function mergeStates(previous: ExecutionState, candidate: ExecutionState, widen: boolean): {state: ExecutionState; changed: boolean} {
+  void mergedStateFields
   const values: FunctionFrame['values'] = []
-  const length = Math.max(left.frame.values.length, right.frame.values.length)
+  const length = Math.max(previous.frame.values.length, candidate.frame.values.length)
+  let changed = previous.frame.values.length !== length
   for (let index = 0; index < length; index++) {
-    const leftValue = left.frame.values[index]
-    const rightValue = right.frame.values[index]
-    if (leftValue == null) values[index] = rightValue
-    else if (rightValue == null) values[index] = leftValue
-    else values[index] = joinValues(leftValue, rightValue)
+    const previousValue = previous.frame.values[index]
+    const candidateValue = candidate.frame.values[index]
+    if (previousValue == null) {
+      values[index] = candidateValue
+      if (candidateValue != null) changed = true
+    } else if (candidateValue == null) {
+      values[index] = previousValue
+    } else {
+      const joined = joinValues(previousValue, candidateValue)
+      const merged = widen ? widenValue(previousValue, joined) : joined
+      values[index] = merged
+      if (!sameValues(previousValue, merged)) changed = true
+    }
   }
-  const validIndexPairs = left.validIndexPairs.filter(pair =>
-    hasValidIndexPair(right.validIndexPairs, pair.index, pair.array))
-  return {
+  const shared: SharedState = []
+  for (let index = 0; index < previous.shared.length; index++) {
+    const previousSlot = previous.shared[index]!
+    const candidateSlot = candidate.shared[index]!
+    if (previousSlot.kind === 'uninitialized' || candidateSlot.kind === 'uninitialized') {
+      shared.push({kind: 'uninitialized'})
+      if (previousSlot.kind !== 'uninitialized') changed = true
+    } else {
+      const joined = joinValues(previousSlot.value, candidateSlot.value)
+      const merged = widen ? widenValue(previousSlot.value, joined) : joined
+      shared.push({kind: 'value', value: merged})
+      if (!sameValues(previousSlot.value, merged)) changed = true
+    }
+  }
+  const validIndexPairs = previous.validIndexPairs.filter(pair =>
+    hasValidIndexPair(candidate.validIndexPairs, pair.index, pair.array))
+  if (validIndexPairs.length !== previous.validIndexPairs.length) changed = true
+  const state: ExecutionState = {
     frame: {values},
-    shared: joinModuleSlots(left.shared, right.shared),
+    shared,
     validIndexPairs,
   }
+  return {state, changed}
 }
 
 // Uninitialized dominates: a binding is only initialized when every joined path
@@ -96,56 +129,4 @@ export function joinModuleSlots(left: ModuleSlot[], right: ModuleSlot[]): Module
     )
   }
   return joined
-}
-
-// The completeness check for sameState: every ExecutionState field must be listed here,
-// and the comparison below must actually compare it. A field added to the type breaks
-// compilation on this record until sameState handles it — a fact the equality skips is a
-// fact the propagate fast-path can silently absorb across paths. cloneState and joinStates
-// need no such check: their returned object literals already fail to compile on a missing
-// field.
-const comparedStateFields: Record<keyof ExecutionState, true> = {frame: true, shared: true, validIndexPairs: true}
-
-export function sameState(left: ExecutionState, right: ExecutionState): boolean {
-  void comparedStateFields
-  if (left.frame.values.length !== right.frame.values.length) return false
-  for (let index = 0; index < left.frame.values.length; index++) {
-    const leftValue = left.frame.values[index]
-    const rightValue = right.frame.values[index]
-    if (leftValue == null || rightValue == null) {
-      if (leftValue !== rightValue) return false
-    } else if (!sameValues(leftValue, rightValue)) return false
-  }
-  for (let index = 0; index < left.shared.length; index++) {
-    const leftSlot = left.shared[index]!
-    const rightSlot = right.shared[index]!
-    if (leftSlot.kind !== rightSlot.kind) return false
-    if (leftSlot.kind === 'value' && rightSlot.kind === 'value') {
-      if (!sameValues(leftSlot.value, rightSlot.value)) return false
-    }
-  }
-  if (left.validIndexPairs.length !== right.validIndexPairs.length) return false
-  for (const pair of left.validIndexPairs) {
-    if (!hasValidIndexPair(right.validIndexPairs, pair.index, pair.array)) return false
-  }
-  return true
-}
-
-export function widenState(previous: ExecutionState, next: ExecutionState): ExecutionState {
-  const widened = joinStates(previous, next)
-  for (let index = 0; index < widened.frame.values.length; index++) {
-    const previousValue = previous.frame.values[index]
-    const nextValue = widened.frame.values[index]
-    if (previousValue != null && nextValue != null) {
-      widened.frame.values[index] = widenValue(previousValue, nextValue)
-    }
-  }
-  for (let index = 0; index < widened.shared.length; index++) {
-    const previousSlot = previous.shared[index]!
-    const slot = widened.shared[index]!
-    if (previousSlot.kind === 'value' && slot.kind === 'value') {
-      widened.shared[index] = {kind: 'value', value: widenValue(previousSlot.value, slot.value)}
-    }
-  }
-  return widened
 }
