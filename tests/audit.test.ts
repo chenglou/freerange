@@ -210,8 +210,7 @@ test('file audits lead with honest coverage and route only relevant checked patt
   expect(propertyWrite?.guideIDs).toEqual([])
   const output = formatFileAuditUnit(audit)
   expect(output).toStartWith('# layout.ts (2/6 functions fully analyzed; 4 unsupported; 1 module statement skipped)')
-  // Contracts always print before suggestions within a unit; a planned `fr --check`
-  // snapshot mode will diff the contracts portion.
+  // Analysis entries always print before suggestions within a unit.
   expect(output.indexOf('## Contracts')).toBeGreaterThan(0)
   expect(output.indexOf('## Contracts')).toBeLessThan(output.indexOf('## Refactoring suggestions'))
   expect(output).toContain('### Check the exact divisor')

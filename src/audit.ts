@@ -287,7 +287,7 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
 export const auditPreamble = [
   'Freerange tracks number ranges, integer values, NaN, Infinity, and supported branch checks through synchronous named top-level function declarations. It does not guess through unknown calls, callback order, mutation through aliases, or arbitrary algebraic relationships between separately computed values. Reports assume that repeated reads of a property stay stable during one analyzed calculation.',
   '',
-  'Each file below gets one unit: its contracts, then the refactoring suggestions that apply to it. In a contract entry, `requires` are caller conditions; `ensures` hold when the function returns and its `requires` and `assumes` are true; `assumes` are input conditions accepted without proof. An `unsupported` entry names the first construct outside the analyzed subset that blocked the function, so fix one blocker and rerun. `stopped` means analysis halted partway on some path, and `on analyzed paths` is evidence from the paths that completed, not a contract for the whole function. `skipped` marks a top-level statement the module analysis stepped over; values it could write are not trusted.',
+  'Each file below gets one unit: its result for each function, then the refactoring suggestions that apply to it. In a contract entry, `requires` are caller conditions; `ensures` hold when the function returns and its `requires` and `assumes` are true; `assumes` are input conditions accepted without proof. An `unsupported` entry names the first construct outside the analyzed subset. Change that blocker and rerun when the function should become analyzable; framework wrappers may remain unsupported. `stopped` means analysis halted partway on some path, and `on analyzed paths` is evidence from the paths that completed, not a contract for the whole function. `skipped` marks a top-level statement the module analysis stepped over; values it could write are not trusted.',
   '',
   'Refactoring suggestions are conditional examples, not automatic fixes. Apply one only when its "Use when" condition matches the program, then run behavioral tests and the audit again. Only recognized patterns get suggestions; a file with no suggestions and incomplete coverage is not necessarily safe.',
 ].join('\n')
@@ -307,10 +307,9 @@ function formatAuditCoverage(coverage: AuditCoverage): string {
 
 // One file's audit unit: a header carrying the file's coverage counts, its contract
 // entries, then its refactoring suggestions — always in that order, under these exact
-// section labels. A planned `fr --check` snapshot mode will diff the contracts portion of
-// each unit, so the contracts section must keep its position and label. `fr --audit
-// <file>` prints one unit; bare `fr --audit` prints one unit per project file; both print
-// auditPreamble once above, which keeps a file's unit identical in the two outputs.
+// section labels. `fr --audit <file>` prints one unit; bare `fr --audit` prints one unit
+// per project file; both print auditPreamble once above, which keeps a file's unit
+// identical in the two outputs.
 export function formatFileAuditUnit(audit: FileAudit): string {
   const {coverage} = audit
   const lines = [`# ${audit.file} (${formatAuditCoverage(coverage)})`]

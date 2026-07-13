@@ -314,6 +314,22 @@ describe('control flow and contracts', () => {
     }])
   })
 
+  test('the convergence backstop catches structural growth through an opaque field', () => {
+    const report = analyzeSource('growing-record.ts', `
+      type Box = {next: unknown}
+      export function grow(count: number): number {
+        let box: Box = {next: null}
+        for (let index = 0; index < count; index += 1) {
+          box = {next: box}
+        }
+        return 1
+      }
+    `)
+    const grow = report.functions.find(fn => fn.name === 'grow')
+    if (grow?.kind !== 'partial') throw new Error('Expected grow to be partial')
+    expect(grow.stopped).toEqual(['the loop at growing-record.ts:5:9 did not converge after 16 updates'])
+  })
+
   test('reads through a branch-merged record join the possible values', () => {
     const report = analyzeSource('merged-read.ts', `
       export function pick(flag: number): number {

@@ -5,7 +5,7 @@ Freerange analyzes the numeric behavior of TypeScript functions. It reports cond
 ## Commands
 
 - `fr`: print TypeScript errors, Freerange findings, and coverage for the project
-- `fr --audit`: print every function's contracts and applicable refactoring suggestions
+- `fr --audit`: print every function's analysis result and applicable refactoring suggestions
 
 Both commands can take a file to narrow the output to just info for that file.
 
@@ -34,7 +34,7 @@ TypeScript can tell you that a value is a number. Freerange tells you which numb
 
 - Like `tsc`, `bun fr.ts` searches the current directory and then its parents for the nearest `tsconfig.json`. It analyzes that project and its declared project references, then prints lint findings and coverage.
 - `bun fr.ts src/some/file.ts` prints the project's lint findings narrowed to that file, under the same `tsconfig.json` a bare `bun fr.ts` finds — the file argument never changes which configuration governs. When a config exists, the file must belong to that project. Without a config, Freerange analyzes the file with its fallback TypeScript settings.
-- `bun fr.ts --audit` prints every function's contracts and the refactoring suggestions that apply, one unit per file, with project coverage at the end.
+- `bun fr.ts --audit` prints every function's analysis result and the refactoring suggestions that apply, one unit per file, with project coverage at the end.
 - `bun fr.ts --audit src/some/file.ts` prints exactly that file's unit of the project audit. Use this while moving a calculation into the supported subset.
 - TypeScript diagnostics use TypeScript's own formatting. Freerange findings follow its plain and pretty location and color conventions; the project's `pretty` setting wins, otherwise `NO_COLOR`, `FORCE_COLOR`, and terminal detection decide. A file-specific error skips that file while clean files still analyze. A project-wide diagnostic, such as a missing package named in `compilerOptions.types`, skips that project's files because their type information cannot be trusted. The command exits with status 1 when TypeScript reports an error.
 
@@ -53,7 +53,7 @@ These commands write no files. Redirect stdout when you deliberately want a snap
 
 Freerange is deliberately designed for code that can be refactored, especially code written or maintained by agents. The goal is not to accept every TypeScript pattern. The goal is to make the useful boundary predictable and make good rewrites cheap.
 
-Put important numeric calculations in synchronous named top-level function declarations with explicit inputs. A React component, callback, or async function can call the helper even when the surrounding framework code remains unsupported. This was the most useful pattern in the production conversion: geometry moved into plain functions that returned records, while hooks, DOM calls, and rendering stayed where they were.
+**Keep the numeric part small and explicit.** Put important calculations in synchronous named top-level function declarations with explicit inputs. A React component, callback, or async function can call the helper even when the surrounding framework code remains unsupported. Unsupported framework code does not need to be rewritten unless its numeric behavior needs a contract.
 
 For example, keep image fitting in a plain function and let the component use its result:
 
@@ -70,23 +70,31 @@ function ImageCard(props: {frameWidth: number; imageWidth: number; imageHeight: 
 }
 ```
 
-Write real domain rules as executable checks where the program defines them. For example, a virtualized grid may define its column count as a positive integer, and an application may define a minimum supported window size. Do not add a clamp merely to improve a report. A clamp changes runtime behavior and belongs only where that behavior is intended.
+**Do not mix unrelated types in one binding.** Use a tagged union when behavior differs by shape, and switch on its string or boolean tag. Do not use `any` to bypass that distinction.
 
-Guard the exact value an operation uses. For example, if the divisor is `oldMax - oldMin`, bind that expression to `oldSpan` and check `oldSpan === 0`. Freerange does not generally remember an algebraic relationship between two separate values, so checking `oldMin === oldMax` does not currently prove a later fact about the subtraction.
+**State real domain rules in executable code.** For example, a virtualized grid may define its column count as a positive integer, and an application may define a minimum supported window size. Do not add a clamp merely to improve a report. A clamp changes runtime behavior and belongs only where that behavior is intended.
+
+**Guard the exact value an operation uses.** For example, if the divisor is `oldMax - oldMin`, bind that expression to `oldSpan` and check `oldSpan === 0`. Freerange does not generally remember an algebraic relationship between two separate values, so checking `oldMin === oldMax` does not currently prove a later fact about the subtraction.
 
 Be careful with precomputed ratios. Two positive numbers can divide to an exact result so tiny that JavaScript rounds it to zero. In image layout, `(frameWidth * imageHeight) / imageWidth` can therefore be easier to verify than `frameWidth / (imageWidth / imageHeight)` once the original dimensions are checked. The two expressions may round differently, so precision-sensitive code must choose its evaluation order intentionally.
 
-Treat values as immutable after construction inside analyzed code. Rebuild a plain record by listing its fields, e.g. `{width, height: layout.height}`. Object spread is outside the supported subset because its runtime rules for inherited and enumerable properties are easy to model incorrectly. Rebuilding is not a general replacement for mutation when callers observe object identity or the mutation itself. Array writes often need a larger algorithm change rather than a mechanical rewrite.
+**Treat values as immutable after construction.** Rebuild a plain record by listing its fields, e.g. `{width, height: layout.height}`. Object spread is outside the supported subset because its runtime rules for inherited and enumerable properties are easy to model incorrectly. Rebuilding is not a general replacement for mutation when callers observe object identity or the mutation itself. Array writes often need a larger algorithm change rather than a mechanical rewrite.
 
-Copy module state to a local before checking and using it. For example, write `const currentScale = scale; if (currentScale !== null) return currentScale`, rather than checking one read of `scale` and returning a second read. Freerange treats separate module reads as separate values; the local snapshot makes the intended identity explicit.
+**Snapshot unstable state before calculating.** Copy module or reactive state to a local before checking and using it. For example, write `const currentScale = scale; if (currentScale !== null) return currentScale`, rather than checking one read of `scale` and returning a second read. Freerange treats separate module reads as separate values; the local snapshot makes the intended identity explicit.
 
-Use direct control flow. Write the numeric condition you mean instead of relying on truthiness, use exhaustive tagged-union switches without fallthrough, and use explicit loops for simple dense-array aggregation. Array callbacks are not automatically equivalent to loops because holes, callback arguments, returned arrays, and side effects can be observable.
+**Use direct control flow.** Write the numeric condition you mean instead of relying on truthiness, use exhaustive tagged-union switches without fallthrough, and use explicit loops for simple dense-array aggregation. Array callbacks are not automatically equivalent to loops because holes, callback arguments, returned arrays, and side effects can be observable.
 
-Do not use casts or `any` as proof. Freerange carries those values without numeric claims. Parse and validate outside data, then pass checked values into the numeric helper. A file containing `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, or `eval` is rejected because its declared types can no longer be trusted.
+**Let TypeScript establish the shape.** Do not use casts or `any` as proof. Freerange carries those values without numeric claims. Parse and validate outside data, then pass checked values into the numeric helper. A file containing `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, or `eval` is rejected because its declared types can no longer be trusted.
 
 ## Limits to expect
 
-Freerange tracks each value's range, integer status, possible `NaN`, possible Infinity, and a small amount of branch information. It does not keep arbitrary formulas or relationships between separate values. When branches meet, the result covers every branch. Loop ranges become more conservative until the analysis stabilizes; Freerange does not derive a closed formula for the loop.
+Freerange tracks each value's range, integer status, possible `NaN`, possible Infinity, and at most one constant excluded by a branch check. It does not keep arbitrary formulas or relationships between separate values. When branches meet, the result covers every branch. A later check that excludes a different interior constant can replace the earlier exclusion; guard the exact divisor immediately before using it when several exclusions matter.
+
+Loops are analyzed until their state stops changing, without unrolling runtime iterations or deriving a closed formula. Ordinary counting loops usually stabilize after two or three analysis passes. A loop that still changes after 16 passes is reported as stopped. This limit also catches structures that grow one nested record per pass; it can conservatively stop an unusually long chain of loop-carried variables that would eventually stabilize.
+
+Project-owned record, tuple, array, and tagged-union types are followed through at most eight nested levels. A deeper or recursive property becomes an unknown value, while a function whose root input type cannot be represented is unsupported. Pass the finite fields a calculation actually uses instead of passing a recursive or very large application model.
+
+A caller requirement can follow local calculations, e.g. division by `width - 1` can report `width is not 1`. Freerange limits that expansion to the number of instructions in the function so repeated calculations cannot produce exponentially large text. A larger expansion prints a local `assumes` line instead. Guard the final local value inside the function when the condition belongs there.
 
 Function calls are analyzed when Freerange can see and support the callee. Unknown calls, callback order, mutation through aliases, and most framework effects stop the affected path or function. An imported constant is followed only when its initializer is a plain numeric literal, e.g. `export const GAP = 24`; calculated constants and imported function behavior are not inferred.
 
@@ -96,7 +104,7 @@ An `ensures` line assumes its `requires` and `assumes`. A `requires` line may be
 
 ## Audits
 
-`bun fr.ts --audit` is the deep view intended for agents. For each file it prints coverage, every function's contracts, and the locations where Freerange recognizes a useful refactoring pattern. Run `bun fr.ts --audit <file>` for the same output narrowed to one file.
+`bun fr.ts --audit` is the deep view intended for agents. For each file it prints coverage, every function's analysis result, and the locations where Freerange recognizes a useful refactoring pattern. Run `bun fr.ts --audit <file>` for the same output narrowed to one file.
 
 Each pattern says when the rewrite applies and what behavior it may change. The catalog's before and after snippets are run through Freerange in the test suite, and behavior-sensitive examples also have runtime tests. To keep the output short, the audit prints one primary example for each cause and describes secondary options without repeating their code. The audit deliberately gives no recommendation when the syntax alone is not enough to choose a safe rewrite. For example, an unknown function call does not prove that the function contains numeric work worth extracting. The audit does not edit source code.
 

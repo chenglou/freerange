@@ -249,8 +249,7 @@ export function clean(): number {
     expect(projectAudit.stdout).toStartWith(`${auditPreamble}\n\n# advice.ts (3/4 functions fully analyzed; 1 unsupported)`)
     expect(projectAudit.stdout.split('Refactoring suggestions are conditional examples')).toHaveLength(2)
     expect(projectAudit.stdout.trimEnd()).toEndWith('coverage: 3/4 named top-level function declarations fully analyzed; 0 partial; 1 unsupported; 0/1 project files skipped for TypeScript errors.')
-    // Contracts come before suggestions within the unit — a planned `fr --check`
-    // snapshot mode will diff the contracts portion.
+    // Analysis entries come before suggestions within the unit.
     expect(projectAudit.stdout.indexOf('## Contracts')).toBeLessThan(projectAudit.stdout.indexOf('## Refactoring suggestions'))
     expect(projectAudit.stdout).toContain(`divide
   requires: columnCount is nonzero (division at advice.ts:2:10)`)

@@ -366,10 +366,9 @@ export function widenValue(previous: AbstractValue, next: AbstractValue): Abstra
     // A record's number leaves are unbounded, so widening recurses pointwise — a
     // loop-carried `metrics = {height: metrics.height + 1}` must widen height, not grow it
     // one round at a time into the round limit. A property the previous round lacked has
-    // nothing to widen against and passes through. (A structure whose nesting genuinely
-    // grows each round — possible only through a recursive declared type — never
-    // stabilizes; the loop round limit records that path as a stop, which is the honest
-    // answer.)
+    // nothing to widen against and passes through. Width subtyping and opaque fields can
+    // still store the previous record inside a wider value on every round; that nesting
+    // never stabilizes, so the loop round limit remains the termination backstop.
     case 'record': {
       if (previous.kind !== 'record') return next
       const previousRecord = previous
