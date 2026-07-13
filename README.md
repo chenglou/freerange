@@ -98,7 +98,7 @@ Project-owned record, tuple, array, and tagged-union types are followed through 
 
 A caller requirement can follow local calculations, e.g. division by `width - 1` can report `width is not 1`. Freerange limits that expansion to the number of instructions in the function so repeated calculations cannot produce exponentially large text. A larger expansion prints a local `assumes` line instead. Guard the final local value inside the function when the condition belongs there.
 
-Function calls are analyzed when Freerange can see and support the callee. Unknown calls, callback order, mutation through aliases, and most framework effects stop the affected path or function. An imported constant is followed only when its initializer is a plain numeric literal, e.g. `export const GAP = 24`; calculated constants and imported function behavior are not inferred.
+Function calls are analyzed when Freerange can see and support the callee. A same-file call must currently pass every declared parameter explicitly, even when an optional parameter or default value lets JavaScript omit the argument. Unknown calls, callback order, mutation through aliases, and most framework effects stop the affected path or function. An imported constant is followed only when its initializer is a plain numeric literal, e.g. `export const GAP = 24`; calculated constants and imported function behavior are not inferred.
 
 Freerange assumes that repeated reads of a property stay stable during one analyzed synchronous calculation. Snapshot framework or reactive state into plain local values before handing it to a numeric helper when that stability is not guaranteed.
 
