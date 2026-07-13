@@ -53,7 +53,7 @@ These commands write no files. Redirect stdout when you deliberately want a snap
 
 Freerange treats a direct call to the standard `console.assert(condition)` as a static assertion when the call has exactly one argument, is a standalone statement, and appears in a named top-level function declaration. A local or imported value named `console` is not treated specially.
 
-Consecutive assertions at the very start of the function declare caller requirements. A requirement may be `Number.isInteger(parameter)` or a direct comparison between one parameter and a numeric constant. Requirements narrow that parameter, print as `requires`, and are checked when Freerange analyzes a supported same-file call. Any assertion after another statement asks Freerange to prove the condition at that point:
+Consecutive assertions at the very start of the function declare caller requirements. A requirement may be `Number.isInteger(parameter)` or one strict comparison between a parameter and a finite numeric literal. Requirements narrow that parameter, print as `requires`, and are checked when Freerange analyzes a supported same-file call. Any assertion after another statement asks Freerange to prove the condition at that point:
 
 ```ts
 export function itemColumn(itemIndex: number, columnCount: number): number {
@@ -67,7 +67,9 @@ export function itemColumn(itemIndex: number, columnCount: number): number {
 }
 ```
 
-Write one direct condition per assertion, e.g. two assertions for a lower and upper bound instead of one condition joined with `&&`. Conditions may use the side-effect-free arithmetic, property reads, and standard numeric checks Freerange already analyzes. An assertion condition may not call a user function, carry a message argument, introduce control flow, read an array element, or perform division or remainder. Bind such a calculation before the assertion when the function already establishes the calculation's requirements. This keeps the assertion from creating the condition needed to prove itself.
+Write one direct condition per assertion. An interior assertion is either a strict numeric comparison (`===`, `!==`, `<`, `<=`, `>`, or `>=`) or `Number.isInteger`, `Number.isFinite`, or `Number.isNaN`. Each operand must be a name, numeric literal, property path, or array length. Bind calculations before the assertion, e.g. write `const availableWidth = frame.right - frame.left; console.assert(availableWidth >= 0)` instead of putting the subtraction inside the assertion. Split a lower and upper bound into two assertions instead of joining them with `&&`.
+
+An assertion condition may not call a user function, carry a message argument, introduce control flow, read an array element, or perform arithmetic directly. This keeps the assertion language small and prevents an assertion from creating the requirement needed to prove itself.
 
 A later assertion does not narrow subsequent statements. If later code depends on a condition, use an ordinary `if` guard or make the condition a leading caller requirement. Every path in a function containing an assertion must finish analysis without site-specific assumptions; otherwise no assertion in that function is accepted as proven. A condition already known to fail or remain uncertain keeps that more specific result; an otherwise successful condition is blocked. Unproven, failing, blocked, and unreachable assertions are errors in `fr`. Successful assertions are quiet there and print as `proves` in `fr --audit`.
 

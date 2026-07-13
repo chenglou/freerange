@@ -148,6 +148,26 @@ describe('static console.assert contracts', () => {
         console.assert(Number.isFinite(values[index]!))
         return result
       }
+      export function inlineArithmetic(left: number, right: number): number {
+        const result = right
+        console.assert(left + 1 <= right)
+        return result
+      }
+      export function storedCondition(left: number, right: number): number {
+        const ordered = left <= right
+        console.assert(ordered)
+        return right
+      }
+      export function directMath(value: number): number {
+        const result = value
+        console.assert(Math.min(0, value) <= value)
+        return result
+      }
+      export function writtenNumberCheck(value: number): number {
+        const result = value
+        console.assert(Number.isFinite(result))
+        return result
+      }
       export function shadowed(
         console: {assert(condition: boolean): void},
         value: number,
@@ -169,6 +189,9 @@ describe('static console.assert contracts', () => {
       'inlineDivision',
       'inlineRemainder',
       'inlineIndex',
+      'inlineArithmetic',
+      'storedCondition',
+      'directMath',
     ]) {
       const fn = entries.get(name)
       if (fn?.kind !== 'unsupported') throw new Error(`Expected ${name} to be unsupported`)
@@ -178,6 +201,8 @@ describe('static console.assert contracts', () => {
     if (shadowed?.kind !== 'unsupported') throw new Error('Expected shadowed to be unsupported')
     expect(shadowed.unsupported).toContain('function parameter with type')
     expect(shadowed.unsupported).not.toContain('console.assert')
+    expect(analyzedFunction(report, 'writtenNumberCheck').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['proven'])
   })
 
   test('local producer proofs serve assertions without changing ordinary branches', () => {
@@ -238,7 +263,9 @@ describe('static console.assert contracts', () => {
 
         const upper = base + Math.max(0, rawOffset)
         const negativeFactor = Math.min(-1, rawOffset)
-        console.assert(base * negativeFactor <= upper * negativeFactor)
+        const scaledBase = base * negativeFactor
+        const scaledUpper = upper * negativeFactor
+        console.assert(scaledBase <= scaledUpper)
 
         const nan = 0 * Infinity
         console.assert(nan === nan)
@@ -269,7 +296,7 @@ describe('static console.assert contracts', () => {
         const base = Math.max(0, rawBase)
         const upper = base + Math.max(0, rawOffset)
         const ordered = base <= upper
-        console.assert(ordered)
+        console.assert(base <= upper)
         if (ordered) return 1
         return 0
       }

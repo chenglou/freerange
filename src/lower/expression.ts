@@ -530,6 +530,12 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
   }
   const condition = annotation.condition
   requireBooleanCondition(condition, context.checker)
+  const writtenCondition = annotation.role === 'requirement'
+    ? supportedWrittenRequirement(condition, context)
+    : supportedWrittenAssertion(condition, context.checker)
+  if (!writtenCondition) {
+    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+  }
   const originalBlock = context.currentBlock
   const originalBlockCount = context.blocks.length
   const originalInstructionCount = originalBlock.instructions.length
@@ -556,41 +562,99 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
   return addInstructionAtSite(context, site, {kind: 'staticAssert', value, assertion})
 }
 
+function supportedWrittenRequirement(condition: ts.Expression, context: FunctionContext): boolean {
+  const current = unwrapParentheses(condition)
+  if (ts.isCallExpression(current) && current.questionDotToken == null
+    && current.arguments.length === 1 && ts.isPropertyAccessExpression(current.expression)
+    && current.expression.questionDotToken == null
+    && isStandardNumberObject(current.expression.expression, context.checker)
+    && current.expression.name.text === 'isInteger') {
+    return staticRequirementParameter(current.arguments[0]!, context)
+  }
+  if (!ts.isBinaryExpression(current) || !staticAssertionComparison(current.operatorToken.kind)) return false
+  return (staticRequirementParameter(current.left, context) && staticFiniteLiteral(current.right))
+    || (staticFiniteLiteral(current.left) && staticRequirementParameter(current.right, context))
+}
+
+function staticRequirementParameter(expression: ts.Expression, context: FunctionContext): boolean {
+  const current = unwrapParentheses(expression)
+  if (!ts.isIdentifier(current)) return false
+  const symbol = context.checker.getSymbolAtLocation(current)
+  if (symbol == null) return false
+  const value = context.bindings.get(symbol)
+  return value != null && context.parameters.some(parameter => parameter.value === value)
+}
+
+function staticFiniteLiteral(expression: ts.Expression): boolean {
+  const current = unwrapParentheses(expression)
+  if (ts.isNumericLiteral(current)) return Number.isFinite(Number(current.text))
+  if (!ts.isPrefixUnaryExpression(current)
+    || (current.operator !== ts.SyntaxKind.PlusToken && current.operator !== ts.SyntaxKind.MinusToken)) return false
+  const operand = unwrapParentheses(current.operand)
+  return ts.isNumericLiteral(operand) && Number.isFinite(Number(operand.text))
+}
+
+// The static assertion language is deliberately smaller than ordinary expressions. A
+// calculation is written and checked as normal code, then the assertion names its result.
+// This gives agents one syntax boundary instead of exposing whichever instructions happen
+// to be removable after general expression lowering.
+function supportedWrittenAssertion(condition: ts.Expression, checker: ts.TypeChecker): boolean {
+  const current = unwrapParentheses(condition)
+  if (ts.isBinaryExpression(current) && staticAssertionComparison(current.operatorToken.kind)) {
+    return staticAssertionAtom(current.left) && staticAssertionAtom(current.right)
+  }
+  if (!ts.isCallExpression(current) || current.questionDotToken != null
+    || current.arguments.length !== 1 || !ts.isPropertyAccessExpression(current.expression)
+    || current.expression.questionDotToken != null) return false
+  const callee = current.expression
+  return isStandardNumberObject(callee.expression, checker)
+    && (callee.name.text === 'isInteger' || callee.name.text === 'isFinite' || callee.name.text === 'isNaN')
+    && staticAssertionAtom(current.arguments[0]!)
+}
+
+function staticAssertionComparison(kind: ts.SyntaxKind): boolean {
+  switch (kind) {
+    case ts.SyntaxKind.LessThanToken:
+    case ts.SyntaxKind.LessThanEqualsToken:
+    case ts.SyntaxKind.GreaterThanToken:
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+    case ts.SyntaxKind.EqualsEqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsEqualsToken: return true
+    default: return false
+  }
+}
+
+function staticAssertionAtom(expression: ts.Expression): boolean {
+  const current = unwrapParentheses(expression)
+  if (ts.isIdentifier(current) || ts.isNumericLiteral(current)) return true
+  if (ts.isPrefixUnaryExpression(current)
+    && (current.operator === ts.SyntaxKind.PlusToken || current.operator === ts.SyntaxKind.MinusToken)) {
+    return ts.isNumericLiteral(unwrapParentheses(current.operand))
+  }
+  return ts.isPropertyAccessExpression(current)
+    && current.questionDotToken == null
+    && staticAssertionAtom(current.expression)
+}
+
+function unwrapParentheses(expression: ts.Expression): ts.Expression {
+  let current = expression
+  while (ts.isParenthesizedExpression(current)) current = current.expression
+  return current
+}
+
 // Static conditions are erased from production builds. Normal expression lowering owns
 // their JS evaluation order; this list only rejects instructions whose removal could
 // change program state. Compound control flow was rejected by the block check above.
 function removableStaticConditionInstruction(instruction: InstructionIR): boolean {
   switch (instruction.kind) {
-    case 'call':
-    case 'moduleWrite':
-    case 'moduleHavoc':
-    case 'arrayIndex':
-    case 'staticRequire':
-    case 'staticAssert': return false
-    case 'binary': return instruction.operator !== 'divide' && instruction.operator !== 'remainder'
     case 'constant':
-    case 'nullishConstant':
-    case 'opaqueConstant':
-    case 'unknownBoolean':
-    case 'arrayLiteral':
     case 'arrayLength':
-    case 'tagCheck':
-    case 'nullishCheck':
-    case 'booleanConstant':
     case 'moduleRead':
     case 'compare':
-    case 'floor':
     case 'platformValue':
-    case 'absolute':
-    case 'mathUnary':
-    case 'stringLength':
-    case 'parsedNumber':
     case 'numberCheck':
-    case 'not':
-    case 'minimum':
-    case 'maximum':
-    case 'object':
     case 'property': return true
+    default: return false
   }
 }
 
