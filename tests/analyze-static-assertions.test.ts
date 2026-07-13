@@ -6,6 +6,7 @@ import {createReport} from '../src/report/index.ts'
 import {analyzedFunction} from './analyze-helpers.ts'
 
 const fixture = new URL('./fixtures/console-assertions.ts', import.meta.url).pathname
+const importedFixture = new URL('./fixtures/console-assertions-imported.ts', import.meta.url).pathname
 
 describe('static console.assert contracts', () => {
   test('leading requirements narrow the body and propagate through calls', () => {
@@ -47,6 +48,57 @@ describe('static console.assert contracts', () => {
     expect(unnameable.stopped[0]).toContain('requiredNonnegative')
 
     expect(analyzedFunction(report, 'callsRequiredThrow').requires[0]).toContain('value >= 0')
+  })
+
+  test('leading requirements accept literal const names and see parameter defaults', () => {
+    const report = analyzeSource('requirement-defaults.ts', `
+      const MINIMUM_WIDTH = 0
+      const COMPUTED_MINIMUM = 0 + 0
+
+      function bounded(width: number = 5): number {
+        console.assert(width >= MINIMUM_WIDTH)
+        return width
+      }
+      function invalidDefault(width: number = -1): number {
+        console.assert(width >= MINIMUM_WIDTH)
+        return width
+      }
+      export function omittedSafe(): number {
+        return bounded()
+      }
+      export function explicitUndefinedSafe(): number {
+        return bounded(undefined)
+      }
+      export function omittedInvalid(): number {
+        return invalidDefault()
+      }
+      export function computedConstant(width: number): number {
+        console.assert(width >= COMPUTED_MINIMUM)
+        return width
+      }
+    `)
+
+    expect(analyzedFunction(report, 'bounded').requires[0]).toContain('width >= 0')
+    expect(analyzedFunction(report, 'omittedSafe').ensures).toEqual([
+      'return is a finite integer number from 5 through 5',
+    ])
+    expect(analyzedFunction(report, 'explicitUndefinedSafe').ensures).toEqual([
+      'return is a finite integer number from 5 through 5',
+    ])
+    const invalid = report.functions.find(fn => fn.name === 'omittedInvalid')
+    if (invalid?.kind !== 'partial') throw new Error('Expected omittedInvalid to be partial')
+    expect(invalid.stopped[0]).toContain('declared requirement definitely false')
+    const computed = report.functions.find(fn => fn.name === 'computedConstant')
+    if (computed?.kind !== 'unsupported') throw new Error('Expected computedConstant to be unsupported')
+    expect(computed.unsupported).toContain('console.assert')
+  })
+
+  test('leading requirements accept imported numeric literal constants', () => {
+    const report = analyzeFile(importedFixture)
+    expect(analyzedFunction(report, 'importedMinimum').requires[0]).toContain('value >= 2')
+    expect(analyzedFunction(report, 'callsImportedMinimum').ensures).toEqual([
+      'return is a finite integer number from 2 through 2',
+    ])
   })
 
   test('the configured global console works without the DOM library', () => {

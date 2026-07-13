@@ -210,11 +210,10 @@ describe('control flow and contracts', () => {
     ])
   })
 
-  test('records a call omitting defaulted arguments as unsupported instead of crashing', () => {
-    // TypeScript accepts scaled() because width has a default value, but lowering never
-    // reads parameter initializers, so scaled would receive zero abstract values for one
-    // parameter and crash the engine's arity check. The function itself and calls passing
-    // every argument analyze normally; only the shorter call stops.
+  test('same-file calls apply literal defaults and omitted optional parameters', () => {
+    // Omission and an explicitly supplied undefined both select a JavaScript default.
+    // A maybe-undefined argument keeps both paths, while a bare optional receives exact
+    // undefined when omitted.
     const report = analyzeSource('default-parameter.ts', `
       function scaled(width: number = 5): number {
         return width * 2
@@ -224,6 +223,33 @@ describe('control flow and contracts', () => {
       }
       export function callWithArg(): number {
         return scaled(3)
+      }
+      export function callWithUndefined(): number {
+        return scaled(undefined)
+      }
+      export function forwardOptional(width?: number): number {
+        return scaled(width)
+      }
+      function optionalWidth(width?: number): number {
+        return width ?? 4
+      }
+      export function callOptionalNoArg(): number {
+        return optionalWidth()
+      }
+      function unsupportedDefault(options: {width?: number} = {}): number {
+        return options.width ?? 4
+      }
+      export function callUnsupportedDefault(): number {
+        return unsupportedDefault()
+      }
+      function nullableDefault(value: number | null = 5): number {
+        return value === null ? 0 : value
+      }
+      export function callNullableWithNull(): number {
+        return nullableDefault(null)
+      }
+      export function callNullableWithUndefined(): number {
+        return nullableDefault(undefined)
       }
     `)
     const file = 'default-parameter.ts'
@@ -236,9 +262,11 @@ describe('control flow and contracts', () => {
         ensures: [`return is a possibly non-finite number from -Infinity through Infinity (can overflow at ${file}:3:16)`],
       },
       {
-        kind: 'unsupported',
+        kind: 'analyzed',
         name: 'callNoArg',
-        unsupported: `call to scaled with fewer arguments than parameters (pass every argument explicitly) at ${file}:6:16`,
+        assumptions: [],
+        requires: [],
+        ensures: ['return is a finite integer number from 10 through 10'],
       },
       {
         kind: 'analyzed',
@@ -246,6 +274,65 @@ describe('control flow and contracts', () => {
         assumptions: [],
         requires: [],
         ensures: ['return is a finite integer number from 6 through 6'],
+      },
+      {
+        kind: 'analyzed',
+        name: 'callWithUndefined',
+        assumptions: [],
+        requires: [],
+        ensures: ['return is a finite integer number from 10 through 10'],
+      },
+      {
+        kind: 'analyzed',
+        name: 'forwardOptional',
+        assumptions: ['width is undefined or a finite non-NaN number'],
+        requires: [],
+        ensures: [`return is a possibly non-finite number from -Infinity through Infinity (can overflow at ${file}:3:16)`],
+      },
+      {
+        kind: 'analyzed',
+        name: 'optionalWidth',
+        assumptions: ['width is undefined or a finite non-NaN number'],
+        requires: [],
+        ensures: ['return is a finite number'],
+      },
+      {
+        kind: 'analyzed',
+        name: 'callOptionalNoArg',
+        assumptions: [],
+        requires: [],
+        ensures: ['return is a finite integer number from 4 through 4'],
+      },
+      {
+        kind: 'unsupported',
+        name: 'unsupportedDefault',
+        unsupported: `default value for parameter options; supported defaults are literals provably inside the assumed kind (= 5 for a number, = null for a nullable) — otherwise drop the default and pass the argument explicitly at ${file}:23:35`,
+      },
+      {
+        kind: 'unsupported',
+        name: 'callUnsupportedDefault',
+        unsupported: `call to unsupportedDefault with fewer arguments than parameters (pass every argument explicitly) at ${file}:27:16`,
+      },
+      {
+        kind: 'analyzed',
+        name: 'nullableDefault',
+        assumptions: ['value is null or a finite non-NaN number'],
+        requires: [],
+        ensures: ['return is a finite number'],
+      },
+      {
+        kind: 'analyzed',
+        name: 'callNullableWithNull',
+        assumptions: [],
+        requires: [],
+        ensures: ['return is a finite integer number from 0 through 0'],
+      },
+      {
+        kind: 'analyzed',
+        name: 'callNullableWithUndefined',
+        assumptions: [],
+        requires: [],
+        ensures: ['return is a finite integer number from 5 through 5'],
       },
     ])
   })

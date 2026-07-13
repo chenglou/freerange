@@ -396,10 +396,48 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current.expression), context.checker)
       const callee = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
       if (callee == null) throw unsupported(current, {kind: 'call', callee: current.expression.text})
-      if (current.arguments.length < callee.declaration.parameters.length) {
-        throw unsupported(current, {kind: 'callWithFewerArguments', callee: current.expression.text})
+      const arguments_: ValueID[] = []
+      for (let index = 0; index < callee.declaration.parameters.length; index++) {
+        const parameter = callee.declaration.parameters[index]!
+        const argument = current.arguments[index]
+        if (argument == null) {
+          if (parameter.initializer != null) {
+            if (!supportedParameterDefault(parameter.initializer, context.checker)) {
+              throw unsupported(current, {kind: 'callWithFewerArguments', callee: current.expression.text})
+            }
+            arguments_.push(lowerExpression(parameter.initializer, context))
+            continue
+          }
+          if (parameter.questionToken != null) {
+            arguments_.push(addInstruction(context, parameter, {kind: 'nullishConstant', sentinel: 'undefined'}))
+            continue
+          }
+          throw unsupported(current, {kind: 'callWithFewerArguments', callee: current.expression.text})
+        }
+        const value = lowerExpression(argument, context)
+        if (parameter.initializer == null
+          || !supportedParameterDefault(parameter.initializer, context.checker)
+          || !typeCanIncludeUndefined(context.checker.getTypeAtLocation(argument))) {
+          arguments_.push(value)
+          continue
+        }
+        // JavaScript applies a parameter default when the supplied value is undefined,
+        // not only when the argument is omitted. The normal value-producing branch keeps
+        // that rule exact for `number | undefined` arguments without a new IR operation.
+        const supplied = addInstruction(context, argument, {
+          kind: 'nullishCheck',
+          value,
+          sentinel: 'undefined',
+          negated: true,
+        })
+        arguments_.push(lowerValueBranch(
+          argument,
+          supplied,
+          () => value,
+          () => lowerExpression(parameter.initializer!, context),
+          context,
+        ))
       }
-      const arguments_ = current.arguments.map(argument => lowerExpression(argument, context))
       return addInstruction(context, current, {kind: 'call', function: callee.id, arguments: arguments_})
     }
     if (ts.isPropertyAccessExpression(current.expression)) {
@@ -539,19 +577,15 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
   const originalBlock = context.currentBlock
   const originalBlockCount = context.blocks.length
   const originalInstructionCount = originalBlock.instructions.length
-  const value = lowerExpression(condition, context)
+  const value = annotation.role === 'requirement'
+    ? lowerWrittenRequirement(condition, context)
+    : lowerExpression(condition, context)
   if (context.currentBlock !== originalBlock || context.blocks.length !== originalBlockCount) {
     throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
   }
   const conditionInstructions = originalBlock.instructions.slice(originalInstructionCount)
   if (conditionInstructions.some(instruction => !removableStaticConditionInstruction(instruction))) {
     throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
-  }
-  if (annotation.role === 'requirement') {
-    const producer = conditionInstructions.findLast(instruction => instruction.result === value)
-    if (producer == null || !supportedStaticRequirement(producer, context)) {
-      throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
-    }
   }
   const site = addSite(context, annotation.call)
   if (annotation.role === 'requirement') {
@@ -572,26 +606,71 @@ function supportedWrittenRequirement(condition: ts.Expression, context: Function
     return staticRequirementParameter(current.arguments[0]!, context)
   }
   if (!ts.isBinaryExpression(current) || !staticAssertionComparison(current.operatorToken.kind)) return false
-  return (staticRequirementParameter(current.left, context) && staticFiniteLiteral(current.right))
-    || (staticFiniteLiteral(current.left) && staticRequirementParameter(current.right, context))
+  return (staticRequirementParameter(current.left, context) && staticFiniteValue(current.right, context) != null)
+    || (staticFiniteValue(current.left, context) != null && staticRequirementParameter(current.right, context))
 }
 
 function staticRequirementParameter(expression: ts.Expression, context: FunctionContext): boolean {
-  const current = unwrapParentheses(expression)
-  if (!ts.isIdentifier(current)) return false
-  const symbol = context.checker.getSymbolAtLocation(current)
-  if (symbol == null) return false
-  const value = context.bindings.get(symbol)
-  return value != null && context.parameters.some(parameter => parameter.value === value)
+  return staticRequirementParameterValue(expression, context) != null
 }
 
-function staticFiniteLiteral(expression: ts.Expression): boolean {
+function staticRequirementParameterValue(expression: ts.Expression, context: FunctionContext): ValueID | null {
   const current = unwrapParentheses(expression)
-  if (ts.isNumericLiteral(current)) return Number.isFinite(Number(current.text))
-  if (!ts.isPrefixUnaryExpression(current)
-    || (current.operator !== ts.SyntaxKind.PlusToken && current.operator !== ts.SyntaxKind.MinusToken)) return false
-  const operand = unwrapParentheses(current.operand)
-  return ts.isNumericLiteral(operand) && Number.isFinite(Number(operand.text))
+  if (!ts.isIdentifier(current)) return null
+  const symbol = context.checker.getSymbolAtLocation(current)
+  if (symbol == null) return null
+  const value = context.bindings.get(symbol)
+  return value != null && context.parameters.some(parameter => parameter.value === value) ? value : null
+}
+
+function staticFiniteValue(expression: ts.Expression, context: FunctionContext): number | null {
+  const current = unwrapParentheses(expression)
+  if (ts.isNumericLiteral(current)) {
+    const value = Number(current.text)
+    return Number.isFinite(value) ? value : null
+  }
+  if (ts.isPrefixUnaryExpression(current)
+    && (current.operator === ts.SyntaxKind.PlusToken || current.operator === ts.SyntaxKind.MinusToken)) {
+    const operand = unwrapParentheses(current.operand)
+    if (!ts.isNumericLiteral(operand)) return null
+    const value = Number(operand.text) * (current.operator === ts.SyntaxKind.MinusToken ? -1 : 1)
+    return Number.isFinite(value) ? value : null
+  }
+  if (!ts.isIdentifier(current)) return null
+  const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current), context.checker)
+  const declaration = symbol?.valueDeclaration
+  if (declaration == null || !ts.isVariableDeclaration(declaration)
+    || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0
+    || declaration.getSourceFile().isDeclarationFile
+    || declaration.initializer == null) return null
+  return staticFiniteValue(declaration.initializer, context)
+}
+
+function lowerWrittenRequirement(condition: ts.Expression, context: FunctionContext): ValueID {
+  const current = unwrapParentheses(condition)
+  if (ts.isCallExpression(current)) {
+    const parameter = staticRequirementParameterValue(current.arguments[0]!, context)
+    if (parameter == null) throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+    return addInstruction(context, current, {kind: 'numberCheck', predicate: 'integer', value: parameter})
+  }
+  if (!ts.isBinaryExpression(current)) {
+    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+  }
+  const leftParameter = staticRequirementParameterValue(current.left, context)
+  const rightParameter = staticRequirementParameterValue(current.right, context)
+  const leftConstant = staticFiniteValue(current.left, context)
+  const rightConstant = staticFiniteValue(current.right, context)
+  const left = leftParameter ?? (leftConstant == null
+    ? null
+    : addInstruction(context, current.left, {kind: 'constant', value: leftConstant}))
+  const right = rightParameter ?? (rightConstant == null
+    ? null
+    : addInstruction(context, current.right, {kind: 'constant', value: rightConstant}))
+  const operator = comparisonOperator(current.operatorToken.kind)
+  if (left == null || right == null || operator == null) {
+    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+  }
+  return addInstruction(context, current, {kind: 'compare', operator, left, right})
 }
 
 // The static assertion language is deliberately smaller than ordinary expressions. A
@@ -654,20 +733,6 @@ function removableStaticConditionInstruction(instruction: InstructionIR): boolea
     case 'platformValue':
     case 'numberCheck':
     case 'property': return true
-    default: return false
-  }
-}
-
-function supportedStaticRequirement(instruction: InstructionIR, context: FunctionContext): boolean {
-  const parameter = (value: ValueID): boolean => context.parameters.some(candidate => candidate.value === value)
-  const constant = (value: ValueID): boolean =>
-    context.currentBlock.instructions.findLast(candidate => candidate.result === value)?.kind === 'constant'
-  switch (instruction.kind) {
-    case 'numberCheck': return instruction.predicate === 'integer' && parameter(instruction.value)
-    case 'compare': {
-      return (parameter(instruction.left) && constant(instruction.right))
-        || (constant(instruction.left) && parameter(instruction.right))
-    }
     default: return false
   }
 }
@@ -903,6 +968,26 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
   if (valueKind(type, checker) !== 'number' && (type.flags & ts.TypeFlags.Any) === 0) {
     throw unsupported(node, {kind: 'nonNumberOperand', typeText: checker.typeToString(type)})
   }
+}
+
+function typeCanIncludeUndefined(type: ts.Type): boolean {
+  if ((type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0) return true
+  return type.isUnion() && type.types.some(typeCanIncludeUndefined)
+}
+
+function supportedParameterDefault(initializer: ts.Expression, checker: ts.TypeChecker): boolean {
+  const current = unwrapParentheses(initializer)
+  if (ts.isNumericLiteral(current)) return Number.isFinite(Number(current.text))
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
+    const operand = unwrapParentheses(current.operand)
+    return ts.isNumericLiteral(operand) && Number.isFinite(-Number(operand.text))
+  }
+  return current.kind === ts.SyntaxKind.TrueKeyword
+    || current.kind === ts.SyntaxKind.FalseKeyword
+    || current.kind === ts.SyntaxKind.NullKeyword
+    || ts.isStringLiteral(current)
+    || ts.isNoSubstitutionTemplateLiteral(current)
+    || isUndefinedGlobal(current, checker)
 }
 
 // The single value kind a type describes, or null when the type mixes kinds (a union like
