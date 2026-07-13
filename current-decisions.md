@@ -174,9 +174,20 @@ The assumes block covers the inputs the function actually uses. A declared path 
 - Module variables, heap objects, local values, and platform state have different lifetimes and should not be stored in one generic map.
 - We use one lowering pipeline and one evaluator, rather than separate evaluators for module initialization, functions, and callbacks.
 
+## Maybe Reconsider
+
+These prototypes worked coherently but did not yet show enough independent value to ship. Reopen them when the stated evidence appears; current corpus usage is evidence, not the feature specification.
+
+- Static `console.assert` checks and declared caller requirements. The latest prototype gives them a small written language, proves 39 checks in MJ Gallery and 21 in Pretext, and keeps assertion-only reasoning out of ordinary inference. The complete integration is still about 1,030 net production lines. Reconsider when teams would maintain these properties as part of the code rather than adding them for the experiment.
+- Narrowing after a proven assertion. The prototype was about 33 net lines and worked, but changed no MJ Gallery or Pretext result; none of the 60 selected checks was needed by later code. Reconsider when a real checkpoint would otherwise require repeating a guard or losing a useful downstream guarantee.
+- Named boolean helpers in assertions. Contextual predicate propagation was implemented for supported same-file calls in about 183 net production lines and changed no report in either repository. Reconsider when a real property is materially clearer as `console.assert(isValidLayout(frame))` than as direct comparisons. That case must justify explaining what a true helper result proves about its arguments.
+- Assertions in partially analyzed functions. The prototype distinguished checks before and after unsupported code, returning sibling branches, and later loop iterations, but every one of the 60 selected checks lived in a fully analyzed function. Reconsider when an important property naturally occurs before an unavoidable unsupported operation.
+- Direct inline array `map` callbacks. A roughly 216-line prototype made two Pretext functions fully analyzed and one partial; only one gained a clearly useful numeric contract, and MJ Gallery gained none. Reconsider when a second independent repository has numeric mapping whose useful result cannot be expressed cleanly as an extracted helper or explicit loop.
+- JavaScript's 32-bit bitwise operators and `Math.imul`. The prototype modeled their signed and unsigned results coherently, including shifts, but none of the selected UI properties needed them. Reconsider when a real hash, mask, color, or index calculation needs a checked property; do not add them merely to accept more syntax.
+- One bounded relation saying two exact values differ. The design can remain small and would prove a subtraction nonzero after checking its two operands differ, but the only measured uses were copied remap helpers. Reconsider after a second independent case where binding the difference and checking that exact value is materially worse code.
+
 ## Punted
 
-- Source annotations. Analysis remains annotation-free for now. Reconsider annotations only when a report can explain that one would avoid substantial analysis growth or unlock a useful guarantee.
 - Concrete counterexample search and replay.
 - Deriving requirements from whether the final result is affected. Requirements are currently created at the causing operation, so a division or remainder whose bad result never reaches the return value still reports one.
 - Printing values at a stop (`width` was 100), and recovering the loop evidence that gets suppressed when a stop happens inside a loop.
