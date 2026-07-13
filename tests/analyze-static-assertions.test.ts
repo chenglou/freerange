@@ -180,7 +180,7 @@ describe('static console.assert contracts', () => {
     expect(shadowed.unsupported).not.toContain('console.assert')
   })
 
-  test('bounded producer proofs serve assertions without changing ordinary branches', () => {
+  test('local producer proofs serve assertions without changing ordinary branches', () => {
     const report = analyzeSource('assertion-producers.ts', `
       export function producerProofs(
         rawBase: number,
@@ -292,6 +292,23 @@ describe('static console.assert contracts', () => {
     const shared = analyzedFunction(report, 'assertedValueDoesNotStrengthenBranch')
     expect(shared.assertions?.map(assertion => assertion.verdict)).toEqual(['proven'])
     expect(shared.ensures).toEqual(['return is a finite integer number from 0 through 1'])
+  })
+
+  test('producer proofs compose without a hidden expression-depth limit', () => {
+    const additions = Array.from({length: 100}, (_, index) =>
+      `const value${index + 1} = value${index} + step`).join('\n')
+    const report = analyzeSource('deep-assertion-proof.ts', `
+      export function deepProof(rawValue: number, rawStep: number): number {
+        const value0 = Math.max(0, rawValue)
+        const step = Math.max(0, rawStep)
+        ${additions}
+        console.assert(value0 <= value100)
+        return value100
+      }
+    `)
+
+    expect(analyzedFunction(report, 'deepProof').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['proven'])
   })
 
   test('the assertion-only ordering rules hold at floating-point boundaries', () => {

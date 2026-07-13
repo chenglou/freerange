@@ -1180,10 +1180,9 @@ function evaluateBinary(
   }
 }
 
-// Assertion-only comparison proofs walk a small part of the immutable producer graph.
-// The fixed limit prevents a large expression DAG from turning each assertion into a
-// function-sized search. A calculation that exceeds it can be checked in smaller steps.
-const maximumStaticProofSteps = 32
+// Assertion-only comparison proofs walk the immutable producer graph. Each recursive
+// rule moves from a result to one of its operands, and value pairs are memoized before
+// their producers are expanded.
 
 function staticAssertionObservation(
   valueID: ValueID,
@@ -1269,7 +1268,6 @@ function createComparisonProof(
   atMost: (left: ValueID, right: ValueID) => boolean
   strictlyBelow: (left: ValueID, right: ValueID) => boolean
 } {
-  let remaining = maximumStaticProofSteps
   const resolved = new Map<ValueID, ValueID>()
   const resolving = new Set<ValueID>()
   const atMostMemo = new Map<string, boolean>()
@@ -1279,8 +1277,7 @@ function createComparisonProof(
   const resolveLiteralRead = (value: ValueID): ValueID => {
     const cached = resolved.get(value)
     if (cached != null) return cached
-    if (remaining <= 0 || resolving.has(value)) return value
-    remaining--
+    if (resolving.has(value)) return value
     resolving.add(value)
     const producer = context.instructionByValue[value]
     let result = value
@@ -1314,8 +1311,6 @@ function createComparisonProof(
   }
 
   const atMost = (rawLeft: ValueID, rawRight: ValueID): boolean => {
-    if (remaining <= 0) return false
-    remaining--
     const left = resolveLiteralRead(rawLeft)
     const right = resolveLiteralRead(rawRight)
     if (same(left, right)) return true
@@ -1377,7 +1372,7 @@ function createComparisonProof(
 
     // Selection rules come last because expanding every operand is the broadest search.
     // Direct add/subtract and common-factor proofs above usually identify the written
-    // relationship in one step and preserve the fixed budget for nested clamps.
+    // relationship before the broader selection rules need to inspect every operand.
     if (!answer && leftProducer?.kind === 'maximum') {
       answer = leftProducer.values.every(operand => atMost(operand, right))
     }
@@ -1396,8 +1391,6 @@ function createComparisonProof(
   }
 
   const strictlyBelow = (rawLeft: ValueID, rawRight: ValueID): boolean => {
-    if (remaining <= 0) return false
-    remaining--
     const left = resolveLiteralRead(rawLeft)
     const right = resolveLiteralRead(rawRight)
     const leftNumber = heldNumber(left)
