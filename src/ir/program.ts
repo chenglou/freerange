@@ -69,9 +69,9 @@ export type UnsupportedReason =
   // the runtime length is a range the exact positional model cannot carry, and the
   // message names the rewrite toward number[] or a fixed tuple.
   | {kind: 'parameterType'; typeText: string; optionalOrRestTuple: boolean}
-  // A default value (`zoom: number = 5`) applies whenever a caller omits the argument, and
-  // the analysis never evaluates the initializer expression — accepting one would let
-  // `zoom: number = Infinity` falsify the assumed-finite parameter seeding.
+  // A default value outside the represented literal subset. Literal defaults are applied
+  // exactly; a computed or non-finite initializer could falsify parameter assumptions or
+  // hide unsupported behavior, so the declaration rejects.
   | {kind: 'parameterDefaultValue'; name: string}
   // A non-void function has a path that falls off the end without returning.
   | {kind: 'missingReturn'}

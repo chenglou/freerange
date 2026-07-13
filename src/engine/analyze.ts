@@ -1,6 +1,7 @@
 import {constantNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
+import {functionsReadingModules, functionUsage} from '../ir/function-usage.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
 import {declaredKindOf, declaredKindValue, holdsMutableStructure, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
@@ -65,6 +66,8 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     [],
   )
   const moduleValues = publishedModuleValues(program, initializer.run, initializer.evaluation)
+  const readsModules = functionsReadingModules(functionUsage(program))
+  const initializerBounds = initializer.evaluation.boundsAssumptions
   const functions: FunctionAnalysis[] = []
   for (let functionID = 0; functionID < program.functions.length; functionID++) {
     const fn = program.functions[functionID]!
@@ -84,7 +87,17 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       arguments_.push(declaredKindValue(parameter.type))
       argumentExpressions.push({kind: 'parameter', index})
     }
-    const {evaluation} = runEvaluation(fn, functionID, arguments_, argumentExpressions, sharedState, program, [])
+    const {evaluation} = runEvaluation(
+      fn,
+      functionID,
+      arguments_,
+      argumentExpressions,
+      sharedState,
+      program,
+      [],
+      [],
+      readsModules[functionID] === true ? initializerBounds : [],
+    )
     functions.push(publishedAnalysis(fn, evaluation))
   }
   return {
@@ -258,6 +271,7 @@ function runEvaluation(
   program: ProgramIR,
   callStack: FunctionID[],
   seededIndexPairs?: ValidIndexPair[],
+  seededBoundsAssumptions: BoundsAssumption[] = [],
 ): {evaluation: FunctionEvaluation; run: EvaluationRun} {
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
@@ -273,7 +287,7 @@ function runEvaluation(
   }
   const expressionContext = createExpressionContext(fn, argumentExpressions)
   const preconditions: InferredPrecondition[] = []
-  const boundsAssumptions: BoundsAssumption[] = []
+  const boundsAssumptions: BoundsAssumption[] = [...seededBoundsAssumptions]
   const successors = blockSuccessors(fn)
   const run: EvaluationRun = {
     fn,

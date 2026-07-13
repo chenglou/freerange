@@ -51,9 +51,12 @@ describe('static console.assert contracts', () => {
   })
 
   test('leading requirements accept literal const names and see parameter defaults', () => {
+    const aliases = Array.from({length: 100}, (_, index) =>
+      `const MINIMUM_${index + 1} = MINIMUM_${index}`).join('\n')
     const report = analyzeSource('requirement-defaults.ts', `
-      const BASE_MINIMUM = +0
-      const MINIMUM_WIDTH = BASE_MINIMUM
+      const MINIMUM_0 = +0
+      ${aliases}
+      const MINIMUM_WIDTH = MINIMUM_100
       const COMPUTED_MINIMUM = 0 + 0
       let MUTABLE_MINIMUM = 0
 
@@ -224,6 +227,16 @@ describe('static console.assert contracts', () => {
         console.assert(Math.min(0, value) <= value)
         return result
       }
+      export function booleanEquality(flag: boolean, value: number): number {
+        const result = flag
+        console.assert(result === result)
+        return value
+      }
+      export function positiveLiteral(value: number): number {
+        const bounded = Math.max(0, value)
+        console.assert(bounded >= +0)
+        return bounded
+      }
       export function writtenNumberCheck(value: number): number {
         const result = value
         console.assert(Number.isFinite(result))
@@ -253,6 +266,7 @@ describe('static console.assert contracts', () => {
       'inlineArithmetic',
       'storedCondition',
       'directMath',
+      'booleanEquality',
     ]) {
       const fn = entries.get(name)
       if (fn?.kind !== 'unsupported') throw new Error(`Expected ${name} to be unsupported`)
@@ -263,6 +277,8 @@ describe('static console.assert contracts', () => {
     expect(shadowed.unsupported).toContain('function parameter with type')
     expect(shadowed.unsupported).not.toContain('console.assert')
     expect(analyzedFunction(report, 'writtenNumberCheck').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['proven'])
+    expect(analyzedFunction(report, 'positiveLiteral').assertions?.map(assertion => assertion.verdict))
       .toEqual(['proven'])
   })
 
@@ -411,6 +427,28 @@ describe('static console.assert contracts', () => {
 
     expect(analyzedFunction(report, 'noStoredRelation').assertions?.map(assertion => assertion.verdict))
       .toEqual(['unproven'])
+  })
+
+  test('aggregate selection proofs expand only one side', () => {
+    const report = analyzeSource('assertion-selection-composition.ts', `
+      export function selectionComposition(rawValue: number): number {
+        const left0 = Math.max(0, rawValue)
+        const left1 = left0 + 1
+        const right0 = left1 + 1
+        const right1 = right0 + 1
+        const left = Math.max(left0, left1)
+        const right = Math.min(right0, right1)
+        const repeatedMaximum = Math.max(rawValue, rawValue)
+        const repeatedMinimum = Math.min(rawValue, rawValue)
+        console.assert(rawValue <= repeatedMinimum)
+        console.assert(repeatedMaximum <= rawValue)
+        console.assert(left <= right)
+        return right
+      }
+    `)
+
+    expect(analyzedFunction(report, 'selectionComposition').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['proven', 'proven', 'unproven'])
   })
 
   test('the assertion-only ordering rules hold at floating-point boundaries', () => {

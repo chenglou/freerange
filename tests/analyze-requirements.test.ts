@@ -372,6 +372,11 @@ ${chain}
       export function currentBreakpoint(): number {
         return activeBreakpoint
       }
+      export function checkedBreakpoint(): number {
+        const result = activeBreakpoint
+        console.assert(Number.isFinite(result))
+        return result
+      }
       export function unrelated(x: number): number {
         return x * 2
       }
@@ -379,6 +384,9 @@ ${chain}
     const file = 'init-bounds.ts'
     expect(analyzedFunction(report, 'currentBreakpoint').assumptions)
       .toEqual([`the element read at ${file}:4:32 is in bounds`])
+    const checked = analyzedFunction(report, 'checkedBreakpoint')
+    expect(checked.assumptions).toEqual([`the element read at ${file}:4:32 is in bounds`])
+    expect(checked.assertions?.map(assertion => assertion.verdict)).toEqual(['blocked'])
     expect(analyzedFunction(report, 'unrelated').assumptions).toEqual(['x is finite and not NaN'])
   })
 

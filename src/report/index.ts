@@ -1,7 +1,8 @@
 import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {AssertionVerdict, FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
-import type {FunctionID, ValueID} from '../ir/ids.ts'
+import type {ValueID} from '../ir/ids.ts'
+import {functionUsage} from '../ir/function-usage.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
 import {forEachOperand} from '../ir/instructions.ts'
 import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
@@ -28,7 +29,7 @@ export type AnalysisReport = {
 
 export function createReport(program: ProgramIR, analysis: ProgramAnalysis): AnalysisReport {
   const functions: FunctionReport[] = []
-  const {assumedBindings, readsModules} = functionModuleUsage(program, analysis)
+  const assumedBindings = functionModuleAssumptions(program, analysis)
   // An unproven asserted element read at the top level (`breakpoints[idx]!` with a
   // platform-derived idx) conditions everything the initializer published, and the
   // initializer usually prints no entry — so the assumption lines travel to every
@@ -88,10 +89,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'partial',
           name: lowering.name,
-          assumptions: [
-            ...assumptionLines(lowering, program, assumedBindings[functionID]!, fn.observedBoundsAssumptions),
-            ...(readsModules[functionID] === true ? initializerBoundsLines : []),
-          ],
+          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.observedBoundsAssumptions),
           stopped: fn.stops.map(stop => formatStop(stop, program, analysis)),
           observed,
           ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
@@ -104,10 +102,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'analyzed',
           name: lowering.name,
-          assumptions: [
-            ...assumptionLines(lowering, program, assumedBindings[functionID]!, fn.boundsAssumptions),
-            ...(readsModules[functionID] === true ? initializerBoundsLines : []),
-          ],
+          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.boundsAssumptions),
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
           ensures: returnSummaries('return', declaredReturn(fn.returnValue, lowering), program),
           ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
@@ -583,52 +578,32 @@ function pushDeclaredAssumptions(path: string, segments: string[], declared: Dec
   }
 }
 
-// Per function: the module bindings whose declared-kind seeding the result rests on, and
-// whether the function reads any module binding at all. Both facts travel through calls.
-// The first prints the conditions under which guarantees hold; the second carries a
-// top-level bounds assumption to every consumer of the initializer's values. Closing over
-// a static call edge that never executes can only add a harmless assumption line.
-function functionModuleUsage(
+// Per function, the module bindings whose declared-kind seeding the result rests on.
+// The dependency travels through calls so callers print their callees' assumptions too.
+function functionModuleAssumptions(
   program: ProgramIR,
   analysis: ProgramAnalysis,
-): {assumedBindings: boolean[][]; readsModules: boolean[]} {
+): boolean[][] {
   const assumedBindings: boolean[][] = []
-  const readsModules: boolean[] = []
-  const callees: FunctionID[][] = []
-  for (const lowering of program.functions) {
+  const usage = functionUsage(program)
+  for (const fn of usage) {
     const reads: boolean[] = []
-    let readsAny = false
-    const calls: FunctionID[] = []
-    if (lowering.kind === 'lowered') {
-      for (const block of lowering.blocks) {
-        for (const instruction of block.instructions) {
-          if (instruction.kind === 'call' && !calls.includes(instruction.function)) calls.push(instruction.function)
-          if (instruction.kind !== 'moduleRead') continue
-          readsAny = true
-          if (analysis.moduleValues[instruction.binding] != null) continue
-          const binding = program.moduleBindings[instruction.binding]
-          if (binding == null) throw new Error(`Unknown module binding ${instruction.binding}`)
-          if (declaredKindOf(binding.category) != null) {
-            reads[instruction.binding] = true
-          }
-        }
+    for (const bindingID of fn.moduleBindings) {
+      if (analysis.moduleValues[bindingID] != null) continue
+      const binding = program.moduleBindings[bindingID]
+      if (binding == null) throw new Error(`Unknown module binding ${bindingID}`)
+      if (declaredKindOf(binding.category) != null) {
+        reads[bindingID] = true
       }
     }
     assumedBindings.push(reads)
-    readsModules.push(readsAny)
-    callees.push(calls)
   }
-  // Call graphs can have cycles. Propagate both facts over the same graph until stable:
-  // callers inherit the module assumptions and initializer dependencies of their callees.
+  // Call graphs can have cycles. Callers inherit their callees' module assumptions.
   let changed = true
   while (changed) {
     changed = false
     for (let caller = 0; caller < assumedBindings.length; caller++) {
-      for (const callee of callees[caller]!) {
-        if (readsModules[callee] === true && readsModules[caller] !== true) {
-          readsModules[caller] = true
-          changed = true
-        }
+      for (const callee of usage[caller]!.callees) {
         const calleeAssumed = assumedBindings[callee]!
         for (let bindingID = 0; bindingID < calleeAssumed.length; bindingID++) {
           if (calleeAssumed[bindingID] === true && assumedBindings[caller]![bindingID] !== true) {
@@ -639,7 +614,7 @@ function functionModuleUsage(
       }
     }
   }
-  return {assumedBindings, readsModules}
+  return assumedBindings
 }
 
 // The only place stop prose exists; everything else branches on reason.kind.

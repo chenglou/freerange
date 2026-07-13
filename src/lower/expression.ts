@@ -13,7 +13,7 @@ import {
   type FunctionContext,
 } from './context.ts'
 import {annotationForExpression, type StaticAnnotation} from './static-intrinsics.ts'
-import {numericLiteralValue, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
+import {isUndefinedGlobal, numericLiteralValue, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
 
 // The only entry point through which assignments lower. Statement positions (expression
 // statements, for-loop incrementors) call this; everything else goes through
@@ -134,6 +134,13 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   }
   if (current.kind === ts.SyntaxKind.TrueKeyword || current.kind === ts.SyntaxKind.FalseKeyword) {
     return addInstruction(context, current, {kind: 'booleanConstant', value: current.kind === ts.SyntaxKind.TrueKeyword})
+  }
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.PlusToken) {
+    const positive = unwrap(current.operand, context.checker)
+    if (ts.isNumericLiteral(positive)) {
+      return addInstruction(context, current, {kind: 'constant', value: Number(positive.text)})
+    }
+    throw unsupported(current, {kind: 'expressionForm', syntax: ts.SyntaxKind[current.kind]})
   }
   if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
     // A negated literal folds into one constant instead of lowering as `0 - operand`.
@@ -442,6 +449,12 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           context,
         ))
       }
+      // Overload signatures may admit more arguments than the implementation declares.
+      // JavaScript still evaluates those expressions left-to-right even though the callee
+      // receives no named parameter for them, so preserve their effects before the call.
+      for (let index = callee.declaration.parameters.length; index < current.arguments.length; index++) {
+        lowerExpression(current.arguments[index]!, context)
+      }
       return addInstruction(context, current, {kind: 'call', function: callee.id, arguments: arguments_})
     }
     if (ts.isPropertyAccessExpression(current.expression)) {
@@ -572,18 +585,22 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
   }
   const condition = annotation.condition
   requireBooleanCondition(condition, context.checker)
-  const writtenCondition = annotation.role === 'requirement'
-    ? supportedWrittenRequirement(condition, context)
-    : supportedWrittenAssertion(condition, context.checker)
-  if (!writtenCondition) {
-    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
-  }
   const originalBlock = context.currentBlock
   const originalBlockCount = context.blocks.length
   const originalInstructionCount = originalBlock.instructions.length
-  const value = annotation.role === 'requirement'
-    ? lowerWrittenRequirement(condition, context)
-    : lowerExpression(condition, context)
+  let value: ValueID
+  if (annotation.role === 'requirement') {
+    const requirement = writtenRequirement(condition, context)
+    if (requirement == null) {
+      throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+    }
+    value = lowerWrittenRequirement(requirement, condition, context)
+  } else {
+    if (!supportedWrittenAssertion(condition, context.checker)) {
+      throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+    }
+    value = lowerExpression(condition, context)
+  }
   if (context.currentBlock !== originalBlock || context.blocks.length !== originalBlockCount) {
     throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
   }
@@ -600,22 +617,42 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
   return addInstructionAtSite(context, site, {kind: 'staticAssert', value, assertion})
 }
 
-function supportedWrittenRequirement(condition: ts.Expression, context: FunctionContext): boolean {
+type WrittenRequirementOperand = {kind: 'parameter'; value: ValueID} | {kind: 'constant'; value: number}
+
+type WrittenRequirement =
+  | {kind: 'integer'; parameter: ValueID}
+  | {
+      kind: 'comparison'
+      left: WrittenRequirementOperand
+      right: WrittenRequirementOperand
+      operator: ComparisonOperator
+    }
+
+function writtenRequirement(condition: ts.Expression, context: FunctionContext): WrittenRequirement | null {
   const current = unwrapParentheses(condition)
   if (ts.isCallExpression(current) && current.questionDotToken == null
     && current.arguments.length === 1 && ts.isPropertyAccessExpression(current.expression)
     && current.expression.questionDotToken == null
     && isStandardNumberObject(current.expression.expression, context.checker)
     && current.expression.name.text === 'isInteger') {
-    return staticRequirementParameter(current.arguments[0]!, context)
+    const parameter = staticRequirementParameterValue(current.arguments[0]!, context)
+    return parameter == null ? null : {kind: 'integer', parameter}
   }
-  if (!ts.isBinaryExpression(current) || !staticAssertionComparison(current.operatorToken.kind)) return false
-  return (staticRequirementParameter(current.left, context) && staticFiniteValue(current.right, context) != null)
-    || (staticFiniteValue(current.left, context) != null && staticRequirementParameter(current.right, context))
-}
-
-function staticRequirementParameter(expression: ts.Expression, context: FunctionContext): boolean {
-  return staticRequirementParameterValue(expression, context) != null
+  if (!ts.isBinaryExpression(current) || !staticAssertionComparison(current.operatorToken.kind)) return null
+  const leftParameter = staticRequirementParameterValue(current.left, context)
+  const rightParameter = staticRequirementParameterValue(current.right, context)
+  const leftConstant = leftParameter == null ? staticFiniteValue(current.left, context) : null
+  const rightConstant = rightParameter == null ? staticFiniteValue(current.right, context) : null
+  const left = leftParameter != null
+    ? {kind: 'parameter' as const, value: leftParameter}
+    : leftConstant != null ? {kind: 'constant' as const, value: leftConstant} : null
+  const right = rightParameter != null
+    ? {kind: 'parameter' as const, value: rightParameter}
+    : rightConstant != null ? {kind: 'constant' as const, value: rightConstant} : null
+  const operator = comparisonOperator(current.operatorToken.kind)
+  if (left == null || right == null || operator == null
+    || (leftParameter == null) === (rightParameter == null)) return null
+  return {kind: 'comparison', left, right, operator}
 }
 
 function staticRequirementParameterValue(expression: ts.Expression, context: FunctionContext): ValueID | null {
@@ -630,47 +667,44 @@ function staticRequirementParameterValue(expression: ts.Expression, context: Fun
 function staticFiniteValue(
   expression: ts.Expression,
   context: FunctionContext,
-  seen: Set<ts.Symbol> = new Set(),
 ): number | null {
-  const literal = numericLiteralValue(expression)
-  if (literal != null) return Number.isFinite(literal) ? literal : null
-  const current = unwrapParentheses(expression)
-  if (!ts.isIdentifier(current)) return null
-  const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current), context.checker)
-  if (symbol == null || seen.has(symbol)) return null
-  const declaration = symbol.valueDeclaration
-  if (declaration == null || !ts.isVariableDeclaration(declaration)
-    || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0
-    || declaration.getSourceFile().isDeclarationFile
-    || declaration.initializer == null) return null
-  return staticFiniteValue(declaration.initializer, context, new Set([...seen, symbol]))
+  const seen = new Set<ts.Symbol>()
+  let current = expression
+  while (true) {
+    const literal = numericLiteralValue(current)
+    if (literal != null) return Number.isFinite(literal) ? literal : null
+    const unwrapped = unwrapParentheses(current)
+    if (!ts.isIdentifier(unwrapped)) return null
+    const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(unwrapped), context.checker)
+    if (symbol == null || seen.has(symbol)) return null
+    seen.add(symbol)
+    const declaration = symbol.valueDeclaration
+    if (declaration == null || !ts.isVariableDeclaration(declaration)
+      || (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0
+      || declaration.getSourceFile().isDeclarationFile
+      || declaration.initializer == null) return null
+    current = declaration.initializer
+  }
 }
 
-function lowerWrittenRequirement(condition: ts.Expression, context: FunctionContext): ValueID {
-  const current = unwrapParentheses(condition)
-  if (ts.isCallExpression(current)) {
-    const parameter = staticRequirementParameterValue(current.arguments[0]!, context)
-    if (parameter == null) throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
-    return addInstruction(context, current, {kind: 'numberCheck', predicate: 'integer', value: parameter})
+function lowerWrittenRequirement(
+  requirement: WrittenRequirement,
+  condition: ts.Expression,
+  context: FunctionContext,
+): ValueID {
+  if (requirement.kind === 'integer') {
+    return addInstruction(context, condition, {kind: 'numberCheck', predicate: 'integer', value: requirement.parameter})
   }
-  if (!ts.isBinaryExpression(current)) {
-    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+  const lowerOperand = (operand: WrittenRequirementOperand): ValueID => {
+    if (operand.kind === 'parameter') return operand.value
+    return addInstruction(context, condition, {kind: 'constant', value: operand.value})
   }
-  const leftParameter = staticRequirementParameterValue(current.left, context)
-  const rightParameter = staticRequirementParameterValue(current.right, context)
-  const leftConstant = staticFiniteValue(current.left, context)
-  const rightConstant = staticFiniteValue(current.right, context)
-  const left = leftParameter ?? (leftConstant == null
-    ? null
-    : addInstruction(context, current.left, {kind: 'constant', value: leftConstant}))
-  const right = rightParameter ?? (rightConstant == null
-    ? null
-    : addInstruction(context, current.right, {kind: 'constant', value: rightConstant}))
-  const operator = comparisonOperator(current.operatorToken.kind)
-  if (left == null || right == null || operator == null) {
-    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
-  }
-  return addInstruction(context, current, {kind: 'compare', operator, left, right})
+  return addInstruction(context, condition, {
+    kind: 'compare',
+    operator: requirement.operator,
+    left: lowerOperand(requirement.left),
+    right: lowerOperand(requirement.right),
+  })
 }
 
 // The static assertion language is deliberately smaller than ordinary expressions. A
@@ -680,7 +714,7 @@ function lowerWrittenRequirement(condition: ts.Expression, context: FunctionCont
 function supportedWrittenAssertion(condition: ts.Expression, checker: ts.TypeChecker): boolean {
   const current = unwrapParentheses(condition)
   if (ts.isBinaryExpression(current) && staticAssertionComparison(current.operatorToken.kind)) {
-    return staticAssertionAtom(current.left) && staticAssertionAtom(current.right)
+    return staticAssertionNumericAtom(current.left, checker) && staticAssertionNumericAtom(current.right, checker)
   }
   if (!ts.isCallExpression(current) || current.questionDotToken != null
     || current.arguments.length !== 1 || !ts.isPropertyAccessExpression(current.expression)
@@ -688,7 +722,11 @@ function supportedWrittenAssertion(condition: ts.Expression, checker: ts.TypeChe
   const callee = current.expression
   return isStandardNumberObject(callee.expression, checker)
     && (callee.name.text === 'isInteger' || callee.name.text === 'isFinite' || callee.name.text === 'isNaN')
-    && staticAssertionAtom(current.arguments[0]!)
+    && staticAssertionNumericAtom(current.arguments[0]!, checker)
+}
+
+function staticAssertionNumericAtom(expression: ts.Expression, checker: ts.TypeChecker): boolean {
+  return staticAssertionAtom(expression) && valueKind(checker.getTypeAtLocation(expression), checker) === 'number'
 }
 
 function staticAssertionComparison(kind: ts.SyntaxKind): boolean {
@@ -721,9 +759,9 @@ function unwrapParentheses(expression: ts.Expression): ts.Expression {
   return current
 }
 
-// Static conditions are erased from production builds. Normal expression lowering owns
-// their JS evaluation order; this list only rejects instructions whose removal could
-// change program state. Compound control flow was rejected by the block check above.
+// An application may erase static conditions from a production build. Normal expression
+// lowering owns their JavaScript evaluation order; this list only accepts instructions
+// whose removal cannot change program state. Compound control flow was rejected above.
 function removableStaticConditionInstruction(instruction: InstructionIR): boolean {
   switch (instruction.kind) {
     case 'constant':
@@ -1537,15 +1575,6 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
     sentinel: loose ? 'nullish' : sentinel,
     negated,
   })
-}
-
-// The intrinsic `undefined` symbol has ZERO declarations (no `declare var undefined` in
-// lib), so the declaration-file shadowing defense cannot recognize it. The type is the
-// defense instead: only the real global's type carries the Undefined flag — a shadowing
-// binding's type is whatever it was assigned.
-function isUndefinedGlobal(expression: ts.Expression, checker: ts.TypeChecker): boolean {
-  if (!ts.isIdentifier(expression) || expression.text !== 'undefined') return false
-  return (checker.getTypeAtLocation(expression).flags & ts.TypeFlags.Undefined) !== 0
 }
 
 function isGlobalInfinity(expression: ts.Expression, checker: ts.TypeChecker): boolean {

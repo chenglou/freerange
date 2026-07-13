@@ -36,11 +36,17 @@ export function parameterDefaultLiteral(
     return {kind: 'opaque', content: current.text}
   }
   if (current.kind === ts.SyntaxKind.NullKeyword) return {kind: 'nullish', sentinel: 'null'}
-  if (ts.isIdentifier(current) && current.text === 'undefined'
-    && (checker.getTypeAtLocation(current).flags & ts.TypeFlags.Undefined) !== 0) {
+  if (isUndefinedGlobal(current, checker)) {
     return {kind: 'nullish', sentinel: 'undefined'}
   }
   return null
+}
+
+export function isUndefinedGlobal(expression: ts.Expression, checker: ts.TypeChecker): boolean {
+  if (!ts.isIdentifier(expression) || expression.text !== 'undefined') return false
+  const symbol = checker.getSymbolAtLocation(expression)
+  const global = checker.resolveName('undefined', undefined, ts.SymbolFlags.Value, false)
+  return symbol != null && symbol === global
 }
 
 export function parameterDefaultFits(default_: ParameterDefaultLiteral, declared: DeclaredKind): boolean {

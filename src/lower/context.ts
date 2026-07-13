@@ -18,8 +18,8 @@ export type MutableBlock = {
 }
 
 // A top-level function declaration and its index in ProgramIR.functions. The call arm
-// keeps the declaration so a call can be compared against the declared parameter list,
-// e.g. to stop at `scaled()` when scaled declares `(width: number = 5)`.
+// keeps the declaration so omitted optional and literal-defaulted arguments can be filled
+// before emitting the fixed-arity call instruction.
 export type TopLevelFunction = {
   id: FunctionID
   declaration: ts.FunctionDeclaration

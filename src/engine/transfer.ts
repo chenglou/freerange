@@ -1370,6 +1370,14 @@ function createComparisonProof(
       }
     }
 
+    // Expanding max(xs) <= min(ys) requires the full xs-by-ys relation. That work grows
+    // quadratically with user-written operands, so aggregate selection proofs compose on
+    // only one side. Bind and assert the relevant component relationship instead.
+    if (!answer && leftProducer?.kind === 'maximum' && rightProducer?.kind === 'minimum') {
+      atMostMemo.set(key, false)
+      return false
+    }
+
     // Selection rules come last because expanding every operand is the broadest search.
     // Direct add/subtract and common-factor proofs above usually identify the written
     // relationship before the broader selection rules need to inspect every operand.

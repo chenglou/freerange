@@ -478,10 +478,17 @@ describe('arrays and declared values', () => {
     // Literal defaults can be represented exactly. A computed Infinity or a cast that
     // lies about a boolean's runtime kind would falsify the declared numeric assumptions.
     const report = analyzeSource('bad-default.ts', `
+      const undefined: undefined = 7 as any
       export function scaled(zoom: number = Number.POSITIVE_INFINITY): number {
         return zoom
       }
       export function disguisedBoolean(zoom: number = true as unknown as number): number {
+        return zoom
+      }
+      export function shadowedUndefined(zoom: number | undefined = undefined): number {
+        return zoom ?? 0
+      }
+      export function defaultedOptional(zoom: number | undefined = 5): number {
         return zoom
       }
       export function remaining(deadline: number | null = null): number {
@@ -499,6 +506,24 @@ describe('arrays and declared values', () => {
       throw new Error(`expected disguisedBoolean to be unsupported, got ${disguisedBoolean.kind}`)
     }
     expect(disguisedBoolean.unsupported).toContain('default value for parameter zoom')
+    const shadowedUndefined = report.functions.find(fn => fn.name === 'shadowedUndefined')!
+    if (shadowedUndefined.kind !== 'unsupported') {
+      throw new Error(`expected shadowedUndefined to be unsupported, got ${shadowedUndefined.kind}`)
+    }
+    expect(shadowedUndefined.unsupported).toContain('default value for parameter zoom')
+    expect(analyzedFunction(report, 'defaultedOptional').assumptions)
+      .toEqual(['zoom is finite and not NaN'])
+    expect(analyzedFunction(report, 'defaultedOptional').ensures)
+      .toEqual(['return is a finite number'])
+    const globalUndefinedReport = analyzeSource('undefined-default.ts', `
+      export function defaultedUndefined(zoom: number | undefined = undefined): number | undefined {
+        return zoom
+      }
+    `)
+    expect(analyzedFunction(globalUndefinedReport, 'defaultedUndefined').assumptions)
+      .toEqual(['zoom is undefined or a finite non-NaN number'])
+    expect(analyzedFunction(globalUndefinedReport, 'defaultedUndefined').ensures)
+      .toEqual(['return is undefined or a finite number'])
     expect(analyzedFunction(report, 'remaining').assumptions).toEqual(['deadline is null or a finite non-NaN number'])
     expect(analyzedFunction(report, 'zoomOr').ensures).toEqual(['return is a finite number'])
   })

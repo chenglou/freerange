@@ -337,6 +337,26 @@ describe('control flow and contracts', () => {
     ])
   })
 
+  test('same-file calls evaluate arguments beyond an overload implementation signature', () => {
+    const report = analyzeSource('overload-arguments.ts', `
+      let shared = 0
+      function consume(first: number, ignored: number): void
+      function consume(first: number): void {}
+      function mutateShared(): number {
+        shared = -1
+        return 0
+      }
+      export function readsArgumentEffect(): number {
+        shared = 0
+        consume(0, mutateShared())
+        return shared
+      }
+    `)
+
+    expect(analyzedFunction(report, 'readsArgumentEffect').ensures)
+      .toEqual(['return is a finite integer number from -1 through -1'])
+  })
+
   test('keeps evidence from completed paths next to a recursion stop', () => {
     const report = analyzeSource('recursion.ts', `
       export function countdown(steps: number): number {

@@ -4,7 +4,7 @@ import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
 import {addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {valueKind} from './expression.ts'
-import {parameterDefaultFits, parameterDefaultLiteral} from './literals.ts'
+import {parameterDefaultFits, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
 import {declaredKind, lowerModuleInitializer, scanModuleBindings, tupleHasOptionalOrRestPositions, type ModuleScan} from './module.ts'
 import {scanStaticAnnotations, type StaticAnnotation} from './static-intrinsics.ts'
 import {lowerStatements} from './statements.ts'
@@ -198,7 +198,7 @@ function lowerFunction(
     if (parameter.dotDotDotToken != null) {
       throw unsupported(parameter, {kind: 'parameterType', typeText: `...${checker.typeToString(checker.getTypeAtLocation(parameter))}`, optionalOrRestTuple: false})
     }
-    const type = lowerParameterType(parameter, checker)
+    let type = lowerParameterType(parameter, checker)
     // A default value applies whenever a caller omits the argument. Literal defaults can
     // be represented exactly and checked against the declared assumptions: `zoom: number
     // = 5` supplies a finite number. Anything else — `= Infinity`, `= readConfig()` —
@@ -208,6 +208,7 @@ function lowerFunction(
       if (default_ == null || !parameterDefaultFits(default_, type)) {
         throw unsupported(parameter, {kind: 'parameterDefaultValue', name: parameter.name.text})
       }
+      type = parameterBodyKind(type, default_)
     }
     const value = context.nextValue++
     context.bindings.set(requiredSymbol(parameter.name, checker), value)
@@ -236,6 +237,15 @@ function lowerFunction(
     entry: 0,
     blocks: sealBlocks(context.blocks, declaration.name!.text),
   }
+}
+
+// JavaScript replaces undefined before the function body begins. A default of undefined
+// leaves it possible; every other default removes it. Null remains an ordinary argument.
+function parameterBodyKind(declared: DeclaredKind, default_: ParameterDefaultLiteral): DeclaredKind {
+  if (declared.kind !== 'nullish' || declared.sentinels === 'null') return declared
+  if (default_.kind === 'nullish' && default_.sentinel === 'undefined') return declared
+  if (declared.sentinels === 'undefined') return declared.inner
+  return {kind: 'nullish', inner: declared.inner, sentinels: 'null'}
 }
 
 function declaredRecordReturnNames(returnType: ts.Type, checker: ts.TypeChecker): string[] | null {
