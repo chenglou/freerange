@@ -97,30 +97,49 @@ export function itemColumn(itemIndex: number, columnCount: number): number {
 }
 ```
 
-In the example above, passing `itemColumn` of `2.2` would error (since it's not an integer), **at compile time**, not at runtime! No need to start a browser to know that the code's wrong here.
+In the example above, calling `itemColumn(0, 2.2)` errors (`columnCount` should be an integer), **at compile time**, not at runtime! No need to start a browser to know that the code's wrong here.
 
-`console.assert` currently works in top-level functions.
+`console.assert` calls at the very beginning of a function, before any other statement, are caller requirements. Like parameter types, every caller must satisfy them.
+Any `console.assert` later in the function will be proven by Freerange for the function itself. Otherwise we error.
 
-(You can feel free to strip `console.assert` in production like you're probably been doing already.)
+For simplicity and predictability, `console.assert` currently works only in named top-level functions and accepts simple numeric checks:
+- `Number.isInteger`, `Number.isFinite`, `Number.isNaN`
+- Strict comparison (`===`, `!==`, `<`, `>`, `<=`, `>=`) using number literals, object paths and array.length
+- References to module constants. For caller requirements, the constant must resolve to a numeric literal
 
-Inside a named top-level function, Freerange also checks a standalone, one-argument `console.assert(condition)`. Assertions at the very beginning declare what every caller must provide. A constant requirement, e.g. `console.assert(6 > 5)`, is decided immediately: a true condition adds no caller requirement, while a false condition is an error. Assertions after any other statement ask Freerange to prove the condition at that point:
+We also don't support aliasing `console.assert`, e.g. `const assert = console.assert`.
 
-The first two assertions become `requires` in the audit and let Freerange prove that the remainder is safe. Supported same-file calls are checked against them. The final assertion checks a result of the calculation and becomes `proves` when successful.
-
-Assert behavior that TypeScript cannot express, callers depend on, and an ordinary refactor could break. Common examples include keeping UI regions separate (`header.bottom <= content.top`), keeping array windows ordered and in bounds (`startIndex <= endIndex` and `endIndex <= itemCount`), keeping a clamped value within product limits (`opacity >= 0` and `opacity <= 1`), and keeping related returned fields equal (`layout.inputTray.bottom === layout.input.bottom`). Avoid assertions that merely repeat every assignment, `Math.max`, or range Freerange already derives. Use a start-of-function requirement only when the input is genuinely invalid for that API; if the function owns a sensible fallback, handle the case inside the function instead.
-
-Keep each assertion to one direct condition. A later assertion may use one numeric comparison (`===`, `!==`, `<`, `<=`, `>`, or `>=`) or one call to `Number.isInteger`, `Number.isFinite`, or `Number.isNaN`. Comparison operands may be names, numeric literals, property paths, or array lengths. Give calculations a name before checking them:
+For more complex assertions, like inline calculations, extract them into variables:
 
 ```ts
 const availableWidth = frame.right - frame.left
 console.assert(availableWidth >= 0)
 ```
 
-Do not perform arithmetic inside the assertion, join checks with `&&`, call a user function, add a message argument, read an array element, or introduce other control flow. A start-of-function requirement is narrower: it may use `Number.isInteger(parameter)`, compare a parameter with a fixed finite number, or compare two fixed finite numbers. A fixed number may be written directly or named by an immutable same-project constant whose initializer resolves to a numeric literal; calculated and mutable constants are not accepted.
+(You can feel free to strip `console.assert` in production like you're probably been doing already.)
 
-Assertions later in the function do not narrow following code. If later code depends on a condition, use an ordinary `if` guard or make the condition a start-of-function requirement. A function containing assertions is checked more strictly: every path must finish without Freerange having to assume that an unguarded divisor is nonzero or that an array read such as `values[index]!` is in bounds. Otherwise its assertions are blocked. Unproven, false, blocked, and unreachable assertions are errors in `fr`; successful assertions appear as `proves` in `fr --audit`.
+### Things Worth Asserting
 
-TypeScript must resolve `console` to the environment's global console; a local or imported value named `console` is not treated specially. Freerange does not change runtime behavior: JavaScript still evaluates the condition and logs a failed assertion unless the application's build removes the call.
+There are infinitely many assertable things. Here are some good, non-noisy ones:
+- Guarantee that 2 UI items don't overlap:
+  ```ts
+  console.assert(input.bottom < content.top)
+  ```
+- Guarantee that a virtualized list never renders more items than intended:
+  ```ts
+  const visibleItemCount = endIndex - startIndex
+  console.assert(visibleItemCount <= MAX_VISIBLE_ITEM_COUNT)
+  ```
+- Ensure two separate values are equal, given different calculations:
+  ```ts
+  const frame = {
+    input: {bottom: inputBottom},
+    inputTray: {bottom: inputBottom},
+  }
+  console.assert(frame.inputTray.bottom === frame.input.bottom)
+  ```
+
+Freerange already defaults to inferring that the relevant numbers shouldn't be `NaN`, `Infinity`, `0` (for division denominators) and whatever else. You can see them in `fr --audit`. You don't need to explicitly asserting unnecessary info.
 
 ## Writing analyzable TypeScript
 
