@@ -16,7 +16,7 @@ import {reportPath, siteLocation} from './ir/program.ts'
 import {formatUnsupportedReason} from './report/index.ts'
 import {describePrecondition, type PreconditionOperation} from './report/format-requirement.ts'
 import {checkFile} from './typescript/check.ts'
-import {formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
+import {color, formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
 import {
   findTypeScriptConfig,
   loadTypeScriptProjectGraph,
@@ -110,7 +110,7 @@ export function runProjectAudit(searchFrom: string): boolean {
     .sort((left, right) => left.file.localeCompare(right.file))
   console.log([
     auditPreamble,
-    ...audits.map(formatFileAuditUnit),
+    ...audits.map(audit => formatFileAuditUnit(audit, scan.pretty)),
     formatCoverage(scan.coverage),
   ].join('\n\n'))
   return scan.hasTypeScriptErrors
@@ -121,7 +121,10 @@ export function runProjectAudit(searchFrom: string): boolean {
 export function runFileAudit(file: string): boolean {
   const target = analyzeTargetFile(file)
   if (target == null) return true
-  console.log([auditPreamble, formatFileAuditUnit(createFileAudit(target.detailed))].join('\n\n'))
+  console.log([
+    auditPreamble,
+    formatFileAuditUnit(createFileAudit(target.detailed), target.pretty),
+  ].join('\n\n'))
   return false
 }
 
@@ -511,10 +514,6 @@ function formatDiagnosticLocation(file: string, line: number, column: number, pr
   return pretty
     ? `${color(96, file)}:${color(93, line)}:${color(93, column)}`
     : `${file}(${line},${column})`
-}
-
-function color(code: number, text: string | number): string {
-  return `\u001B[${code}m${text}\u001B[0m`
 }
 
 function formatCoverage(coverage: ProjectCoverage): string {

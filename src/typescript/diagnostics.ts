@@ -34,3 +34,7 @@ export function usePrettyOutput(configured?: unknown): boolean {
   if (forceColor != null && forceColor !== '') return true
   return ts.sys.writeOutputIsTTY?.() === true
 }
+
+export function color(code: number, text: string | number): string {
+  return `\u001B[${code}m${text}\u001B[0m`
+}

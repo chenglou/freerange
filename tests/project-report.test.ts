@@ -136,6 +136,15 @@ export function outOfBounds(): number {
     expect(colored).not.toContain('\u001B[96mnote\u001B[0m')
     expect(colored).toContain('\u001B[90m [caller-contract]: \u001B[0m')
 
+    const coloredAudit = Bun.spawnSync({
+      cmd: [process.execPath, freerangeCli, '--audit'],
+      cwd: projectDirectory,
+      env: {...process.env, NO_COLOR: '', FORCE_COLOR: '1'},
+      stdout: 'pipe',
+      stderr: 'pipe',
+    }).stdout.toString()
+    expect(coloredAudit).toContain('# \u001B[96mcontracts.ts\u001B[0m (')
+
     // `fr <file>` is the project findings narrowed to that file: the finding lines are
     // identical, only the coverage counts are the file's own.
     const targeted = runCli(projectDirectory, 'contracts.ts')

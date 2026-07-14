@@ -12,6 +12,7 @@ import type {
   NumericExpression,
 } from './requirements/model.ts'
 import {createReport, formatReport, type AnalysisReport} from './report/index.ts'
+import {color} from './typescript/diagnostics.ts'
 
 type RefactorGuideShape = {
   id: string
@@ -328,9 +329,10 @@ function formatAuditCoverage(coverage: AuditCoverage): string {
 // section labels. `fr --audit <file>` prints one unit; bare `fr --audit` prints one unit
 // per project file; both print auditPreamble once above, which keeps a file's unit
 // identical in the two outputs.
-export function formatFileAuditUnit(audit: FileAudit): string {
+export function formatFileAuditUnit(audit: FileAudit, pretty = false): string {
   const {coverage} = audit
-  const lines = [`# ${audit.file} (${formatAuditCoverage(coverage)})`]
+  const file = pretty ? color(96, audit.file) : audit.file
+  const lines = [`# ${file} (${formatAuditCoverage(coverage)})`]
   if (audit.contracts.functions.length > 0) {
     lines.push(
       '',
