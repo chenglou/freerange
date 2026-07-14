@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import type {ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
+import type {StaticAssertionProblem} from '../ir/program.ts'
 import {declaredOnlyInDeclarationFiles, platformFact} from './platform.ts'
 import {
   addInstruction,
@@ -589,21 +590,27 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
   if (annotation.role === 'requirement') {
     const requirement = writtenRequirement(condition, context)
     if (requirement == null) {
-      throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+      throw unsupported(condition, {
+        kind: 'staticAssertionForm',
+        problem: staticAssertionProblem(condition, context.checker, 'callerRequirement'),
+      })
     }
     value = lowerWrittenRequirement(requirement, condition, context)
   } else {
     if (!supportedWrittenAssertion(condition, context.checker)) {
-      throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+      throw unsupported(condition, {
+        kind: 'staticAssertionForm',
+        problem: staticAssertionProblem(condition, context.checker, 'directCheck'),
+      })
     }
     value = lowerExpression(condition, context)
   }
   if (context.currentBlock !== originalBlock || context.blocks.length !== originalBlockCount) {
-    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'bindValueFirst'})
   }
   const conditionInstructions = originalBlock.instructions.slice(originalInstructionCount)
   if (conditionInstructions.some(instruction => !removableStaticConditionInstruction(instruction))) {
-    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'condition'})
+    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'bindValueFirst'})
   }
   const site = addSite(context, annotation.call)
   if (annotation.role === 'requirement') {
@@ -713,13 +720,8 @@ function supportedWrittenAssertion(condition: ts.Expression, checker: ts.TypeChe
   if (ts.isBinaryExpression(current) && staticAssertionComparison(current.operatorToken.kind)) {
     return staticAssertionNumericAtom(current.left, checker) && staticAssertionNumericAtom(current.right, checker)
   }
-  if (!ts.isCallExpression(current) || current.questionDotToken != null
-    || current.arguments.length !== 1 || !ts.isPropertyAccessExpression(current.expression)
-    || current.expression.questionDotToken != null) return false
-  const callee = current.expression
-  return isStandardNumberObject(callee.expression, checker)
-    && (callee.name.text === 'isInteger' || callee.name.text === 'isFinite' || callee.name.text === 'isNaN')
-    && staticAssertionNumericAtom(current.arguments[0]!, checker)
+  const operand = staticNumberCheckOperand(current, checker)
+  return operand != null && staticAssertionNumericAtom(operand, checker)
 }
 
 function staticAssertionNumericAtom(expression: ts.Expression, checker: ts.TypeChecker): boolean {
@@ -738,6 +740,25 @@ function staticAssertionComparison(kind: ts.SyntaxKind): boolean {
   }
 }
 
+function staticAssertionAtomProblem(expression: ts.Expression): StaticAssertionProblem | null {
+  const current = unwrapParentheses(expression)
+  if (ts.isIdentifier(current) || ts.isNumericLiteral(current)) return null
+  if (ts.isPrefixUnaryExpression(current)
+    && (current.operator === ts.SyntaxKind.PlusToken || current.operator === ts.SyntaxKind.MinusToken)) {
+    return ts.isNumericLiteral(unwrapParentheses(current.operand)) ? null : 'bindValueFirst'
+  }
+  if (ts.isElementAccessExpression(current)) return 'bindValueFirst'
+  if (ts.isNonNullExpression(current)) return staticAssertionAtomProblem(current.expression)
+  if (ts.isCallExpression(current)) return 'functionCall'
+  if (ts.isBinaryExpression(current)) return 'bindValueFirst'
+  if (ts.isPropertyAccessExpression(current)) {
+    return current.questionDotToken == null
+      ? staticAssertionAtomProblem(current.expression)
+      : 'directCheck'
+  }
+  return 'directCheck'
+}
+
 function staticAssertionAtom(expression: ts.Expression): boolean {
   const current = unwrapParentheses(expression)
   if (ts.isIdentifier(current) || ts.isNumericLiteral(current)) return true
@@ -748,6 +769,32 @@ function staticAssertionAtom(expression: ts.Expression): boolean {
   return ts.isPropertyAccessExpression(current)
     && current.questionDotToken == null
     && staticAssertionAtom(current.expression)
+}
+
+function staticAssertionProblem(
+  condition: ts.Expression,
+  checker: ts.TypeChecker,
+  fallback: 'directCheck' | 'callerRequirement',
+): StaticAssertionProblem {
+  const current = unwrapParentheses(condition)
+  if (ts.isBinaryExpression(current) && staticAssertionComparison(current.operatorToken.kind)) {
+    return staticAssertionAtomProblem(current.left) ?? staticAssertionAtomProblem(current.right) ?? fallback
+  }
+  const operand = staticNumberCheckOperand(current, checker)
+  if (operand != null) return staticAssertionAtomProblem(operand) ?? fallback
+  if (ts.isCallExpression(current)) return 'functionCall'
+  return 'directCheck'
+}
+
+function staticNumberCheckOperand(expression: ts.Expression, checker: ts.TypeChecker): ts.Expression | null {
+  if (!ts.isCallExpression(expression) || expression.questionDotToken != null
+    || expression.arguments.length !== 1 || !ts.isPropertyAccessExpression(expression.expression)
+    || expression.expression.questionDotToken != null) return null
+  const callee = expression.expression
+  return isStandardNumberObject(callee.expression, checker)
+    && (callee.name.text === 'isInteger' || callee.name.text === 'isFinite' || callee.name.text === 'isNaN')
+    ? expression.arguments[0]!
+    : null
 }
 
 function unwrapParentheses(expression: ts.Expression): ts.Expression {

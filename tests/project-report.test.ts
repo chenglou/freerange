@@ -299,6 +299,12 @@ export function invalid(value: number): number {
   return value
 }
 
+export function invalidNegation(value: number): number {
+  const result = value
+  console.assert(!(result < 0))
+  return result
+}
+
 console.assert(true)
 `})
 
@@ -312,6 +318,7 @@ console.assert(true)
     expect(lint.stdout).toContain('error [console-assert]: console.assert requirements in blockedRequirement were not checked because the function did not finish analysis without site-specific assumptions')
     expect(lint.stdout).toContain('error [console-assert]: console.assert is unreachable in dead: value >= 0')
     expect(lint.stdout).toContain('console.assert must have exactly one condition argument in invalid')
+    expect(lint.stdout).toContain('console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check in invalidNegation')
     expect(lint.stdout).toContain('console.assert is only supported inside a named top-level function declaration')
     expect(lint.stdout).not.toContain('bounded >= 0')
 
@@ -323,6 +330,7 @@ console.assert(true)
     expect(audit.stdout).toContain('assertion can fail: positive < 0')
     expect(audit.stdout).toContain('assertion blocked: the function did not finish analysis without site-specific assumptions: result >= 0')
     expect(audit.stdout).toContain('unreachable assertion: value >= 0')
+    expect(audit.stdout).toContain('console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }

@@ -9,7 +9,7 @@ export type StaticAnnotation =
       call: ts.CallExpression
       role: StaticAnnotationRole
       node: ts.Node
-      problem: 'argumentCount' | 'position' | 'optionalCall' | 'condition'
+      problem: 'argumentCount' | 'position' | 'optionalCall'
     }
 
 type StaticAnnotationScan = {

@@ -100,10 +100,10 @@ describe('static console.assert contracts', () => {
     expect(invalid.stopped[0]).toContain('declared requirement definitely false')
     const computed = report.functions.find(fn => fn.name === 'computedConstant')
     if (computed?.kind !== 'unsupported') throw new Error('Expected computedConstant to be unsupported')
-    expect(computed.unsupported).toContain('console.assert')
+    expect(computed.unsupported).toContain('leading console.assert describes what callers must provide')
     const mutable = report.functions.find(fn => fn.name === 'mutableConstant')
     if (mutable?.kind !== 'unsupported') throw new Error('Expected mutableConstant to be unsupported')
-    expect(mutable.unsupported).toContain('console.assert')
+    expect(mutable.unsupported).toContain('leading console.assert describes what callers must provide')
   })
 
   test('leading requirements accept imported numeric literal constants', () => {
@@ -263,6 +263,16 @@ describe('static console.assert contracts', () => {
         console.assert(result === result)
         return value
       }
+      export function negated(value: number): number {
+        const result = value
+        console.assert(!(result < 0))
+        return result
+      }
+      export function looseEquality(value: number): number {
+        const result = value
+        console.assert(result == 0)
+        return result
+      }
       export function positiveLiteral(value: number): number {
         const bounded = Math.max(0, value)
         console.assert(bounded >= +0)
@@ -298,11 +308,29 @@ describe('static console.assert contracts', () => {
       'storedCondition',
       'directMath',
       'booleanEquality',
+      'negated',
+      'looseEquality',
     ]) {
       const fn = entries.get(name)
       if (fn?.kind !== 'unsupported') throw new Error(`Expected ${name} to be unsupported`)
       expect(fn.unsupported).toContain('console.assert')
     }
+    const unsupported = (name: string): string => {
+      const fn = entries.get(name)
+      if (fn?.kind !== 'unsupported') throw new Error(`Expected ${name} to be unsupported`)
+      return fn.unsupported
+    }
+    expect(unsupported('compound')).toContain('one direct numeric comparison')
+    expect(unsupported('called')).toContain('cannot call a function')
+    expect(unsupported('constant')).toContain('one direct numeric comparison')
+    expect(unsupported('relationalRequirement')).toContain('describes what callers must provide')
+    expect(unsupported('finiteRequirement')).toContain('describes what callers must provide')
+    expect(unsupported('inlineDivision')).toContain('calculate or read the value before console.assert')
+    expect(unsupported('inlineIndex')).toContain('calculate or read the value before console.assert')
+    expect(unsupported('storedCondition')).toContain('one direct numeric comparison')
+    expect(unsupported('booleanEquality')).toContain('one direct numeric comparison')
+    expect(unsupported('negated')).toContain('one direct numeric comparison')
+    expect(unsupported('looseEquality')).toContain('using ===, !==, <, <=, >, or >=')
     const shadowed = entries.get('shadowed')
     if (shadowed?.kind !== 'unsupported') throw new Error('Expected shadowed to be unsupported')
     expect(shadowed.unsupported).toContain('function parameter with type')

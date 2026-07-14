@@ -47,6 +47,15 @@ export type FunctionIR = {
   blocks: BlockIR[]
 }
 
+export type StaticAssertionProblem =
+  | 'argumentCount'
+  | 'position'
+  | 'optionalCall'
+  | 'directCheck'
+  | 'bindValueFirst'
+  | 'functionCall'
+  | 'callerRequirement'
+
 // Why one function's lowering stopped. String fields are display data (identifier text,
 // operator text, checker.typeToString results captured while the checker is alive). Code
 // that needs a decision uses a separate boolean or tagged field. Prose is composed only in
@@ -138,9 +147,9 @@ export type UnsupportedReason =
   // immutable after construction (owner-locked): update state by rebinding a variable to a
   // fresh object with explicit fields, e.g. `config = {pos: 1, dest: config.dest}`.
   | {kind: 'propertyWrite'}
-  // A direct global console.assert spelling expressed static intent, but its
-  // arguments, position, optional form, or condition is outside the accepted grammar.
-  | {kind: 'staticAssertionForm'; problem: 'argumentCount' | 'position' | 'optionalCall' | 'condition'}
+  // A direct global console.assert spelling expressed static intent, but its arguments,
+  // position, optional form, or condition is outside the accepted grammar.
+  | {kind: 'staticAssertionForm'; problem: StaticAssertionProblem}
   | {kind: 'forLoopWithoutCondition'}
   // Destructuring pattern or a declaration without an initializer.
   | {kind: 'variableDeclarationShape'}
