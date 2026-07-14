@@ -4,13 +4,15 @@
   "workspaces": {
     "": {
       "name": "@chenglou/freerange",
+      "dependencies": {
+        "typescript": "^6.0.2",
+      },
       "devDependencies": {
         "@types/bun": "^1.3.14",
         "@typescript/native": "npm:typescript@^7.0.2",
         "knip": "^6.14.2",
         "oxlint": "latest",
         "oxlint-tsgolint": "latest",
-        "typescript": "^6.0.2",
       },
     },
   },

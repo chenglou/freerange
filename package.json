@@ -1,19 +1,39 @@
 {
   "name": "@chenglou/freerange",
   "version": "0.0.0",
-  "private": true,
+  "description": "Static numeric range analysis for TypeScript",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chenglou/freerange.git"
+  },
   "type": "module",
+  "bin": {
+    "fr": "./fr.ts"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "fr.ts",
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "check": "bunx @typescript/native && oxlint --type-aware && bun knip && bun test --parallel=4",
     "demo": "HOST=${HOST:-127.0.0.1}; PORT=${PORT:-3000}; bun ./demo/index.html --host=$HOST:$PORT",
     "fr": "bun fr.ts"
+  },
+  "dependencies": {
+    "typescript": "^6.0.2"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
     "@typescript/native": "npm:typescript@^7.0.2",
     "knip": "^6.14.2",
     "oxlint": "latest",
-    "oxlint-tsgolint": "latest",
-    "typescript": "^6.0.2"
+    "oxlint-tsgolint": "latest"
   }
 }
