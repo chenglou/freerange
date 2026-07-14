@@ -43,7 +43,7 @@ import {
   type ExpressionContext,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
-import {completedEvaluation, type FunctionEvaluation, type Stop} from './outcome.ts'
+import {completedEvaluation, type FunctionEvaluation, type RequirementFailure, type Stop} from './outcome.ts'
 import {
   addValidIndexPair,
   cloneState,
@@ -101,6 +101,13 @@ export type StepResult =
   // The path ends contributing nothing — a call to a function that throws on every path,
   // behaving exactly like an inline throw: no return value, no stop record.
   | {kind: 'ends'}
+
+function failedRequirement(failure: RequirementFailure): StepResult {
+  return {kind: 'stop', stop: {
+    site: failure.site,
+    reason: {kind: 'requirementFailure', failure, callee: null},
+  }}
+}
 
 // The three ways an instruction arm produces its value, typed so a freshly computed number
 // cannot leave evaluateInstruction without the blame stamp: value() rejects numbers at the
@@ -214,7 +221,7 @@ function evaluateInstructionKinded(
         || (index.integer && !index.mayBeNaN && (index.lower >= length.upper || index.upper < 0))
       if (provablyOut) {
         if (instruction.mode === 'asserted' || instruction.mode === 'proven') {
-          return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'outOfBoundsRead'}}}
+          return failedRequirement({kind: 'elementInBounds', site: instruction.site})
         }
         return value({kind: 'nullish', sentinels: 'undefined'})
       }
@@ -453,23 +460,23 @@ function evaluateInstructionKinded(
     case 'staticRequire': {
       const condition = requiredValue(state, instruction.value)
       if (condition.kind !== 'boolean') {
-        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'unrefinableRequirement'}}}
+        return failedRequirement({kind: 'declared', site: instruction.site, status: 'unproven'})
       }
       const check = context.expressionContext.instructionByValue[instruction.value]
       if (check?.kind !== 'compare' && check?.kind !== 'numberCheck') {
-        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'unrefinableRequirement'}}}
+        return failedRequirement({kind: 'declared', site: instruction.site, status: 'unproven'})
       }
       if (!condition.canBeTrue) {
-        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'refutedRequirement'}}}
+        return failedRequirement({kind: 'declared', site: instruction.site, status: 'refuted'})
       }
       if (!condition.canBeFalse) return value({kind: 'void'})
       const requirement = staticRequirement(check, instruction.site, context.expressionContext)
       if (requirement == null) {
-        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'unrefinableRequirement'}}}
+        return failedRequirement({kind: 'declared', site: instruction.site, status: 'unproven'})
       }
       const refined = refineCheck(state, check, true, context.expressionContext)
       if (refined == null) {
-        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'refutedRequirement'}}}
+        return failedRequirement({kind: 'declared', site: instruction.site, status: 'refuted'})
       }
       state.frame = refined.frame
       state.shared = refined.shared
@@ -532,46 +539,12 @@ function evaluateInstructionKinded(
           for (const assumption of evaluation.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
           return {kind: 'ends'}
         }
-        const requirementFailure = evaluation.stops.find(stop =>
-          stop.reason.kind === 'refutedRequirement'
-            || stop.reason.kind === 'unrefinableRequirement'
-            || stop.reason.kind === 'callRequirement'
-            || stop.reason.kind === 'zeroDivisor'
-            || stop.reason.kind === 'callZeroDivisor')
-        if (requirementFailure != null) {
-          const failure = requirementFailure.reason
-          if (failure.kind === 'zeroDivisor' || failure.kind === 'callZeroDivisor') {
-            return {kind: 'stop', stop: {
-              site: instruction.site,
-              reason: {
-                kind: 'callZeroDivisor',
-                callee: instruction.function,
-                operationSite: failure.kind === 'zeroDivisor'
-                  ? requirementFailure.site
-                  : failure.operationSite,
-                operation: failure.operation,
-              },
-            }}
-          }
-          let status: 'refuted' | 'unproven'
-          let declarationSite: SiteID
-          if (failure.kind === 'callRequirement') {
-            status = failure.status
-            declarationSite = failure.declarationSite
-          } else if (failure.kind === 'refutedRequirement' || failure.kind === 'unrefinableRequirement') {
-            status = failure.kind === 'refutedRequirement' ? 'refuted' : 'unproven'
-            declarationSite = requirementFailure.site
-          } else {
-            throw new Error('Requirement failure search returned an unrelated stop')
-          }
+        const requirementFailure = evaluation.stops.find(stop => stop.reason.kind === 'requirementFailure')
+        if (requirementFailure?.reason.kind === 'requirementFailure') {
+          const reason = requirementFailure.reason
           return {kind: 'stop', stop: {
             site: instruction.site,
-            reason: {
-              kind: 'callRequirement',
-              callee: instruction.function,
-              declarationSite,
-              status,
-            },
+            reason: {...reason, callee: instruction.function},
           }}
         }
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
@@ -596,13 +569,11 @@ function evaluateInstructionKinded(
         (instruction.operator === 'divide' || instruction.operator === 'remainder')
         && isDefinitelyZero(right)
       ) {
-        return {kind: 'stop', stop: {
+        return failedRequirement({
+          kind: 'nonzeroDivisor',
           site: instruction.site,
-          reason: {
-            kind: 'zeroDivisor',
-            operation: instruction.operator === 'divide' ? 'division' : 'remainder',
-          },
-        }}
+          operation: instruction.operator === 'divide' ? 'division' : 'remainder',
+        })
       }
       if (
         (instruction.operator === 'divide' || instruction.operator === 'remainder')

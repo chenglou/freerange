@@ -359,10 +359,30 @@ console.assert(true)
   }
 })
 
-test('definitely false inferred divisor requirements gate lint at visible call sites', () => {
+test('definitely false inferred requirements gate lint at visible call sites', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-inferred-requirement-'))
   try {
     writeProject(projectDirectory, {
+      'bounds.ts': `function at(values: number[], index: number): number {
+  return values[index]!
+}
+
+function wrappedAt(values: number[], index: number): number {
+  return at(values, index)
+}
+
+export function badBounds(): number {
+  return at([1], 2)
+}
+
+export function badWrappedBounds(): number {
+  return wrappedAt([1], 2)
+}
+
+export function safeBounds(): number {
+  return at([1], 0)
+}
+`,
       'requirements.ts': `function aspectRatio(width: number, height: number): number {
   return width / height
 }
@@ -415,11 +435,22 @@ console.log(Math.hypot(3, 4), aspectRatio(10, 0))
 logger().log(aspectRatio(10, 0))
 export {}
 `,
+      'skipped-bounds.ts': `function at(values: number[], index: number): number {
+  return values[index]!
+}
+
+console.log(at([1], 2))
+export {}
+`,
     })
 
     const lint = runCli(projectDirectory)
     expect(lint.exitCode).toBe(1)
     expect(lint.stderr).toBe('')
+    expect(lint.stdout).toContain('bounds.ts(10,10): error [inferred-requirement]: call to at makes an asserted element read definitely out of bounds (element read at bounds.ts(2,10))')
+    expect(lint.stdout).toContain('bounds.ts(14,10): error [inferred-requirement]: call to wrappedAt makes an asserted element read definitely out of bounds (element read at bounds.ts(2,10))')
+    expect(lint.stdout).not.toContain('bounds.ts(18,10): error')
+    expect(lint.stdout).toContain('skipped-bounds.ts(5,13): error [inferred-requirement]: call to at makes an asserted element read definitely out of bounds')
     expect(lint.stdout).toContain('requirements.ts(14,10): error [inferred-requirement]: division has a divisor that is definitely zero in impossible')
     expect(lint.stdout).toContain('requirements.ts(18,10): error [inferred-requirement]: call to aspectRatio violates its nonzero divisor requirement')
     expect(lint.stdout).toContain('requirements.ts(22,10): error [inferred-requirement]: call to wrappedAspectRatio violates its nonzero divisor requirement')
@@ -435,7 +466,9 @@ export {}
     expect(audit.exitCode).toBe(0)
     expect(audit.stderr).toBe('')
     expect(audit.stdout).toContain('call to aspectRatio violates its nonzero divisor requirement')
+    expect(audit.stdout).toContain('call to at makes an asserted element read definitely out of bounds')
     expect(audit.stdout).toContain('function call console.log at skipped.ts:5:1')
+    expect(audit.stdout).toContain('function call console.log at skipped-bounds.ts:5:1')
     expect(audit.stdout).toContain('function call console.log at safe-skips.ts:9:1')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})

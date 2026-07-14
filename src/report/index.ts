@@ -1,7 +1,7 @@
 import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
-import type {AssertionVerdict, FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
-import type {ValueID} from '../ir/ids.ts'
+import type {AssertionVerdict, FunctionAnalysis, ProgramAnalysis, RequirementFailure, Stop} from '../engine/outcome.ts'
+import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
 import {functionUsage} from '../ir/function-usage.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
 import {forEachOperand} from '../ir/instructions.ts'
@@ -630,36 +630,14 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
       const calleeState = calleeStateText(analysis.functions[reason.callee])
       return `calls ${functionName(program, reason.callee)}, ${calleeState} (call at ${formatSite(program, stop.site)})`
     }
-    case 'outOfBoundsRead': {
-      return `reads an element provably outside the array (at ${formatSite(program, stop.site)})`
-    }
     case 'kindMismatch': {
       return `uses a value whose runtime kind the analysis cannot establish (at ${formatSite(program, stop.site)})`
     }
     case 'possiblyMissingElement': {
       return `uses a possibly missing array element without handling undefined (at ${formatSite(program, stop.site)})`
     }
-    case 'refutedRequirement': {
-      return `declared requirement is false (at ${formatSite(program, stop.site)})`
-    }
-    case 'unrefinableRequirement': {
-      return `could not express or prove the declared requirement (at ${formatSite(program, stop.site)})`
-    }
-    case 'callRequirement': {
-      const callee = functionName(program, reason.callee)
-      const callSite = formatSite(program, stop.site)
-      const declarationSite = formatSite(program, reason.declarationSite)
-      switch (reason.status) {
-        case 'refuted': return `call to ${callee} makes its declared requirement definitely false (call at ${callSite}; declared at ${declarationSite})`
-        case 'unproven': return `could not express or prove ${callee}'s declared requirement (call at ${callSite}; declared at ${declarationSite})`
-      }
-    }
-    case 'zeroDivisor': {
-      return `${reason.operation} has a divisor that is definitely zero (at ${formatSite(program, stop.site)})`
-    }
-    case 'callZeroDivisor': {
-      const callee = functionName(program, reason.callee)
-      return `call to ${callee} violates its nonzero divisor requirement (call at ${formatSite(program, stop.site)}; ${reason.operation} at ${formatSite(program, reason.operationSite)})`
+    case 'requirementFailure': {
+      return formatRequirementFailure(reason.failure, reason.callee, stop.site, program)
     }
     case 'loopLimit': {
       return `the loop at ${formatSite(program, stop.site)} did not converge after ${reason.updates} updates`
@@ -689,6 +667,36 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
           return `reads ${binding.name} before it is initialized (read at ${formatSite(program, stop.site)})`
       }
     }
+  }
+}
+
+function formatRequirementFailure(
+  failure: RequirementFailure,
+  calleeID: FunctionID | null,
+  stopSite: SiteID,
+  program: ProgramIR,
+): string {
+  const origin = formatSite(program, failure.site)
+  if (calleeID == null) {
+    switch (failure.kind) {
+      case 'elementInBounds': return `reads an element provably outside the array (at ${origin})`
+      case 'nonzeroDivisor': return `${failure.operation} has a divisor that is definitely zero (at ${origin})`
+      case 'declared': return failure.status === 'refuted'
+        ? `declared requirement is false (at ${origin})`
+        : `could not express or prove the declared requirement (at ${origin})`
+    }
+  }
+
+  const callee = functionName(program, calleeID)
+  const callSite = formatSite(program, stopSite)
+  switch (failure.kind) {
+    case 'elementInBounds':
+      return `call to ${callee} makes an asserted element read definitely out of bounds (call at ${callSite}; element read at ${origin})`
+    case 'nonzeroDivisor':
+      return `call to ${callee} violates its nonzero divisor requirement (call at ${callSite}; ${failure.operation} at ${origin})`
+    case 'declared': return failure.status === 'refuted'
+      ? `call to ${callee} makes its declared requirement definitely false (call at ${callSite}; declared at ${origin})`
+      : `could not express or prove ${callee}'s declared requirement (call at ${callSite}; declared at ${origin})`
   }
 }
 

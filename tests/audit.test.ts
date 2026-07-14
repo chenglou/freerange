@@ -309,7 +309,9 @@ test('guide routing requires the exact supported operation and value kind', () =
     }
   `)
   const provenStop = provenOutOfBounds.references.find(reference =>
-    reference.reason.kind === 'stopped' && reference.reason.reason.kind === 'outOfBoundsRead')
+    reference.reason.kind === 'stopped'
+      && reference.reason.reason.kind === 'requirementFailure'
+      && reference.reason.reason.failure.kind === 'elementInBounds')
   expect(provenStop?.guideIDs).toEqual([])
   expect(formatFileAuditUnit(provenOutOfBounds)).not.toContain('### Check an asserted array index')
 

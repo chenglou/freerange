@@ -10,7 +10,7 @@ import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
 import {auditPreamble, createFileAudit, formatFileAuditUnit} from './audit.ts'
-import type {AssertionVerdict, FunctionAnalysis} from './engine/outcome.ts'
+import type {AssertionVerdict, FunctionAnalysis, RequirementFailure} from './engine/outcome.ts'
 import type {SiteID} from './ir/ids.ts'
 import {reportPath, siteLocation} from './ir/program.ts'
 import {formatUnsupportedReason} from './report/index.ts'
@@ -191,12 +191,73 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
     findings.push({kind: 'error', file, ...location, rule, message, ...(related == null ? {} : {related})})
   }
 
+  const addRequirementFailure = (
+    failure: RequirementFailure,
+    stopSite: SiteID,
+    functionName: string,
+    calleeName: string | null,
+  ): void => {
+    if (failure.kind === 'elementInBounds') {
+      if (calleeName == null) {
+        const location = siteLocation(program, stopSite)
+        findings.push({kind: 'simple', file, ...location, functionName, stop: 'outOfBoundsRead'})
+      } else {
+        const origin = siteLocation(program, failure.site)
+        addError(
+          stopSite,
+          'inferred-requirement',
+          `call to ${calleeName} makes an asserted element read definitely out of bounds`,
+          {label: 'element read at', ...origin},
+        )
+      }
+      return
+    }
+
+    if (failure.kind === 'nonzeroDivisor') {
+      if (calleeName == null) {
+        addError(
+          stopSite,
+          'inferred-requirement',
+          `${failure.operation} has a divisor that is definitely zero in ${functionName}`,
+        )
+      } else {
+        const origin = siteLocation(program, failure.site)
+        addError(
+          stopSite,
+          'inferred-requirement',
+          `call to ${calleeName} violates its nonzero divisor requirement`,
+          {label: `${failure.operation} at`, ...origin},
+        )
+      }
+      return
+    }
+
+    if (calleeName == null) {
+      addError(
+        stopSite,
+        'declared-requirement',
+        failure.status === 'refuted'
+          ? `declared console.assert requirement is false in ${functionName}`
+          : `could not express or prove the declared console.assert requirement in ${functionName}`,
+      )
+    } else {
+      const origin = siteLocation(program, failure.site)
+      addError(
+        stopSite,
+        'declared-requirement',
+        failure.status === 'refuted'
+          ? `call to ${calleeName} makes its declared requirement definitely false`
+          : `could not express or prove ${calleeName}'s declared requirement at this call`,
+        {label: 'declared at', ...origin},
+      )
+    }
+  }
+
   const collectStops = (fn: FunctionAnalysis): void => {
     if (fn.kind !== 'partial') return
     for (const stop of fn.stops) {
       const reason = stop.reason
       switch (reason.kind) {
-        case 'outOfBoundsRead':
         case 'nonExitingLoop': {
           const location = siteLocation(program, stop.site)
           findings.push({
@@ -209,49 +270,10 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
           })
           break
         }
-        case 'refutedRequirement':
-        case 'unrefinableRequirement': {
-          addError(
-            stop.site,
-            'declared-requirement',
-            reason.kind === 'refutedRequirement'
-              ? `declared console.assert requirement is false in ${fn.lowering.name}`
-              : `could not express or prove the declared console.assert requirement in ${fn.lowering.name}`,
-          )
-          break
-        }
-        case 'callRequirement': {
-          const callee = program.functions[reason.callee]
-          if (callee == null) throw new Error(`Unknown function ${reason.callee}`)
-          const declaration = siteLocation(program, reason.declarationSite)
-          addError(
-            stop.site,
-            'declared-requirement',
-            reason.status === 'refuted'
-              ? `call to ${callee.name} makes its declared requirement definitely false`
-              : `could not express or prove ${callee.name}'s declared requirement at this call`,
-            {label: 'declared at', ...declaration},
-          )
-          break
-        }
-        case 'zeroDivisor': {
-          addError(
-            stop.site,
-            'inferred-requirement',
-            `${reason.operation} has a divisor that is definitely zero in ${fn.lowering.name}`,
-          )
-          break
-        }
-        case 'callZeroDivisor': {
-          const callee = program.functions[reason.callee]
-          if (callee == null) throw new Error(`Unknown function ${reason.callee}`)
-          const operation = siteLocation(program, reason.operationSite)
-          addError(
-            stop.site,
-            'inferred-requirement',
-            `call to ${callee.name} violates its nonzero divisor requirement`,
-            {label: `${reason.operation} at`, ...operation},
-          )
+        case 'requirementFailure': {
+          const callee = reason.callee == null ? null : program.functions[reason.callee]
+          if (reason.callee != null && callee == null) throw new Error(`Unknown function ${reason.callee}`)
+          addRequirementFailure(reason.failure, stop.site, fn.lowering.name, callee?.name ?? null)
           break
         }
         case 'recursion':
@@ -279,7 +301,9 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
     const incomplete = fn.kind === 'partial' || fn.boundsAssumptions.length > 0
     if (!incomplete) return
     const ownRequirementFailure = fn.kind === 'partial' && fn.stops.some(stop =>
-      stop.reason.kind === 'refutedRequirement' || stop.reason.kind === 'unrefinableRequirement')
+      stop.reason.kind === 'requirementFailure'
+        && stop.reason.callee == null
+        && stop.reason.failure.kind === 'declared')
     if (!ownRequirementFailure) {
       addError(
         requirementSite,

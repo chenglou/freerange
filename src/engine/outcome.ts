@@ -4,6 +4,11 @@ import type {FunctionIR, UnsupportedFunctionIR, UnsupportedReason} from '../ir/p
 import type {BoundsAssumption, InferredPrecondition} from '../requirements/model.ts'
 import type {SharedState} from './state.ts'
 
+export type RequirementFailure =
+  | {kind: 'declared'; site: SiteID; status: 'refuted' | 'unproven'}
+  | {kind: 'nonzeroDivisor'; site: SiteID; operation: 'division' | 'remainder'}
+  | {kind: 'elementInBounds'; site: SiteID}
+
 // Why one function's evaluation stopped on some path. Code branches only on `kind`; prose
 // is composed only in src/report.
 export type StopReason =
@@ -34,32 +39,14 @@ export type StopReason =
   // disabled, so it has its own actionable reason instead of looking like unsupported
   // TypeScript narrowing.
   | {kind: 'possiblyMissingElement'}
-  // A declared console.assert requirement was false, or could not be expressed and
-  // refined as one direct numeric comparison or Number check.
-  | {kind: 'refutedRequirement'}
-  | {kind: 'unrefinableRequirement'}
-  // A same-file call reached one of the callee's declared requirements with arguments
-  // that either disprove the condition or cannot name it in the caller's contract.
+  // A written or inferred requirement failed. A direct failure has no callee; propagation
+  // through a same-file call names the callee visible at that call while retaining the
+  // original requirement site.
   | {
-      kind: 'callRequirement'
-      callee: FunctionID
-      declarationSite: SiteID
-      status: 'refuted' | 'unproven'
+      kind: 'requirementFailure'
+      failure: RequirementFailure
+      callee: FunctionID | null
     }
-  // An inferred nonzero-divisor requirement was evaluated with an exact zero. The direct
-  // form points at the operation; calls preserve that site while naming the visible
-  // callee whose arguments violate it.
-  | {kind: 'zeroDivisor'; operation: 'division' | 'remainder'}
-  | {
-      kind: 'callZeroDivisor'
-      callee: FunctionID
-      operationSite: SiteID
-      operation: 'division' | 'remainder'
-    }
-  // An asserted element read (arr[i]!) whose index is provably outside the array — there
-  // is no element the assertion could produce. An empty array is the special case where
-  // every read qualifies.
-  | {kind: 'outOfBoundsRead'}
 
 export type Stop = {
   site: SiteID

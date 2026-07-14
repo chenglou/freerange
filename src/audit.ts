@@ -492,12 +492,7 @@ function guidesForStop(reason: StopReason): RefactorGuideID[] {
   switch (reason.kind) {
     case 'unsupportedCode': return guidesForUnsupportedReason(reason.reason)
     case 'possiblyMissingElement': return ['handle-missing-element']
-    case 'outOfBoundsRead': return []
-    case 'refutedRequirement':
-    case 'unrefinableRequirement':
-    case 'callRequirement':
-    case 'zeroDivisor':
-    case 'callZeroDivisor':
+    case 'requirementFailure':
     case 'moduleRead':
     case 'recursion':
     case 'calleeStopped':
