@@ -30,7 +30,7 @@ aspectRatio(10, 0)
 index.ts:5:1 - error [inferred-requirement]: call to aspectRatio violates its nonzero divisor requirement (division at index.ts:2:10)
 ```
 
-How it works: TypeScript knows that `height` is a number, but a number can still be zero. Freerange follows the calculation, sees that the division needs a nonzero `height`, and records that condition for callers. It then checks the visible call, sees that `0` breaks the condition, and reports both where the condition came from and where it was violated.
+How it works: Freerange consults TypeScript to find that `height` is indeed a `number`. Then infers that it shouldn't be `0`. It then checks the callers of `aspectRatio` and found that the `height` passed is `0`, thus errors. For convenience, it also assumes a few other things, e.g. `width` and `height` don't want to be `NaN` and infinite.
 
 ## Commands
 
