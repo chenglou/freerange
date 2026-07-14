@@ -14,7 +14,6 @@ import type {AssertionVerdict, FunctionAnalysis, RequirementFailure} from './eng
 import type {SiteID} from './ir/ids.ts'
 import {reportPath, siteLocation} from './ir/program.ts'
 import {formatUnsupportedReason} from './report/index.ts'
-import {describePrecondition, type PreconditionOperation} from './report/format-requirement.ts'
 import {checkFile} from './typescript/check.ts'
 import {color, formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
 import {
@@ -34,18 +33,6 @@ type SimpleLintFinding = {
   stop: 'outOfBoundsRead' | 'nonExitingLoop'
 }
 
-type CallerContract = {functionName: string; condition: string}
-
-type CallerContractFinding = {
-  kind: 'callerContracts'
-  file: string
-  line: number
-  column: number
-  operation: PreconditionOperation
-  contracts: CallerContract[]
-  additionalLocations: Array<{line: number; column: number}>
-}
-
 type ErrorLintFinding = {
   kind: 'error'
   file: string
@@ -58,7 +45,6 @@ type ErrorLintFinding = {
 
 type LintFinding =
   | SimpleLintFinding
-  | CallerContractFinding
   | ErrorLintFinding
 
 export type ProjectCoverage = {
@@ -183,7 +169,6 @@ function analyzeProject(searchFrom: string): ProjectScan {
 function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding[] {
   const file = reportPath(program)
   const findings: LintFinding[] = []
-  const callerContractsBySite = new Map<SiteID, CallerContractFinding>()
   const addError = (
     site: SiteID,
     rule: ErrorLintFinding['rule'],
@@ -341,45 +326,8 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
             : `console.assert in ${fn.lowering.name} was not checked because ${reason}`,
         )
       }
-      continue
-    }
-    if (fn.kind === 'partial') continue
-
-    const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
-    for (const precondition of fn.preconditions) {
-      const description = describePrecondition(precondition, parameterNames)
-      let finding = callerContractsBySite.get(precondition.site)
-      if (finding == null) {
-        const location = siteLocation(program, precondition.site)
-        finding = {
-          kind: 'callerContracts',
-          file,
-          line: location.line,
-          column: location.column,
-          operation: description.operation,
-          contracts: [],
-          additionalLocations: [],
-        }
-        callerContractsBySite.set(precondition.site, finding)
-      } else if (finding.operation !== description.operation) {
-        throw new Error(
-          `One operation site produced both ${finding.operation} and ${description.operation} requirements`,
-        )
-      }
-      finding.contracts.push({functionName: fn.lowering.name, condition: description.condition})
     }
   }
-
-  const groupedCallerContracts: CallerContractFinding[] = []
-  const callerContractOperations = [...callerContractsBySite.values()]
-    .sort((left, right) => left.line - right.line || left.column - right.column)
-  for (const finding of callerContractOperations) {
-    const existing = groupedCallerContracts.find(candidate =>
-      candidate.operation === finding.operation && sameCallerContracts(candidate.contracts, finding.contracts))
-    if (existing == null) groupedCallerContracts.push(finding)
-    else existing.additionalLocations.push({line: finding.line, column: finding.column})
-  }
-  findings.push(...groupedCallerContracts)
   return findings
 }
 
@@ -406,15 +354,14 @@ function assertionErrorMessage(functionName: string, assertion: AssertionVerdict
 // project output narrowed to the file, so only the coverage counts differ.
 function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pretty: boolean): string {
   const lines: string[] = []
-  for (const finding of findings) lines.push(...formatLintFinding(finding, pretty))
+  for (const finding of findings) lines.push(formatLintFinding(finding, pretty))
 
   if (findings.length === 0) lines.push('No lint findings.')
   const errors = findings.filter(finding => lintLevel(finding) === 'error').length
   const warnings = findings.filter(finding => lintLevel(finding) === 'warning').length
-  const notes = findings.filter(finding => lintLevel(finding) === 'note').length
   lines.push(
     '',
-    `${findings.length} finding${findings.length === 1 ? '' : 's'} (${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'}, ${notes} note${notes === 1 ? '' : 's'}).`,
+    `${findings.length} finding${findings.length === 1 ? '' : 's'} (${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'}).`,
     formatCoverage(coverage),
     'Run `fr --audit [file]` for every function\'s contracts and refactoring suggestions.',
   )
@@ -442,11 +389,11 @@ function fileCoverage(detailed: DetailedAnalysis): ProjectCoverage {
   return coverage
 }
 
-function formatLintFinding(finding: LintFinding, pretty: boolean): string[] {
+function formatLintFinding(finding: LintFinding, pretty: boolean): string {
   switch (finding.kind) {
-    case 'simple': return [finding.stop === 'outOfBoundsRead'
+    case 'simple': return finding.stop === 'outOfBoundsRead'
       ? `${formatLintPrefix(finding, 'out-of-bounds-read', pretty)}asserted element read (arr[i]!) is provably out of bounds in ${finding.functionName}`
-      : `${formatLintPrefix(finding, 'non-exiting-loop', pretty)}loop in ${finding.functionName} has no analyzable exit; it may never terminate`]
+      : `${formatLintPrefix(finding, 'non-exiting-loop', pretty)}loop in ${finding.functionName} has no analyzable exit; it may never terminate`
     case 'error': {
       const related = finding.related == null
         ? ''
@@ -456,44 +403,13 @@ function formatLintFinding(finding: LintFinding, pretty: boolean): string[] {
           finding.related.column,
           pretty,
         )})`
-      return [`${formatLintPrefix(finding, finding.rule, pretty)}${finding.message}${related}`]
+      return `${formatLintPrefix(finding, finding.rule, pretty)}${finding.message}${related}`
     }
-    case 'callerContracts': return formatCallerContractFinding(finding, pretty)
   }
 }
 
-function formatCallerContractFinding(finding: CallerContractFinding, pretty: boolean): string[] {
-  const location = formatDiagnosticLocation(finding.file, finding.line, finding.column, pretty)
-  const operationCount = finding.additionalLocations.length + 1
-  if (operationCount === 1 && finding.contracts.length === 1) {
-    const contract = finding.contracts[0]!
-    return [
-      `${formatLintPrefix(finding, 'caller-contract', pretty)}callers of ${contract.functionName} must keep ${contract.condition} (${finding.operation} at ${location})`,
-    ]
-  }
-
-  const operationSubject = operationCount === 1
-    ? `this ${finding.operation}`
-    : `${operationCount} ${finding.operation === 'element read' ? 'element reads' : `${finding.operation}s`}`
-  const conditionSubject = `${finding.contracts.length} caller condition${finding.contracts.length === 1 ? '' : 's'}`
-  const lines = [
-    `${formatLintPrefix(finding, 'caller-contract', pretty)}${operationSubject} ${operationCount === 1 ? 'requires' : 'require'} ${conditionSubject}`,
-  ]
-  let lastShownLine = finding.line
-  let lastShownColumn = finding.column
-  for (const additional of finding.additionalLocations) {
-    if (lastShownLine === additional.line && lastShownColumn === additional.column) continue
-    lastShownLine = additional.line
-    lastShownColumn = additional.column
-    lines.push(`  also at ${formatDiagnosticLocation(finding.file, additional.line, additional.column, pretty)}`)
-  }
-  for (const contract of finding.contracts) lines.push(`  ${contract.functionName}: ${contract.condition}`)
-  return lines
-}
-
-function lintLevel(finding: LintFinding): 'error' | 'warning' | 'note' {
+function lintLevel(finding: LintFinding): 'error' | 'warning' {
   switch (finding.kind) {
-    case 'callerContracts': return 'note'
     case 'simple': return finding.stop === 'outOfBoundsRead' ? 'error' : 'warning'
     case 'error': return 'error'
   }
@@ -503,9 +419,7 @@ function formatLintPrefix(finding: LintFinding, rule: string, pretty: boolean): 
   const location = formatDiagnosticLocation(finding.file, finding.line, finding.column, pretty)
   const level = lintLevel(finding)
   const separator = pretty ? ' - ' : ': '
-  const formattedLevel = pretty && level !== 'note'
-    ? color(level === 'error' ? 91 : 93, level)
-    : level
+  const formattedLevel = pretty ? color(level === 'error' ? 91 : 93, level) : level
   const ruleLabel = ` [${rule}]: `
   return `${location}${separator}${formattedLevel}${pretty ? color(90, ruleLabel) : ruleLabel}`
 }
@@ -518,17 +432,6 @@ function formatDiagnosticLocation(file: string, line: number, column: number, pr
 
 function formatCoverage(coverage: ProjectCoverage): string {
   return `coverage: ${coverage.analyzed}/${coverage.functions} named top-level function declarations fully analyzed; ${coverage.partial} partial; ${coverage.unsupported} unsupported; ${coverage.typeErrorFiles}/${coverage.files} project files skipped for TypeScript errors.`
-}
-
-function sameCallerContracts(left: CallerContract[], right: CallerContract[]): boolean {
-  if (left.length !== right.length) return false
-  for (let index = 0; index < left.length; index++) {
-    if (left[index]!.functionName !== right[index]!.functionName
-      || left[index]!.condition !== right[index]!.condition) {
-      return false
-    }
-  }
-  return true
 }
 
 // A target file analyzed on its own, with the output styling its project configures.

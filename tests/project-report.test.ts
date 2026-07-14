@@ -58,47 +58,11 @@ test('TypeScript diagnostics use its plain and colored formats', () => {
     .toContain('\u001B[91merror\u001B[0m')
 })
 
-test('bare fr prints grouped lint findings and coverage without writing artifacts', () => {
+test('bare fr prints known problems while audit retains caller requirements', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-lint-'))
   try {
     writeProject(projectDirectory, {'contracts.ts': `export function divide(width: number, columnCount: number): number {
   return width / columnCount
-}
-
-export function direct(width: number, columnCount: number): number {
-  return divide(width, columnCount)
-}
-
-export function wrapper(width: number, columnCount: number): number {
-  return direct(width, columnCount)
-}
-
-export function adapted(width: number, gap: number): number {
-  return divide(width, width - gap)
-}
-
-export function guarded(width: number, columnCount: number): number {
-  return columnCount === 0 ? 0 : divide(width, columnCount)
-}
-
-export function twoDivisions(value: number, first: number, second: number): number {
-  return value / first / second
-}
-
-export function remainder(value: number, modulus: number): number {
-  return value % modulus
-}
-
-export function twoCalls(value: number, first: number, second: number): number {
-  return divide(value, first) + divide(value, second)
-}
-
-export function repeatedOperations(value: number, divisor: number): number {
-  return value / divisor + value / divisor
-}
-
-export function duplicateCall(value: number, divisor: number): number {
-  return divide(value, divisor) + divide(value, divisor)
 }
 
 export function outOfBounds(): number {
@@ -112,16 +76,12 @@ export function outOfBounds(): number {
     // Findings are the CI gate: the out-of-bounds error must fail the run.
     expect(result.exitCode).toBe(1)
     expect(result.stderr).toBe('')
-    expect(result.stdout).toStartWith('contracts.ts(2,10): note [caller-contract]: this division requires 7 caller conditions')
-    expect(result.stdout).not.toContain('Notes are caller conditions')
+    expect(result.stdout).toStartWith('contracts.ts(7,10): error [out-of-bounds-read]')
     expect(result.stdout).not.toContain('\u001B[')
-    expect(result.stdout).toContain('  wrapper: columnCount is nonzero')
-    expect(result.stdout).toContain('  adapted: (width - gap) is nonzero')
-    expect(result.stdout).not.toContain('guarded: columnCount is nonzero')
-    expect(result.stdout).toContain('2 divisions require 1 caller condition')
+    expect(result.stdout).not.toContain('caller-contract')
     expect(result.stdout).toContain('error [out-of-bounds-read]: asserted element read (arr[i]!) is provably out of bounds')
-    expect(result.stdout).toContain('6 findings (1 error, 0 warnings, 5 notes).')
-    expect(result.stdout).toContain('coverage: 10/11 named top-level function declarations fully analyzed; 1 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
+    expect(result.stdout).toContain('1 finding (1 error, 0 warnings).')
+    expect(result.stdout).toContain('coverage: 1/2 named top-level function declarations fully analyzed; 1 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
     expect(result.stdout).toContain('Run `fr --audit [file]` for every function\'s contracts and refactoring suggestions.')
     expect(existsSync(join(projectDirectory, 'freerange-report'))).toBe(false)
 
@@ -132,9 +92,8 @@ export function outOfBounds(): number {
       stdout: 'pipe',
       stderr: 'pipe',
     }).stdout.toString()
-    expect(colored).toContain('\u001B[96mcontracts.ts\u001B[0m:\u001B[93m2\u001B[0m:\u001B[93m10\u001B[0m - note')
-    expect(colored).not.toContain('\u001B[96mnote\u001B[0m')
-    expect(colored).toContain('\u001B[90m [caller-contract]: \u001B[0m')
+    expect(colored).toContain('\u001B[96mcontracts.ts\u001B[0m:\u001B[93m7\u001B[0m:\u001B[93m10\u001B[0m - \u001B[91merror\u001B[0m')
+    expect(colored).toContain('\u001B[90m [out-of-bounds-read]: \u001B[0m')
 
     const coloredAudit = Bun.spawnSync({
       cmd: [process.execPath, freerangeCli, '--audit'],
@@ -151,7 +110,7 @@ export function outOfBounds(): number {
     expect(targeted.exitCode).toBe(1)
     const findingLines = (output: string) => output.split('\n\n')[0]
     expect(findingLines(targeted.stdout)).toBe(findingLines(result.stdout))
-    expect(targeted.stdout).toContain('coverage: 10/11 named top-level function declarations fully analyzed; 1 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
+    expect(targeted.stdout).toContain('coverage: 1/2 named top-level function declarations fully analyzed; 1 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
     expect(targeted.stdout).not.toContain('requires:')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
@@ -185,14 +144,14 @@ export function count(): number { return ticks }
     expect(result.stdout).toContain(loopWarning)
     expect(result.stdout).toContain(counterWarning)
     expect(result.stdout).not.toContain('No lint findings.')
-    expect(result.stdout).toContain('2 findings (0 errors, 2 warnings, 0 notes).')
+    expect(result.stdout).toContain('2 findings (0 errors, 2 warnings).')
 
     // The file mode prints the same finding line; a warning informs but does not gate.
     const targeted = runCli(projectDirectory, 'stuck-counter.ts')
     expect(targeted.exitCode).toBe(0)
     expect(targeted.stdout).toContain(counterWarning)
     expect(targeted.stdout).not.toContain('module-loop.ts')
-    expect(targeted.stdout).toContain('1 finding (0 errors, 1 warning, 0 notes).')
+    expect(targeted.stdout).toContain('1 finding (0 errors, 1 warning).')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
@@ -470,7 +429,7 @@ export {}
     expect(lint.stdout).not.toContain('safe-skips.ts(9')
     expect(lint.stdout).not.toContain('safe-skips.ts(10')
     expect(lint.stdout).not.toContain('safe-skips.ts(11')
-    expect(lint.stdout).toContain('note [caller-contract]: callers of aspectRatio must keep height is nonzero')
+    expect(lint.stdout).not.toContain('caller-contract')
 
     const audit = runCli(projectDirectory, '--audit')
     expect(audit.exitCode).toBe(0)
@@ -557,14 +516,15 @@ test('solution configs include references and govern targeted formatting', () =>
       include: ['src/**/*.ts'],
     }))
     writeFileSync(join(packageDirectory, 'src', 'answer.ts'),
-      'export function answer(value: number, divisor: number): number { return value / divisor }\n')
+      'export function answer(value: number, divisor: number): number { return value / divisor }\nanswer(1, 0)\n')
 
     const result = runCli(projectDirectory)
 
-    expect(result.exitCode).toBe(0)
+    expect(result.exitCode).toBe(1)
     expect(result.stdout).toStartWith('packages/geometry/src/answer.ts(')
     expect(result.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed')
     const targeted = runCli(projectDirectory, 'packages/geometry/src/answer.ts')
+    expect(targeted.exitCode).toBe(1)
     expect(targeted.stdout.split('\n')[0]).toBe(result.stdout.split('\n')[0])
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
@@ -684,13 +644,12 @@ test('a nested strict tsconfig cannot fail a file the project run accepts', () =
       'sub/tsconfig.json': JSON.stringify({compilerOptions: {strict: true}, include: ['*.ts']}),
     }, laxOptions)
 
-    // The lax root config governs sub/loose.ts, so both runs accept it, and the file run
-    // prints exactly the finding line the project run prints for that file.
-    const looseFinding = 'sub/loose.ts(6,10): note [caller-contract]: callers of divide must keep denominator is nonzero (division at sub/loose.ts(6,10))'
+    // The lax root config governs sub/loose.ts, so both runs accept it. Its caller
+    // requirement belongs to the audit rather than the findings output.
     const project = runCli(projectDirectory)
     expect(project.exitCode).toBe(0)
     expect(project.stderr).toBe('')
-    expect(project.stdout).toContain(looseFinding)
+    expect(project.stdout).toContain('No lint findings.')
 
     const targeted = runCli(projectDirectory, 'sub/loose.ts')
     expect(targeted.exitCode).toBe(0)
@@ -698,7 +657,10 @@ test('a nested strict tsconfig cannot fail a file the project run accepts', () =
     for (const line of targeted.stdout.split('\n\n')[0]!.split('\n')) {
       expect(project.stdout).toContain(line)
     }
-    expect(targeted.stdout).toContain('1 finding (0 errors, 0 warnings, 1 note).')
+    expect(targeted.stdout).toContain('0 findings (0 errors, 0 warnings).')
+
+    const audit = runCli(projectDirectory, '--audit', 'sub/loose.ts')
+    expect(audit.stdout).toContain('requires: denominator is nonzero')
 
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
