@@ -147,6 +147,36 @@ describe('static console.assert contracts', () => {
       .toEqual(['unproven', 'unproven'])
   })
 
+  test('leading constant comparisons stay requirements and discharge immediately', () => {
+    const report = analyzeSource('constant-assertions.ts', `
+      const MINIMUM = 5
+
+      export function proven(): void {
+        console.assert(6 > 5)
+      }
+      export function refuted(): void {
+        console.assert(MINIMUM > 6)
+      }
+      export function stillRequires(value: number): number {
+        console.assert(6 > 5)
+        console.assert(value >= 0)
+        return value
+      }
+    `)
+
+    const proven = analyzedFunction(report, 'proven')
+    expect(proven.requires).toEqual([])
+    expect(proven.assertions).toBeUndefined()
+
+    const refuted = report.functions.find(fn => fn.name === 'refuted')
+    if (refuted?.kind !== 'partial') throw new Error('Expected refuted to be partial')
+    expect(refuted.stopped[0]).toContain('declared requirement is false')
+
+    const stillRequires = analyzedFunction(report, 'stillRequires')
+    expect(stillRequires.requires[0]).toContain('value >= 0')
+    expect(stillRequires.assertions).toBeUndefined()
+  })
+
   test('asserted functions must complete without site-specific assumptions', () => {
     const report = fixtureReport
     const verdicts = (name: string): string[] => {
