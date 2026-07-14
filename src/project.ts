@@ -500,8 +500,8 @@ function formatLintPrefix(finding: LintFinding, rule: string, pretty: boolean): 
   const location = formatDiagnosticLocation(finding.file, finding.line, finding.column, pretty)
   const level = lintLevel(finding)
   const separator = pretty ? ' - ' : ': '
-  const formattedLevel = pretty
-    ? color(level === 'error' ? 91 : level === 'warning' ? 93 : 96, level)
+  const formattedLevel = pretty && level !== 'note'
+    ? color(level === 'error' ? 91 : 93, level)
     : level
   const ruleLabel = ` [${rule}]: `
   return `${location}${separator}${formattedLevel}${pretty ? color(90, ruleLabel) : ruleLabel}`

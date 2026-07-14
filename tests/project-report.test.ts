@@ -132,7 +132,8 @@ export function outOfBounds(): number {
       stdout: 'pipe',
       stderr: 'pipe',
     }).stdout.toString()
-    expect(colored).toContain('\u001B[96mcontracts.ts\u001B[0m:\u001B[93m2\u001B[0m:\u001B[93m10\u001B[0m - \u001B[96mnote\u001B[0m')
+    expect(colored).toContain('\u001B[96mcontracts.ts\u001B[0m:\u001B[93m2\u001B[0m:\u001B[93m10\u001B[0m - note')
+    expect(colored).not.toContain('\u001B[96mnote\u001B[0m')
     expect(colored).toContain('\u001B[90m [caller-contract]: \u001B[0m')
 
     // `fr <file>` is the project findings narrowed to that file: the finding lines are
