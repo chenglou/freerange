@@ -1179,9 +1179,10 @@ function evaluateBinary(
   }
 }
 
-// Assertion-only comparison proofs walk the immutable producer graph. Each recursive
-// rule moves from a result to one of its operands, and value pairs are memoized before
-// their producers are expanded.
+// Assertion-only comparison proofs walk the immutable producer graph. Producer edges
+// point to earlier values, so literal reads terminate without cycle tracking. Ordering
+// rules may revisit the same pair through several min/max operands, so those pairs remain
+// memoized before their producers are expanded.
 
 function staticAssertionObservation(
   valueID: ValueID,
@@ -1267,30 +1268,21 @@ function createComparisonProof(
   atMost: (left: ValueID, right: ValueID) => boolean
   strictlyBelow: (left: ValueID, right: ValueID) => boolean
 } {
-  const resolved = new Map<ValueID, ValueID>()
-  const resolving = new Set<ValueID>()
   const atMostMemo = new Map<string, boolean>()
 
   // A read through a fresh record literal is the immutable value stored in that field.
   // Resolving recursively lets frame.content.right reach the arithmetic that built it.
   const resolveLiteralRead = (value: ValueID): ValueID => {
-    const cached = resolved.get(value)
-    if (cached != null) return cached
-    if (resolving.has(value)) return value
-    resolving.add(value)
     const producer = context.instructionByValue[value]
-    let result = value
     if (producer?.kind === 'property') {
       const object = resolveLiteralRead(producer.object)
       const objectProducer = context.instructionByValue[object]
       if (objectProducer?.kind === 'object') {
         const property = objectProducer.properties.find(candidate => candidate.name === producer.property)
-        if (property != null) result = resolveLiteralRead(property.value)
+        if (property != null) return resolveLiteralRead(property.value)
       }
     }
-    resolving.delete(value)
-    resolved.set(value, result)
-    return result
+    return value
   }
 
   const heldNumber = (value: ValueID): AbstractNumber | null => {
