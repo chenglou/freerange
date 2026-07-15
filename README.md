@@ -17,20 +17,24 @@ bun fr
 ```
 
 ```ts
-function aspectRatio(width: number, height: number) {
-  return width / height
+function gridColumnCount(containerWidth: number) {
+  return Math.floor(containerWidth / 240)
 }
 
-aspectRatio(10, 0)
+function gridItemWidth(containerWidth: number) {
+  return containerWidth / gridColumnCount(containerWidth)
+}
+
+gridItemWidth(200)
 ```
 
 `fr` outputs:
 
 ```zsh
-index.ts:5:1 - error [inferred-requirement]: call to aspectRatio violates its nonzero divisor requirement (division at index.ts:2:10)
+index.ts:9:1 - error [inferred-requirement]: call to gridItemWidth violates its nonzero divisor requirement (division at index.ts:6:10)
 ```
 
-How it works: Freerange consults TypeScript to find that `height` is indeed a `number`. Then infers that it shouldn't be `0`. It then checks the callers of `aspectRatio` and found that the `height` passed is `0`, thus errors. For convenience, it also assumes a few other things, e.g. `width` and `height` don't want to be `NaN` and infinite.
+How it works: Freerange follows `200` into `gridItemWidth`, then through the call to `gridColumnCount`. It works out that `Math.floor(200 / 240)` is `0`, then catches the later division by that result. TypeScript only knows that these values are numbers; Freerange follows their ranges through both functions.
 
 ## Commands
 
@@ -41,24 +45,24 @@ Pass your file path to either command to filter down to just that file's report.
 
 `fr` directly uses TypeScript under the hood, so it naturally respects your `tsconfig`. We output TS errors before our analysis, so technically, you can swap out your explicit `tsc` command for `fr` and nothing changes!
 
-## One production example
+## A Production Example
 
-Our production app positions an input bar, a tray below it, and the surrounding content from the window size. We added one line:
+Our app calculates the positions of an input bar, a tray below it, and the surrounding content from the window height. We decided that the layout does not need to support windows shorter than 320 pixels, and wrote that decision in the code:
 
 ```ts
 windowSizeY = Math.max(320, windowSizeY)
 ```
 
-Real windows are almost always taller than 320 pixels. The line states a product rule: layout below that height is unsupported. Freerange then derived facts several calculations later:
+Freerange followed that minimum through the existing layout calculations and reported:
 
 ```text
 ensures: return.inputTray.top is a finite number at least 54
 ensures: return.nav.bottom is a finite number at least 320
 ```
 
-Nobody wrote `54` as a bound. Freerange combined the window minimum, the gap, and the input-row height. If a later refactor weakens or removes that guarantee, the contract changes with the code.
+The first line says that the tray's top edge is always at least 54 pixels from the top of the window. The second says that the navigation's bottom edge is always at least 320 pixels down. Both values are also guaranteed to be finite.
 
-The same production pass found a different problem in image-fitting code. A 0 by 0 image caused division by zero, followed by `0 * Infinity`, which produces `NaN`. The function now handles missing image dimensions before doing the calculation, and its report no longer requires every caller to do so.
+Nobody manually specified `54`. Freerange derived it from the minimum window height and the existing gap and input-row calculations. If a later refactor weakens that guarantee, the next audit shows the weaker result.
 
 ## Reading the output
 
