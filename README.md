@@ -35,7 +35,7 @@ How it works: Freerange consults TypeScript to find that `height` is indeed a `n
 ## Commands
 
 - `fr`: print project errors and warnings
-- `fr --audit`: print every function's contracts, plus code refactor suggestions to help Freerange analyze better
+- `fr --audit`: print every function's contracts, plus refactor suggestions to help Freerange analyze better. Great for agents
 
 Pass your file path to either command to filter down to just that file's report.
 
@@ -196,15 +196,10 @@ Freerange assumes property reads are side-effect-free and stable during one anal
 
 Three limits deliberately lose precision rather than risk a wrong result: 16 updates at a loop header, eight levels of recursive type inspection, and at most one visit per function instruction while expanding a caller requirement. Hitting a limit stops analysis, makes a nested value unknown, or falls back to a local assumption. No limit silently strengthens a claim.
 
-## Refactoring audits
+## Recommended TypeScript Config
 
-`fr --audit` is the detailed view intended for agents. It prints every function's result, file coverage, and the locations where Freerange recognizes a useful refactoring pattern.
-
-Each suggestion says when the rewrite applies and what behavior it may change. The displayed before-and-after examples are analyzed in Freerange's test suite, and behavior-sensitive examples also have runtime tests. The audit gives no recommendation when syntax alone is not enough to choose safely. For example, an unknown function call does not show whether the function contains numeric work worth extracting.
-
-## Recommended TypeScript checks
-
-Project mode uses the project's `tsconfig.json` unchanged and requires `strictNullChecks`, which preserves types such as `number | null` for analysis. The following options give agents clearer TypeScript errors before Freerange runs:
+The only TypeScript config that Freerange mandates is `strictNullChecks`, which is already on by default for TypeScript (otherwise the analysis is too unsafe).
+We do recommend generally having the configs below enabled too. They're not necessary for Freerange's analysis; it's just that when they're on, AI agents (and you) end up writing code that are much less dangerous and more likely to be analyzable:
 
 ```jsonc
 {
@@ -218,8 +213,6 @@ Project mode uses the project's `tsconfig.json` unchanged and requires `strictNu
   }
 }
 ```
-
-These are recommendations, not all Freerange requirements. Freerange already treats `values[index]` as possibly missing without `noUncheckedIndexedAccess`, and handles optional properties conservatively without `exactOptionalPropertyTypes`. Fewer `any` values still produce more complete reports, so `noImplicitAny` is especially useful.
 
 ## Development
 
