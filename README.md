@@ -123,68 +123,39 @@ Freerange supports a subset of TS:
 - `if`/`else`, ternaries, non-fallthrough `switch`, `&&`, `||`, `!`, `??`, `for`, `while`, and `for...of` loops
 - Arithmetic, comparisons, object field and array reads, selected `Math` operations, and `Number.isInteger`, `Number.isFinite`, and `Number.isNaN`
 
-Freerange could theoretically support a much larger subset of TS, and did before its public release. Those patterns often made numeric inference and proofs much harder and slower, however, and some questions are undecidable in general. Especially now that AI agents write code, we strongly recommend asking the agent to refactor important calculations into shapes that Freerange analyzes well. Code that is easy to analyze tends to resemble functional programming: immutable data, explicit inputs and outputs, and clean, direct control flow.
+Freerange could theoretically support a much larger subset of TS, and did before its public release. Those patterns often made numeric inference and proofs much harder and slower, however, and some questions are undecidable in general. Now that AI agents write code, we strongly recommend asking agents to refactor important calculations into shapes that Freerange analyzes well. Code that is easy to analyze tends to resemble functional programming: immutable data, explicit inputs and outputs, and clean, direct control flow.
 
-### Keep calculations small and explicit
+- **Put important calculations in small named functions.** A React component, callback, or async function can call a plain synchronous helper. Keep any helper functions that Freerange needs to inspect in the same file.
+  ```tsx
+  export function fittedImageHeight(frameWidth: number, imageWidth: number, imageHeight: number): number {
+    const width = Math.max(1, imageWidth)
+    const height = Math.max(1, imageHeight)
+    return (frameWidth * height) / width
+  }
 
-Put important calculations in synchronous named top-level function declarations with explicit inputs. A React component, callback, or async function can call the helper even when the surrounding framework code remains unsupported.
+  function ImageCard(props: {frameWidth: number; imageWidth: number; imageHeight: number}) {
+    const height = fittedImageHeight(props.frameWidth, props.imageWidth, props.imageHeight)
+    return <img style={{height}} />
+  }
+  ```
 
-```tsx
-export function fittedImageHeight(frameWidth: number, imageWidth: number, imageHeight: number): number {
-  const width = Math.max(1, imageWidth)
-  const height = Math.max(1, imageHeight)
-  return (frameWidth * height) / width
-}
+- **Name a calculation before checking it.** If the divisor is `oldMax - oldMin`, write `const oldSpan = oldMax - oldMin`, check `oldSpan === 0`, and divide by `oldSpan`. Checking `oldMin === oldMax` does not tell Freerange about the separately calculated `oldSpan`. Audit code: `[guard-derived-value]`.
 
-function ImageCard(props: {frameWidth: number; imageWidth: number; imageHeight: number}) {
-  const height = fittedImageHeight(props.frameWidth, props.imageWidth, props.imageHeight)
-  return <img style={{height}} />
-}
-```
+- **Decide how invalid inputs should be handled before using them.** If `columnCount` must be a positive integer, either require that with leading `console.assert` calls or normalize it with `Math.max(1, Math.floor(columnCount))`. Only normalize when the application actually wants that runtime behavior. Audit code: `[encode-input-rule]`.
 
-Keep a calculation and any helper calls that Freerange needs to follow in the same file. Imported helpers can still be used, but Freerange will not inspect their bodies.
+- **Choose the order of arithmetic deliberately.** Formulas that are equivalent on paper can round, overflow, or underflow differently with JavaScript numbers. For example, `frameWidth / (imageWidth / imageHeight)` introduces a ratio that can round to zero; `(frameWidth * imageHeight) / imageWidth` avoids that particular problem. The two expressions can still round differently. Audit code: `[use-direct-operands]`.
 
-### Model different cases explicitly
+- **Decide what a missing array element means.** Use `values[index] ?? fallback` only when the application really wants a fallback. Otherwise, prove that `index` is an integer from zero through `values.length - 1` before using `values[index]!`. A bounds check cannot detect a hole in a sparse array, so Freerange expects arrays to be dense. Audit codes: `[handle-missing-element]`, `[guard-array-index]`.
 
-Use a tagged union when behavior differs by shape, then switch on its string or boolean tag. Do not mix unrelated kinds of value in one binding or use `any` to bypass the distinction.
+- **Write the condition and loop directly.** Prefer `width === 0` over using a number as a condition, such as `width || 1`. Use a regular loop for a simple dense-array calculation when callback arguments, callback effects, and a newly allocated result array do not matter. Audit codes: `[write-explicit-condition]`, `[use-loop-for-aggregation]`.
 
-### State domain rules in code
+- **Write object copies explicitly.** Use `{width: layout.width, height: layout.height}` instead of `{...layout}`. Use dense arrays and fixed-length tuples, and do not modify objects or arrays after creating them. Rebuilding an object is not equivalent to mutation when other code observes its identity or the mutation.
 
-**`[encode-input-rule]` Encode a real input rule where the calculation begins.** A virtualized grid may define its column count as a positive integer, for example `const columns = Math.max(1, Math.floor(columnCount))`. Do not add a clamp merely to improve a report. A clamp changes runtime behavior and belongs only where that behavior is intended; outside data may still need separate `NaN` validation.
+- **Give each nion case a tag and switch on it.** Use a tagged union when different cases carry different fields. Make the `switch` exhaustive and do not use fallthrough.
 
-Keep assertions direct and give names to intermediate calculations before asserting them. Write the relationship that matters rather than expecting Freerange to combine several other assertions.
+- **Check and use the same local value.** When a value comes from module, class, or reactive state, store it in a local first. For example, write `const currentScale = scale; if (currentScale !== null) return currentScale` instead of checking one read of `scale` and returning another.
 
-### Guard the value the operation uses
-
-**`[guard-derived-value]` Check the exact divisor.** If the divisor is `oldMax - oldMin`, bind the subtraction to `oldSpan` and check `oldSpan === 0`. Checking `oldMin === oldMax` does not prove a later fact about the separately calculated subtraction. A later branch can also replace an earlier excluded constant, so check the divisor shortly before using it when several exclusions matter. If zero is invalid input rather than a case the function handles, keep the caller requirement instead.
-
-**`[use-direct-operands]` Use guarded dimensions directly instead of dividing by a ratio.** Two positive numbers can have a quotient so tiny that JavaScript rounds it to zero. In image layout, `(frameWidth * imageHeight) / imageWidth` can therefore be easier to verify than `frameWidth / (imageWidth / imageHeight)` once the original dimensions are checked. The expressions may round differently, multiplication may still overflow, and clamping nonpositive dimensions changes behavior, so precision-sensitive code must choose its evaluation order intentionally.
-
-### Handle arrays and records deliberately
-
-Treat records and arrays as immutable after construction. Rebuild a plain record by listing its fields, for example `{width, height: layout.height}`. Object spread is outside the subset because JavaScript copies own enumerable properties rather than simply reading every declared field. Rebuilding is not a general replacement for mutation when callers observe object identity or the mutation itself. Sparse array construction, element writes, and optional or rest tuples are unsupported. An array supplied by a caller is assumed to be dense, and the report states that assumption.
-
-**`[handle-missing-element]` Handle a possibly missing array element.** A bare read such as `values[index]` is treated as possibly missing regardless of `noUncheckedIndexedAccess`. Use a fallback such as `values[index] ?? 0` only when that fallback is real application behavior; a bounds check alone does not detect a hole in a sparse array.
-
-**`[guard-array-index]` Check an asserted array index.** Before using `values[index]!`, prove that `index` is an integer from zero through `values.length - 1`. If the function owns invalid-index behavior, handle that case directly. Otherwise keep the caller requirement. A `for...of` loop proves its own element reads in bounds.
-
-### Use direct control flow
-
-**`[write-explicit-condition]` Write the numeric case explicitly.** Use `width === 0`, `width > 0`, or the comparison that states the intended case instead of number truthiness such as `width || 1`. An explicit comparison can differ from truthiness for `NaN`, so choose the condition the program actually means.
-
-**`[use-loop-for-aggregation]` Use an explicit loop for dense-array aggregation.** A `for` loop exposes the accumulator and each numeric step. This is suitable when the array is dense, the reduction has an initial value, and callback arguments or effects do not matter. Array methods and indexed loops can differ for sparse arrays, callbacks may expose their index and receiver, and methods such as `map` create a new array.
-
-Use exhaustive tagged-union switches without fallthrough.
-
-### Snapshot state before calculating
-
-Copy module, class, or reactive state to a local before checking and using it. Write `const currentScale = scale; if (currentScale !== null) return currentScale`, rather than checking one read of `scale` and returning another. Freerange assumes property reads are side-effect-free and stable during one analyzed synchronous calculation. A getter or Proxy that performs work or changes its answer is outside the model; the local makes the intended identity explicit.
-
-### Let TypeScript establish the shape
-
-Parse and validate outside data, then pass checked values into the numeric helper. Casts and `any` are not proof; Freerange carries those values without numeric claims, and a path stops when an operation needs one to be a number. A file containing `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, or `eval` is rejected because its declared types cannot be trusted.
-
-Pass the fields a calculation uses instead of passing a recursive application model.
+- **Use precise TypeScript types.** Avoid `any`, casts, and suppression comments. Parse external data before passing it to a numeric helper, give the helper typed parameters, and pass only the fields it uses. A file containing `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, or `eval` is rejected because its declared types cannot be trusted.
 
 ## Recommended TypeScript Config
 
