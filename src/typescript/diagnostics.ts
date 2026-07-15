@@ -1,5 +1,13 @@
 import * as ts from 'typescript'
 
+export type DiagnosticLevel = 'error' | 'warning' | 'suggestion'
+
+type DiagnosticLocation = {
+  file: string
+  line: number
+  column: number
+}
+
 export class TypeScriptDiagnosticsError extends Error {
   constructor(
     readonly diagnostics: readonly ts.Diagnostic[],
@@ -37,4 +45,25 @@ export function usePrettyOutput(configured?: unknown): boolean {
 
 export function color(code: number, text: string | number): string {
   return `\u001B[${code}m${text}\u001B[0m`
+}
+
+export function formatDiagnosticPrefix(
+  location: DiagnosticLocation,
+  level: DiagnosticLevel,
+  rule: string,
+  pretty: boolean,
+): string {
+  const formattedLocation = formatDiagnosticLocation(location, pretty)
+  const separator = pretty ? ' - ' : ': '
+  const levelColor = level === 'error' ? 91 : level === 'warning' ? 93 : 96
+  const formattedLevel = pretty ? color(levelColor, level) : level
+  const ruleLabel = ` [${rule}]: `
+  return `${formattedLocation}${separator}${formattedLevel}${pretty ? color(90, ruleLabel) : ruleLabel}`
+}
+
+export function formatDiagnosticLocation(location: DiagnosticLocation, pretty: boolean): string {
+  const {file, line, column} = location
+  return pretty
+    ? `${color(96, file)}:${color(93, line)}:${color(93, column)}`
+    : `${file}(${line},${column})`
 }

@@ -1,9 +1,11 @@
 import {expect, test} from 'bun:test'
+import {readFileSync} from 'node:fs'
 import {
   analyzeSource,
   auditSource,
   formatFileAuditUnit,
   refactorGuide,
+  refactorGuides,
   type AnalysisReport,
   type RefactorGuideID,
 } from '../src/index.ts'
@@ -43,6 +45,11 @@ function returnedNumber(fn: (...arguments_: unknown[]) => unknown, ...arguments_
   if (typeof result !== 'number') throw new Error('Expected a number')
   return result
 }
+
+test('the README documents every audit suggestion code', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8')
+  for (const guide of refactorGuides) expect(readme).toContain(`\`[${guide.id}]\``)
+})
 
 test('every suggested rewrite changes the analyzer result as claimed', () => {
   const guarded = guide('guard-derived-value')
@@ -212,7 +219,7 @@ test('file audits lead with honest coverage and route only relevant checked patt
   // Analysis entries always print before suggestions within a unit.
   expect(output.indexOf('## Contracts')).toBeGreaterThan(0)
   expect(output.indexOf('## Contracts')).toBeLessThan(output.indexOf('## Refactoring suggestions'))
-  expect(output).toContain('  Check the exact divisor:')
+  expect(output).toContain('layout.ts(6,14): suggestion [guard-derived-value]: Check the exact divisor.')
   for (const guideID of [
     'guard-derived-value',
     'write-explicit-condition',
@@ -220,19 +227,21 @@ test('file audits lead with honest coverage and route only relevant checked patt
     'guard-array-index',
   ] as const) {
     const guide = refactorGuide(guideID)
+    expect(output).toContain(`[${guide.id}]`)
     expect(output).toContain(guide.title)
-    expect(output).toContain(`Use when: ${guide.caveat}`)
+    expect(output).toContain(guide.summary)
+    expect(output).not.toContain(guide.caveat)
     expect(output).not.toContain(guide.after)
   }
-  expect(output).toContain('Encode a real input rule where the calculation begins:')
+  expect(output).toContain('suggestion [encode-input-rule]: Encode a real input rule where the calculation begins.')
   expect(output).not.toContain('Example rewrite:')
   expect(output).not.toContain('Other options')
   expect(output).not.toContain(refactorGuide('encode-input-rule').before)
 
   const coloredOutput = formatFileAuditUnit(audit, true)
   expect(coloredOutput).toContain('# \u001B[96mlayout.ts\u001B[0m (')
-  expect(coloredOutput).toContain('at \u001B[96mlayout.ts\u001B[0m:')
-  expect(coloredOutput).toContain('\u001B[96mlayout.ts\u001B[0m:6:14 in divide')
+  expect(coloredOutput).toContain('at \u001B[96mlayout.ts\u001B[0m:\u001B[93m2\u001B[0m:\u001B[93m19\u001B[0m')
+  expect(coloredOutput).toContain('\u001B[96mlayout.ts\u001B[0m:\u001B[93m6\u001B[0m:\u001B[93m14\u001B[0m - \u001B[96msuggestion\u001B[0m\u001B[90m [guard-derived-value]: \u001B[0mCheck the exact divisor.')
   expect(coloredOutput).not.toContain('layout.ts:')
   expect(output).not.toContain('\u001B[')
 
@@ -356,7 +365,7 @@ test('partial audits retain requirements found before a path stopped', () => {
   const observedRequirement = audit.references.find(reference =>
     reference.functionName === 'partial' && reference.reason.kind === 'requires')
   expect(observedRequirement?.guideIDs).toEqual(['guard-derived-value', 'encode-input-rule'])
-  expect(formatFileAuditUnit(audit)).toContain('  Check the exact divisor:')
+  expect(formatFileAuditUnit(audit)).toContain('suggestion [guard-derived-value]: Check the exact divisor.')
 })
 
 test('array callbacks route by structured method kind', () => {

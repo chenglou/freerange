@@ -15,7 +15,7 @@ import type {SiteID} from './ir/ids.ts'
 import {reportPath, siteLocation} from './ir/program.ts'
 import {formatUnsupportedReason} from './report/index.ts'
 import {checkFile} from './typescript/check.ts'
-import {color, formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
+import {formatDiagnosticLocation, formatDiagnosticPrefix, formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
 import {
   findTypeScriptConfig,
   loadTypeScriptProjectGraph,
@@ -370,12 +370,11 @@ function formatLintFinding(finding: LintFinding, pretty: boolean): string {
     case 'error': {
       const related = finding.related == null
         ? ''
-        : ` (${finding.related.label} ${formatDiagnosticLocation(
-          finding.file,
-          finding.related.line,
-          finding.related.column,
-          pretty,
-        )})`
+        : ` (${finding.related.label} ${formatDiagnosticLocation({
+          file: finding.file,
+          line: finding.related.line,
+          column: finding.related.column,
+        }, pretty)})`
       return `${formatLintPrefix(finding, finding.rule, pretty)}${finding.message}${related}`
     }
   }
@@ -389,18 +388,7 @@ function lintLevel(finding: LintFinding): 'error' | 'warning' {
 }
 
 function formatLintPrefix(finding: LintFinding, rule: string, pretty: boolean): string {
-  const location = formatDiagnosticLocation(finding.file, finding.line, finding.column, pretty)
-  const level = lintLevel(finding)
-  const separator = pretty ? ' - ' : ': '
-  const formattedLevel = pretty ? color(level === 'error' ? 91 : 93, level) : level
-  const ruleLabel = ` [${rule}]: `
-  return `${location}${separator}${formattedLevel}${pretty ? color(90, ruleLabel) : ruleLabel}`
-}
-
-function formatDiagnosticLocation(file: string, line: number, column: number, pretty: boolean): string {
-  return pretty
-    ? `${color(96, file)}:${color(93, line)}:${color(93, column)}`
-    : `${file}(${line},${column})`
+  return formatDiagnosticPrefix(finding, lintLevel(finding), rule, pretty)
 }
 
 function formatCoverage(coverage: ProjectCoverage): string {

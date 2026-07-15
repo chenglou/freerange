@@ -102,6 +102,7 @@ export function outOfBounds(): number {
       stderr: 'pipe',
     }).stdout.toString()
     expect(coloredAudit).toContain('# \u001B[96mcontracts.ts\u001B[0m (')
+    expect(coloredAudit).toContain('division at \u001B[96mcontracts.ts\u001B[0m:\u001B[93m2\u001B[0m:\u001B[93m10\u001B[0m')
 
     // `fr <file>` is the project findings narrowed to that file: the finding lines are
     // identical, only the coverage counts are the file's own.
@@ -216,8 +217,9 @@ export function clean(): number {
     expect(projectAudit.stdout.indexOf('## Contracts')).toBeLessThan(projectAudit.stdout.indexOf('## Refactoring suggestions'))
     expect(projectAudit.stdout).toContain(`divide
   requires: columnCount is nonzero (division at advice.ts:2:10)`)
-    expect(projectAudit.stdout).toContain('  Check the exact divisor:')
-    expect(projectAudit.stdout).toContain('  Encode a real input rule where the calculation begins:')
+    expect(projectAudit.stdout).toContain('advice.ts(2,10): suggestion [guard-derived-value]: Check the exact divisor.')
+    expect(projectAudit.stdout).toContain('advice.ts(2,10): suggestion [encode-input-rule]: Encode a real input rule where the calculation begins.')
+    expect(projectAudit.stdout.split('suggestion [guard-derived-value]')).toHaveLength(2)
     expect(projectAudit.stdout).not.toContain('Example rewrite:')
 
     // The file audit is character-for-character a slice of the project output.
@@ -480,9 +482,7 @@ export function ignoresImplicitAny(value): number { return 1 }
 
     const projectAudit = runCli(projectDirectory, '--audit')
     expect(projectAudit.exitCode).toBe(0)
-    expect(projectAudit.stdout).toContain('  Handle a possibly missing array element:')
-    expect(projectAudit.stdout).toContain('in increment')
-    expect(projectAudit.stdout).not.toContain('in guardedIncrement')
+    expect(projectAudit.stdout).toContain('optional-and-index.ts(5,77): suggestion [handle-missing-element]: Handle a possibly missing array element.')
 
     writeFileSync(join(projectDirectory, 'tsconfig.json'), JSON.stringify({
       compilerOptions: {strict: false},

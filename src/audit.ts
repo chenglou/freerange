@@ -1,8 +1,8 @@
 import type {AssertionVerdict, ProgramAnalysis, Stop, StopReason} from './engine/outcome.ts'
 import type {SiteID} from './ir/ids.ts'
 import {
-  formatSite,
   reportPath,
+  siteLocation,
   type ProgramIR,
   type UnsupportedReason,
 } from './ir/program.ts'
@@ -12,7 +12,7 @@ import type {
   NumericExpression,
 } from './requirements/model.ts'
 import {createReport, formatReport, type AnalysisReport} from './report/index.ts'
-import {color} from './typescript/diagnostics.ts'
+import {color, formatDiagnosticPrefix} from './typescript/diagnostics.ts'
 
 type RefactorGuideShape = {
   id: string
@@ -148,7 +148,8 @@ export type AuditReason =
 
 export type AuditReference = {
   functionName: string
-  location: string
+  line: number
+  column: number
   span: {start: number; end: number}
   reason: AuditReason
   guideIDs: RefactorGuideID[]
@@ -178,7 +179,7 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
     if (span == null) throw new Error(`Unknown site ${site}`)
     references.push({
       functionName,
-      location: formatSite(program, site),
+      ...siteLocation(program, site),
       span: {...span},
       reason,
       guideIDs: guidesForReason(reason),
@@ -302,37 +303,53 @@ function formatAuditCoverage(coverage: AuditCoverage): string {
 // per project file, so a file's unit stays identical between the two outputs.
 export function formatFileAuditUnit(audit: FileAudit, pretty = false): string {
   const {coverage} = audit
-  const lines = [`# ${audit.file} (${formatAuditCoverage(coverage)})`]
+  const file = pretty ? color(96, audit.file) : audit.file
+  const lines = [`# ${file} (${formatAuditCoverage(coverage)})`]
   if (audit.contracts.functions.length > 0) {
     lines.push(
       '',
       '## Contracts',
       '',
-      formatReport(audit.contracts),
+      colorAuditLocations(formatReport(audit.contracts), audit.file, pretty),
     )
   }
 
   if (audit.guideIDs.length > 0) {
+    const printedSuggestions: {site: number; guideID: RefactorGuideID}[] = []
     lines.push(
       '',
       '## Refactoring suggestions',
     )
     for (const reference of audit.references) {
-      if (reference.guideIDs.length === 0) continue
-      lines.push('', `${reference.location} in ${reference.functionName}`)
-      for (const guideID of reference.guideIDs) {
+      const guideIDs = reference.guideIDs.filter(guideID =>
+        !printedSuggestions.some(suggestion =>
+          suggestion.site === reference.span.start && suggestion.guideID === guideID))
+      if (guideIDs.length === 0) continue
+      lines.push('')
+      for (const guideID of guideIDs) {
+        printedSuggestions.push({site: reference.span.start, guideID})
         const guide = refactorGuide(guideID)
-        lines.push(
-          `  ${guide.title}: ${guide.summary}`,
-          `  Use when: ${guide.caveat}`,
+        const prefix = formatDiagnosticPrefix(
+          {file: audit.file, line: reference.line, column: reference.column},
+          'suggestion',
+          guide.id,
+          pretty,
         )
+        lines.push(`${prefix}${guide.title}. ${guide.summary}`)
       }
     }
   }
-  const output = lines.join('\n')
-  return pretty
-    ? output.split(audit.file).join(color(96, audit.file))
-    : output
+  return lines.join('\n')
+}
+
+function colorAuditLocations(output: string, file: string, pretty: boolean): string {
+  if (!pretty) return output
+  const escapedFile = file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return output.replace(
+    new RegExp(`${escapedFile}:(\\d+):(\\d+)`, 'g'),
+    (_location, line: string, column: string) =>
+      `${color(96, file)}:${color(93, line)}:${color(93, column)}`,
+  )
 }
 
 export function refactorGuide(id: RefactorGuideID): RefactorGuide {
