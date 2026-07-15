@@ -148,7 +148,7 @@ describe('control flow and contracts', () => {
         kind: 'partial',
         name: 'module initialization',
         assumptions: [],
-        stopped: [],
+        partialReasons: [],
         skipped: [`expression (ArrowFunction) at ${'shadowed-math.ts'}:2:26`],
         observed: [],
       },
@@ -185,14 +185,14 @@ describe('control flow and contracts', () => {
         kind: 'partial',
         name: 'outerWidth',
         assumptions: ['width is finite and not NaN'],
-        stopped: [`calls scaledRemainder, whose analysis stopped (call at ${file}:3:16)`],
+        partialReasons: [`calls scaledRemainder, which is only partially supported (call at ${file}:3:16)`],
         observed: [],
       },
       {
         kind: 'partial',
         name: 'scaledRemainder',
         assumptions: ['width is finite and not NaN'],
-        stopped: [`calls remainderWidth, which hit unsupported code (call at ${file}:6:16)`],
+        partialReasons: [`calls remainderWidth, which hit unsupported code (call at ${file}:6:16)`],
         observed: [],
       },
       {
@@ -302,7 +302,7 @@ describe('control flow and contracts', () => {
       kind: 'partial',
       name: 'countdown',
       assumptions: ['steps is finite and not NaN'],
-      stopped: [`recursive call to countdown (call at ${file}:4:16)`],
+      partialReasons: [`recursive call to countdown (call at ${file}:4:16)`],
       observed: ['return is a finite integer number from 0 through 0'],
     }])
   })
@@ -349,7 +349,7 @@ describe('control flow and contracts', () => {
       kind: 'partial',
       name: 'slowChain',
       assumptions: ['count is finite and not NaN'],
-      stopped: [`the loop at ${file}:6:9 did not converge after 16 updates`],
+      partialReasons: [`the loop at ${file}:6:9 did not converge after 16 updates`],
       observed: [],
     }])
   })
@@ -367,7 +367,7 @@ describe('control flow and contracts', () => {
     `)
     const grow = report.functions.find(fn => fn.name === 'grow')
     if (grow?.kind !== 'partial') throw new Error('Expected grow to be partial')
-    expect(grow.stopped).toEqual(['the loop at growing-record.ts:5:9 did not converge after 16 updates'])
+    expect(grow.partialReasons).toEqual(['the loop at growing-record.ts:5:9 did not converge after 16 updates'])
   })
 
   test('reads through a branch-merged record join the possible values', () => {
@@ -500,7 +500,7 @@ describe('control flow and contracts', () => {
     expect(drain.ensures).toEqual(['return is a finite number'])
   })
 
-  test('does not analyze caller statements past a stopped call or leak callee state changes', () => {
+  test('does not analyze caller statements past a partially supported call or leak callee state changes', () => {
     // poison rebinds the module slot to exactly 0 and then hits unsupported code; the
     // caller must stop at the call and discard the partial callee's slot change.
     const report = analyzeSource('no-leak.ts', `
@@ -519,13 +519,13 @@ describe('control flow and contracts', () => {
     `)
     const file = 'no-leak.ts'
     const caller = report.functions.find(fn => fn.name === 'readAfterCall')
-    // If evaluation continued past the stopped call, observed would show the poisoned
-    // 0 through 0. It must show nothing: the path stopped at the call.
+    // If evaluation continued past the partially supported call, observed would show the
+    // poisoned 0 through 0. It must show nothing because the path ended at the call.
     expect(caller).toEqual({
       kind: 'partial',
       name: 'readAfterCall',
       assumptions: ['width is finite and not NaN'],
-      stopped: [`calls poison, whose analysis stopped (call at ${file}:11:9)`],
+      partialReasons: [`calls poison, which is only partially supported (call at ${file}:11:9)`],
       observed: [],
     })
   })
@@ -600,11 +600,11 @@ describe('control flow and contracts', () => {
       kind: 'partial',
       name: 'example',
       assumptions: ['flag is finite and not NaN'],
-      stopped: [`calls unsupportedThing, which hit unsupported code (call at ${file}:4:16)`],
+      partialReasons: [`calls unsupportedThing, which hit unsupported code (call at ${file}:4:16)`],
       observed: ['return is a finite integer number from 10 through 10'],
     })
     const formatted = formatReport(report)
-    expect(formatted).toContain('  stopped: ')
+    expect(formatted).toContain('  partially supported: ')
     expect(formatted).toContain('  on analyzed paths: return is a finite integer number from 10 through 10')
     // Check for actual entry lines rather than words that may appear in a stop message.
     expect(formatted).not.toContain('\n  ensures: ')

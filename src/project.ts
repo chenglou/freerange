@@ -392,7 +392,7 @@ function formatLintPrefix(finding: LintFinding, rule: string, pretty: boolean): 
 }
 
 function formatCoverage(coverage: ProjectCoverage): string {
-  return `coverage: ${coverage.analyzed}/${coverage.functions} named top-level function declarations fully analyzed; ${coverage.partial} partial; ${coverage.unsupported} unsupported.`
+  return `coverage: ${coverage.analyzed}/${coverage.functions} named top-level function declarations fully analyzed; ${coverage.partial} partially supported; ${coverage.unsupported} unsupported.`
 }
 
 // A target file analyzed on its own, with the output styling its project configures.

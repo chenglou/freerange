@@ -80,7 +80,7 @@ export function assertionsDoNotNarrow(value: number): number {
   return result
 }
 
-export function stoppedAfterAssertion(value: number): number {
+export function partialAfterAssertion(value: number): number {
   const bounded = Math.max(0, value)
   console.assert(bounded >= 0)
   return unsupported(bounded)

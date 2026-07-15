@@ -143,7 +143,7 @@ export type AuditReason =
   | {kind: 'assertion'; assertion: AssertionVerdict}
   | {kind: 'staticAnnotationIssue'; issue: ProgramIR['staticAnnotationIssues'][number]}
   | {kind: 'unsupported'; reason: UnsupportedReason}
-  | {kind: 'stopped'; reason: StopReason}
+  | {kind: 'partialSupport'; reason: StopReason}
   | {kind: 'skipped'; reason: UnsupportedReason}
 
 export type AuditReference = {
@@ -186,8 +186,8 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
     })
   }
 
-  const addStop = (functionName: string, stop: Stop): void => {
-    addReference(functionName, stop.site, {kind: 'stopped', reason: stop.reason})
+  const addPartialReason = (functionName: string, stop: Stop): void => {
+    addReference(functionName, stop.site, {kind: 'partialSupport', reason: stop.reason})
   }
 
   const addPrecondition = (functionName: string, precondition: InferredPrecondition): void => {
@@ -216,7 +216,7 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
         for (const precondition of fn.observedNeeds) addPrecondition(fn.lowering.name, precondition)
         for (const assumption of fn.observedBoundsAssumptions) addAssumption(fn.lowering.name, assumption)
         for (const assertion of fn.assertions) addAssertion(fn.lowering.name, assertion)
-        for (const stop of fn.stops) addStop(fn.lowering.name, stop)
+        for (const stop of fn.stops) addPartialReason(fn.lowering.name, stop)
         break
       }
       case 'notLowered': {
@@ -238,7 +238,7 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
     for (const assumption of analysis.initializer.observedBoundsAssumptions) {
       addAssumption(program.initializer.name, assumption)
     }
-    for (const stop of analysis.initializer.stops) addStop(program.initializer.name, stop)
+    for (const stop of analysis.initializer.stops) addPartialReason(program.initializer.name, stop)
   }
   for (const assertion of analysis.initializer.assertions) {
     addAssertion(program.initializer.name, assertion)
@@ -288,9 +288,9 @@ function formatAuditCoverage(coverage: AuditCoverage): string {
   const parts = coverage.functions === 0
     ? ['no named function declarations']
     : [`${coverage.analyzed}/${coverage.functions} functions fully analyzed`]
-  if (coverage.partial > 0) parts.push(`${coverage.partial} partial`)
+  if (coverage.partial > 0) parts.push(`${coverage.partial} partially supported`)
   if (coverage.unsupported > 0) parts.push(`${coverage.unsupported} unsupported`)
-  if (coverage.initializer !== 'analyzed') parts.push(`module setup ${coverage.initializer}`)
+  if (coverage.initializer !== 'analyzed') parts.push('module setup partially supported')
   if (coverage.initializerSkips > 0) {
     parts.push(`${coverage.initializerSkips} module statement${coverage.initializerSkips === 1 ? '' : 's'} skipped`)
   }
@@ -367,7 +367,7 @@ function guidesForReason(reason: AuditReason): RefactorGuideID[] {
     case 'assertion':
     case 'staticAnnotationIssue': return []
     case 'unsupported': return guidesForUnsupportedReason(reason.reason)
-    case 'stopped': return guidesForStop(reason.reason)
+    case 'partialSupport': return guidesForStop(reason.reason)
     case 'skipped': return guidesForUnsupportedReason(reason.reason)
   }
 }

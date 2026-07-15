@@ -33,20 +33,20 @@ describe('static console.assert contracts', () => {
     for (const name of ['unsafeCaller', 'unsafeWrapper']) {
       const fn = report.functions.find(candidate => candidate.name === name)
       if (fn == null || fn.kind !== 'partial') throw new Error(`Expected ${name} to be partial`)
-      expect(fn.stopped).toHaveLength(1)
-      expect(fn.stopped[0]).toContain('declared requirement definitely false')
+      expect(fn.partialReasons).toHaveLength(1)
+      expect(fn.partialReasons[0]).toContain('declared requirement definitely false')
     }
     const wrapper = report.functions.find(candidate => candidate.name === 'unsafeWrapper')
     if (wrapper?.kind !== 'partial') throw new Error('Expected unsafeWrapper to be partial')
-    expect(wrapper.stopped[0]).toContain('call to unsafeCaller')
-    expect(wrapper.stopped[0]).toContain('declared at tests/fixtures/console-assertions.ts:6:3')
+    expect(wrapper.partialReasons[0]).toContain('call to unsafeCaller')
+    expect(wrapper.partialReasons[0]).toContain('declared at tests/fixtures/console-assertions.ts:6:3')
 
     const unnameable = report.functions.find(candidate => candidate.name === 'unnameableCaller')
     if (unnameable == null || unnameable.kind !== 'partial') {
       throw new Error('Expected unnameableCaller to be partial')
     }
-    expect(unnameable.stopped[0]).toContain('could not express or prove')
-    expect(unnameable.stopped[0]).toContain('requiredNonnegative')
+    expect(unnameable.partialReasons[0]).toContain('could not express or prove')
+    expect(unnameable.partialReasons[0]).toContain('requiredNonnegative')
 
     expect(analyzedFunction(report, 'callsRequiredThrow').requires[0]).toContain('value >= 0')
   })
@@ -97,7 +97,7 @@ describe('static console.assert contracts', () => {
     ])
     const invalid = report.functions.find(fn => fn.name === 'omittedInvalid')
     if (invalid?.kind !== 'partial') throw new Error('Expected omittedInvalid to be partial')
-    expect(invalid.stopped[0]).toContain('declared requirement definitely false')
+    expect(invalid.partialReasons[0]).toContain('declared requirement definitely false')
     const computed = report.functions.find(fn => fn.name === 'computedConstant')
     if (computed?.kind !== 'unsupported') throw new Error('Expected computedConstant to be unsupported')
     expect(computed.unsupported).toContain('leading console.assert describes what callers must provide')
@@ -170,7 +170,7 @@ describe('static console.assert contracts', () => {
 
     const refuted = report.functions.find(fn => fn.name === 'refuted')
     if (refuted?.kind !== 'partial') throw new Error('Expected refuted to be partial')
-    expect(refuted.stopped[0]).toContain('declared requirement is false')
+    expect(refuted.partialReasons[0]).toContain('declared requirement is false')
 
     const stillRequires = analyzedFunction(report, 'stillRequires')
     expect(stillRequires.requires[0]).toContain('value >= 0')
@@ -185,7 +185,7 @@ describe('static console.assert contracts', () => {
       return fn.assertions?.map(assertion => assertion.verdict) ?? []
     }
 
-    expect(verdicts('stoppedAfterAssertion')).toEqual(['blocked'])
+    expect(verdicts('partialAfterAssertion')).toEqual(['blocked'])
     expect(analyzedFunction(report, 'assumptionAfterAssertion').assertions?.map(assertion => assertion.verdict))
       .toEqual(['blocked'])
   })

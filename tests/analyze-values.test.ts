@@ -87,8 +87,8 @@ describe('arrays and declared values', () => {
       }
     `)
     const reader = moduleReport.functions.find(fn => fn.name === 'fallbackCount')
-    if (reader?.kind !== 'partial') throw new Error('expected fallbackCount to stop')
-    expect(reader.stopped)
+    if (reader?.kind !== 'partial') throw new Error('expected fallbackCount to be partially supported')
+    expect(reader.partialReasons)
       .toEqual(['reads fallbackPair, whose value the analysis does not track (read at tuple-arity-module.ts:4:16)'])
   })
 

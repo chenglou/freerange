@@ -325,7 +325,7 @@ test('guide routing requires the exact supported operation and value kind', () =
     }
   `)
   const provenStop = provenOutOfBounds.references.find(reference =>
-    reference.reason.kind === 'stopped'
+    reference.reason.kind === 'partialSupport'
       && reference.reason.reason.kind === 'requirementFailure'
       && reference.reason.reason.failure.kind === 'elementInBounds')
   expect(provenStop?.guideIDs).toEqual([])
@@ -350,7 +350,7 @@ test('zero function coverage does not claim skipped callable forms are absent', 
   expect(constantsOnly).not.toContain('## Contracts')
 })
 
-test('partial audits retain requirements found before a path stopped', () => {
+test('partial audits retain requirements found before a path became unsupported', () => {
   const audit = auditSource('partial.ts', `
     declare const paint: (width: number) => number
     export function blocked(width: number): number {

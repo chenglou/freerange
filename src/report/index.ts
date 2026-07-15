@@ -12,10 +12,11 @@ export type FunctionReport =
   | {kind: 'analyzed'; name: string; assumptions: string[]; requires: string[]; ensures: string[]; assertions?: AssertionReport[]}
   // e.g. 'unknown identifier scheduledRender at /abs/demo/index.ts:6:7'
   | {kind: 'unsupported'; name: string; unsupported: string}
-  // Some path stopped; `observed` lines are evidence from the paths that completed, never a
-  // contract. e.g. stopped: 'recursive call to countdown (call at /abs/file.ts:3:10)',
+  // Some paths could not be analyzed completely; `observed` lines are evidence from the
+  // paths that completed, never a contract. e.g. partialReasons:
+  // ['recursive call to countdown (call at /abs/file.ts:3:10)'],
   // observed: 'return is a finite integer number from 0 through 0'.
-  | {kind: 'partial'; name: string; assumptions: string[]; stopped: string[]; skipped?: string[]; observed: string[]; assertions?: AssertionReport[]}
+  | {kind: 'partial'; name: string; assumptions: string[]; partialReasons: string[]; skipped?: string[]; observed: string[]; assertions?: AssertionReport[]}
 
 export type AssertionReport = {
   verdict: AssertionVerdict['verdict']
@@ -40,10 +41,10 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
     ? analysis.initializer.boundsAssumptions
     : analysis.initializer.observedBoundsAssumptions
   const initializerBoundsLines = initializerBounds.map(assumption => formatBoundsAssumption(assumption, program))
-  // Top-level code runs before any function, so its entry comes first — but only when it
-  // stopped or skipped statements. A fully analyzed initializer with nothing skipped is
-  // invisible: its results show up as the exact module values other entries report, with
-  // its bounds assumptions carried by the readers above.
+  // Top-level code runs before any function, so its entry comes first — but only when it is
+  // partially supported or contains skipped statements. A fully analyzed initializer with
+  // nothing skipped is invisible: its results show up as the exact module values other entries
+  // report, with its bounds assumptions carried by the readers above.
   // Like an unsupported function, show the first module blocker and let the coverage
   // header carry the total. FileAudit.references retains every skip for structured use.
   const firstSkip = program.initializerSkips[0]
@@ -59,7 +60,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       kind: 'partial',
       name: program.initializer.name,
       assumptions: initializerBoundsLines,
-      stopped: analysis.initializer.kind === 'partial'
+      partialReasons: analysis.initializer.kind === 'partial'
         ? analysis.initializer.stops.map(stop => formatStop(stop, program, analysis))
         : [],
       skipped: skippedLines,
@@ -90,7 +91,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
           kind: 'partial',
           name: lowering.name,
           assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.observedBoundsAssumptions),
-          stopped: fn.stops.map(stop => formatStop(stop, program, analysis)),
+          partialReasons: fn.stops.map(stop => formatStop(stop, program, analysis)),
           observed,
           ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
         })
@@ -137,7 +138,7 @@ export function formatReport(report: AnalysisReport): string {
       case 'partial': {
         for (const assertion of fn.assertions ?? []) lines.push(formatAssertionReport(assertion))
         for (const assumption of fn.assumptions) lines.push(`  assumes: ${assumption}`)
-        for (const stop of fn.stopped) lines.push(`  stopped: ${stop}`)
+        for (const reason of fn.partialReasons) lines.push(`  partially supported: ${reason}`)
         for (const skip of fn.skipped ?? []) lines.push(`  skipped: ${skip}`)
         for (const evidence of fn.observed) lines.push(`  on analyzed paths: ${evidence}`)
         break
@@ -625,8 +626,8 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
       return `recursive call to ${functionName(program, reason.callee)} (call at ${formatSite(program, stop.site)})`
     }
     case 'calleeStopped': {
-      // A merely stopped callee did not itself hit unsupported code; saying so would send an
-      // agent hunting through a body whose constructs all lower.
+      // A partially supported callee did not necessarily hit syntax rejected during lowering;
+      // saying so would send an agent hunting through a body whose constructs all lower.
       const calleeState = calleeStateText(analysis.functions[reason.callee])
       return `calls ${functionName(program, reason.callee)}, ${calleeState} (call at ${formatSite(program, stop.site)})`
     }
@@ -701,15 +702,15 @@ function formatRequirementFailure(
 }
 
 function calleeStateText(callee: FunctionAnalysis | undefined): string {
-  if (callee == null) return 'whose analysis stopped'
+  if (callee == null) return 'which is only partially supported'
   switch (callee.kind) {
     case 'notLowered': return 'which hit unsupported code'
-    case 'partial': return 'whose analysis stopped'
-    // The callee analyzes completely in general but stopped when evaluated from this call —
+    case 'partial': return 'which is only partially supported'
+    // The callee analyzes completely in general but could not be fully analyzed from this call —
     // because of this caller's arguments (e.g. an argument whose expression the requirement
     // language cannot name) or the module state at this point (e.g. a module binding not yet
     // initialized when top-level code makes the call).
-    case 'analyzed': return 'whose analysis stopped for this specific call'
+    case 'analyzed': return 'which could not be fully analyzed for this specific call'
   }
 }
 

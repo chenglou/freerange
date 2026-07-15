@@ -80,7 +80,7 @@ export function outOfBounds(): number {
     expect(result.stdout).not.toContain('caller-contract')
     expect(result.stdout).toContain('error [out-of-bounds-read]: asserted element read (arr[i]!) is provably out of bounds')
     expect(result.stdout).toContain('1 finding (1 error, 0 warnings).')
-    expect(result.stdout).toContain('coverage: 1/2 named top-level function declarations fully analyzed; 1 partial; 0 unsupported.')
+    expect(result.stdout).toContain('coverage: 1/2 named top-level function declarations fully analyzed; 1 partially supported; 0 unsupported.')
     expect(result.stdout).toContain('Run `fr --audit [file]` for every function\'s contracts and refactoring suggestions.')
     expect(existsSync(join(projectDirectory, 'freerange-report'))).toBe(false)
 
@@ -110,7 +110,7 @@ export function outOfBounds(): number {
     expect(targeted.exitCode).toBe(1)
     const findingLines = (output: string) => output.split('\n\n')[0]
     expect(findingLines(targeted.stdout)).toBe(findingLines(result.stdout))
-    expect(targeted.stdout).toContain('coverage: 1/2 named top-level function declarations fully analyzed; 1 partial; 0 unsupported.')
+    expect(targeted.stdout).toContain('coverage: 1/2 named top-level function declarations fully analyzed; 1 partially supported; 0 unsupported.')
     expect(targeted.stdout).not.toContain('requires:')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
@@ -168,9 +168,10 @@ export function label(): string { return startedAt }
 `,
       // The top-level call stops because the callee reads a binding that is not yet
       // initialized — a real crash at load, but the initializer only records the cascade
-      // (calls readLater, whose analysis stopped), which in general proves nothing, so
+      // (calls readLater, which could not be fully analyzed for this specific call), which
+      // in general proves nothing, so
       // no finding prints. The stop still surfaces through the audit's contracts.
-      'stopped-call.ts': `export function readLater(): number { return gap * 2 }
+      'partial-call.ts': `export function readLater(): number { return gap * 2 }
 const early = readLater()
 const gap = 24
 export function answer(): number { return early }
@@ -180,8 +181,8 @@ export function answer(): number { return early }
     const result = runCli(projectDirectory)
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('No lint findings.')
-    const audited = runCli(projectDirectory, '--audit', 'stopped-call.ts')
-    expect(audited.stdout).toContain('stopped: calls readLater, whose analysis stopped for this specific call')
+    const audited = runCli(projectDirectory, '--audit', 'partial-call.ts')
+    expect(audited.stdout).toContain('partially supported: calls readLater, which could not be fully analyzed for this specific call')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
@@ -212,7 +213,7 @@ export function clean(): number {
     expect(projectAudit.exitCode).toBe(0)
     expect(projectAudit.stderr).toBe('')
     expect(projectAudit.stdout).toStartWith('# advice.ts (3/4 functions fully analyzed; 1 unsupported)')
-    expect(projectAudit.stdout.trimEnd()).toEndWith('coverage: 3/4 named top-level function declarations fully analyzed; 0 partial; 1 unsupported.')
+    expect(projectAudit.stdout.trimEnd()).toEndWith('coverage: 3/4 named top-level function declarations fully analyzed; 0 partially supported; 1 unsupported.')
     // Analysis entries come before suggestions within the unit.
     expect(projectAudit.stdout.indexOf('## Contracts')).toBeLessThan(projectAudit.stdout.indexOf('## Refactoring suggestions'))
     expect(projectAudit.stdout).toContain(`divide
@@ -563,7 +564,7 @@ export function gap(): number { return GAP }
     expect(targeted.exitCode).toBe(0)
     expect(targeted.stderr).not.toContain('broken.ts')
     expect(targeted.stdout).toContain('No lint findings.')
-    expect(targeted.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed; 0 partial; 0 unsupported.')
+    expect(targeted.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed; 0 partially supported; 0 unsupported.')
 
     const targetedAudit = runCli(join(projectDirectory, 'src'), '--audit', 'target.ts')
     expect(targetedAudit.exitCode).toBe(0)

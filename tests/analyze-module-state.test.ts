@@ -501,7 +501,7 @@ describe('module state and nullability', () => {
       kind: 'partial',
       name: 'carriedOpaque',
       assumptions: ['flag is a boolean'],
-      stopped: [`uses a value whose runtime kind the analysis cannot establish (at ${file}:5:16)`],
+      partialReasons: [`uses a value whose runtime kind the analysis cannot establish (at ${file}:5:16)`],
       // The branches merge before the multiply, and the joined n is opaque, so both
       // paths stop there — no completed return remains to report as evidence.
       observed: [],

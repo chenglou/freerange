@@ -23,7 +23,7 @@ describe('acceptance and module safety', () => {
       kind: 'partial',
       name: 'module initialization',
       assumptions: [],
-      stopped: [`calls runsUnsupported, which hit unsupported code (call at ${file}:3:7)`],
+      partialReasons: [`calls runsUnsupported, which hit unsupported code (call at ${file}:3:7)`],
       skipped: [],
       observed: [],
     })
@@ -55,7 +55,7 @@ describe('acceptance and module safety', () => {
     const file = 'module-eval.ts'
     const prose = `eval appears in this file; an eval string can rewrite any binding, so no function in the file is analyzed at ${file}:7:9`
     expect(report.functions).toEqual([
-      {kind: 'partial', name: 'module initialization', assumptions: [], stopped: [prose], skipped: [], observed: []},
+      {kind: 'partial', name: 'module initialization', assumptions: [], partialReasons: [prose], skipped: [], observed: []},
       {kind: 'unsupported', name: 'readHeight', unsupported: prose},
       {kind: 'unsupported', name: 'poke', unsupported: prose},
     ])
@@ -107,7 +107,7 @@ describe('acceptance and module safety', () => {
       kind: 'partial',
       name: 'module initialization',
       assumptions: [],
-      stopped: [],
+      partialReasons: [],
       skipped: [`var declarations (use let or const) at ${file}:2:7`],
       observed: [],
     })
@@ -132,7 +132,7 @@ describe('acceptance and module safety', () => {
       kind: 'partial',
       name: 'module initialization',
       assumptions: [],
-      stopped: [`the loop at ${file}:3:7 never exits on any analyzed path`],
+      partialReasons: [`the loop at ${file}:3:7 never exits on any analyzed path`],
       skipped: [],
       observed: [],
     })
@@ -315,7 +315,7 @@ describe('acceptance and module safety', () => {
     for (const name of ['directAddition', 'directCompound', 'directComparison', 'directMath', 'directIndex']) {
       const fn = report.functions.find(candidate => candidate.name === name)
       expect(fn?.kind).toBe('partial')
-      expect(fn?.kind === 'partial' ? fn.stopped : []).toHaveLength(1)
+      expect(fn?.kind === 'partial' ? fn.partialReasons : []).toHaveLength(1)
       expect(fn?.kind === 'partial' ? fn.observed : []).toEqual([
         'return is a finite integer number from 0 through 0',
       ])
@@ -358,7 +358,7 @@ describe('acceptance and module safety', () => {
       kind: 'partial',
       name: 'spin',
       assumptions: [],
-      stopped: [`the loop at ${file}:3:9 never exits on any analyzed path`],
+      partialReasons: [`the loop at ${file}:3:9 never exits on any analyzed path`],
       observed: [],
     }])
   })
@@ -383,7 +383,7 @@ describe('acceptance and module safety', () => {
       kind: 'partial',
       name: 'stall',
       assumptions: ['width is finite and not NaN'],
-      stopped: [`the loop at ${file}:5:9 never exits on any analyzed path`],
+      partialReasons: [`the loop at ${file}:5:9 never exits on any analyzed path`],
       observed: [],
     }])
   })
@@ -460,7 +460,7 @@ describe('acceptance and module safety', () => {
       kind: 'partial',
       name: 'module initialization',
       assumptions: [],
-      stopped: [],
+      partialReasons: [],
       skipped: [`function call window.addEventListener at ${file}:3:7`],
       observed: [],
     })
@@ -672,7 +672,7 @@ describe('acceptance and module safety', () => {
       kind: 'partial',
       name: 'shiftedBy',
       assumptions: ['width is finite and not NaN'],
-      stopped: [`reads importedOffset, which is imported from another module (read at ${importsReportPath}:10:18)`],
+      partialReasons: [`reads importedOffset, which is imported from another module (read at ${importsReportPath}:10:18)`],
       observed: [],
     }])
   })

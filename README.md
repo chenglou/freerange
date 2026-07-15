@@ -182,8 +182,8 @@ Freerange uses a few terms consistently:
 - `ensures`: a guarantee about the returned value whenever the function returns.
 - `assumes`: an input condition Freerange accepts without proving, such as a number parameter being finite and not `NaN`.
 - `proves`: a successful static `console.assert` check.
-- `unsupported`: the function uses code outside the analyzed subset. Freerange names the first blocker so the code can be reshaped and checked again.
-- `stopped`: Freerange analyzed part of the function, but at least one path could not continue. Facts marked `on analyzed paths` are not a contract for the whole function.
+- `unsupported`: Freerange cannot analyze the function because it uses code outside the analyzed subset. Freerange shows the first blocker you can potentially refactor.
+- `partially supported`: Freerange can analyze some, but not all, of the function.
 - `skipped`: module setup contained a statement Freerange did not analyze. Values that statement could change are not trusted afterward.
 
 A caller requirement is not automatically a bug. For example, `requires: columns >= 1` means the function is safe under that condition; it does not mean Freerange found a caller passing zero. Freerange checks supported same-file calls, but it is not a repository-wide call-site verifier. Imported calls and unsupported callers may remain unchecked.
