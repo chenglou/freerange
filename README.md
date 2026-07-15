@@ -123,7 +123,7 @@ Freerange supports a subset of TS:
 - `if`/`else`, ternaries, non-fallthrough `switch`, `&&`, `||`, `!`, `??`, `for`, `while`, and `for...of` loops
 - Arithmetic, comparisons, object field and array reads, selected `Math` operations, and `Number.isInteger`, `Number.isFinite`, and `Number.isNaN`
 
-Freerange could theoretically support a much larger subset of TS, and did before its public release. Those patterns often made numeric inference and proofs much harder and slower, however, and some questions are undecidable in general. Now that AI agents write code, we strongly recommend asking agents to refactor important calculations into shapes that Freerange analyzes well. Code that is easy to analyze tends to resemble functional programming: immutable data, explicit inputs and outputs, and clean, direct control flow.
+Freerange could theoretically support a much larger subset of TS, and did before its public release. Those patterns often made numeric inference and proofs much harder and slower, however, and some questions are undecidable in general. Now that AI agents write code, we strongly recommend asking agents to refactor important calculations into shapes that Freerange analyzes well, guided by `fr --audit`. Code that is easy to analyze tends to resemble functional programming: immutable data, explicit inputs and outputs, and clean, direct control flow.
 
 - **Put important calculations in small named functions.** A React component, callback, or async function can call a plain synchronous helper. Keep any helper functions that Freerange needs to inspect in the same file.
   ```tsx
@@ -184,7 +184,7 @@ Freerange uses a few terms consistently:
 - `proves`: a successful static `console.assert` check.
 - `unsupported`: Freerange cannot analyze the function because it uses code outside the analyzed subset. Freerange shows the first blocker you can potentially refactor.
 - `partially supported`: Freerange can analyze some, but not all, of the function.
-- `skipped`: module setup contained a statement Freerange did not analyze. Values that statement could change are not trusted afterward.
+- `skipped`: some top-level statements in the modules weren't analyzed.
 
 A caller requirement is not automatically a bug. For example, `requires: columns >= 1` means the function is safe under that condition; it does not mean Freerange found a caller passing zero. Freerange checks supported same-file calls, but it is not a repository-wide call-site verifier. Imported calls and unsupported callers may remain unchecked.
 
