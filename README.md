@@ -9,12 +9,28 @@ Freerange shows you the range of every `number` in your TypeScript codebase, thu
 
 Freerange is deliberately designed for code that can be refactored, especially code written or maintained by agents. It does not try to understand every TypeScript pattern. It accepts a small, predictable subset and gives concrete guidance for moving important calculations into that subset.
 
-## Try It
+## Install
 
 ```sh
 bun install --dev @chenglou/freerange
-bun fr
 ```
+
+## API
+
+There's no API =). Your TypeScript code provides enough information for Freerange's analysis. We do recommend your agents to shape code in a particularly analysis-friendly way below.
+
+## Commands
+
+- `fr`: print project errors and warnings
+- `fr --audit`: print every function's contracts, plus refactor suggestions to help Freerange analyze better. Great for agents
+
+Pass a file path to either command to filter down to just that file's report.
+
+`fr` directly uses TypeScript under the hood, so it naturally respects your `tsconfig`. We output TS errors before our analysis, so technically, you can swap out your explicit `tsc` command for `fr` and nothing changes!
+
+## Examples
+
+### 1: Catch UI Sizing Bug
 
 ```ts
 function gridColumnCount(containerWidth: number) {
@@ -28,7 +44,7 @@ function gridItemWidth(containerWidth: number) {
 gridItemWidth(200)
 ```
 
-`fr` outputs:
+`bun fr` outputs:
 
 ```zsh
 index.ts:9:1 - error [inferred-requirement]: call to gridItemWidth violates its nonzero divisor requirement (division at index.ts:6:10)
@@ -36,53 +52,7 @@ index.ts:9:1 - error [inferred-requirement]: call to gridItemWidth violates its 
 
 How it works: Freerange follows `200` into `gridItemWidth`, then through the call to `gridColumnCount`. It works out that `Math.floor(200 / 240)` is `0`, then catches the later division by that result. TypeScript only knows that these values are numbers; Freerange follows their ranges through both functions.
 
-## Commands
-
-- `fr`: print project errors and warnings
-- `fr --audit`: print every function's contracts, plus refactor suggestions to help Freerange analyze better. Great for agents
-
-Pass your file path to either command to filter down to just that file's report.
-
-`fr` directly uses TypeScript under the hood, so it naturally respects your `tsconfig`. We output TS errors before our analysis, so technically, you can swap out your explicit `tsc` command for `fr` and nothing changes!
-
-## A Production Example
-
-Our app calculates the positions of an input bar, a tray below it, and the surrounding content from the window height. We decided that the layout does not need to support windows shorter than 320 pixels, and wrote that decision in the code:
-
-```ts
-windowSizeY = Math.max(320, windowSizeY)
-```
-
-Freerange followed that minimum through the existing layout calculations and reported:
-
-```text
-ensures: return.inputTray.top is a finite number at least 54
-ensures: return.nav.bottom is a finite number at least 320
-```
-
-The first line says that the tray's top edge is always at least 54 pixels from the top of the window. The second says that the navigation's bottom edge is always at least 320 pixels down. Both values are also guaranteed to be finite.
-
-Nobody manually specified `54`. Freerange derived it from the minimum window height and the existing gap and input-row calculations. If a later refactor weakens that guarantee, the next audit shows the weaker result.
-
-## Reading the output
-
-Freerange uses a few terms consistently:
-
-- `requires`: a condition the caller must satisfy. The function's guarantees assume the condition is true.
-- `ensures`: a guarantee about the returned value whenever the function returns.
-- `assumes`: an input condition Freerange accepts without proving, such as a number parameter being finite and not `NaN`.
-- `proves`: a successful static `console.assert` check.
-- `unsupported`: the function uses code outside the analyzed subset. Freerange names the first blocker so the code can be reshaped and checked again.
-- `stopped`: Freerange analyzed part of the function, but at least one path could not continue. Facts marked `on analyzed paths` are not a contract for the whole function.
-- `skipped`: module setup contained a statement Freerange did not analyze. Values that statement could change are not trusted afterward.
-
-A caller requirement is not automatically a bug. For example, `requires: columns >= 1` means the function is safe under that condition; it does not mean Freerange found a caller passing zero. Freerange checks supported same-file calls, but it is not a repository-wide call-site verifier. Imported calls and unsupported callers may remain unchecked.
-
-An `ensures` line assumes its `requires` and `assumes`. A requirement may be a real API rule, or it may expose a relationship Freerange cannot currently prove. An assumption may identify a real input boundary or an analysis limitation. Decide what the program should do before changing code to remove either one.
-
-Always read the coverage line. No findings does not mean an unsupported file is safe. A derived guarantee becoming weaker, for example `at least 54` becoming `at least 0`, appears in the audit rather than the shorter findings output.
-
-## Static `console.assert`
+### 2: Static `console.assert`
 
 Did you know that `console.log` has a less known sibling: `console.assert`? When the value of the assert is true, it stays silent. When it's false, it prints `false`.
 
@@ -122,7 +92,7 @@ console.assert(availableWidth >= 0)
 
 (You can feel free to strip `console.assert` in production like you're probably been doing already.)
 
-### Things Worth Asserting
+#### Things Worth Asserting
 
 There are infinitely many assertable things. Here are some good, non-noisy ones:
 - Guarantee that 2 UI items don't overlap:
@@ -144,6 +114,24 @@ There are infinitely many assertable things. Here are some good, non-noisy ones:
   ```
 
 Freerange already defaults to inferring that the relevant numbers shouldn't be `NaN`, `Infinity`, `0` (for division denominators) and whatever else. You can see them in `fr --audit`. You don't need to explicitly asserting unnecessary info.
+
+## Reading the output
+
+Freerange uses a few terms consistently:
+
+- `requires`: a condition the caller must satisfy. The function's guarantees assume the condition is true.
+- `ensures`: a guarantee about the returned value whenever the function returns.
+- `assumes`: an input condition Freerange accepts without proving, such as a number parameter being finite and not `NaN`.
+- `proves`: a successful static `console.assert` check.
+- `unsupported`: the function uses code outside the analyzed subset. Freerange names the first blocker so the code can be reshaped and checked again.
+- `stopped`: Freerange analyzed part of the function, but at least one path could not continue. Facts marked `on analyzed paths` are not a contract for the whole function.
+- `skipped`: module setup contained a statement Freerange did not analyze. Values that statement could change are not trusted afterward.
+
+A caller requirement is not automatically a bug. For example, `requires: columns >= 1` means the function is safe under that condition; it does not mean Freerange found a caller passing zero. Freerange checks supported same-file calls, but it is not a repository-wide call-site verifier. Imported calls and unsupported callers may remain unchecked.
+
+An `ensures` line assumes its `requires` and `assumes`. A requirement may be a real API rule, or it may expose a relationship Freerange cannot currently prove. An assumption may identify a real input boundary or an analysis limitation. Decide what the program should do before changing code to remove either one.
+
+Always read the coverage line. No findings does not mean an unsupported file is safe. A derived guarantee becoming weaker, for example `at least 54` becoming `at least 0`, appears in the audit rather than the shorter findings output.
 
 ## Writing analyzable TypeScript
 
