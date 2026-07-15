@@ -81,7 +81,7 @@ export function outOfBounds(): number {
     expect(result.stdout).not.toContain('caller-contract')
     expect(result.stdout).toContain('error [out-of-bounds-read]: asserted element read (arr[i]!) is provably out of bounds')
     expect(result.stdout).toContain('1 finding (1 error, 0 warnings).')
-    expect(result.stdout).toContain('coverage: 1/2 named top-level function declarations fully analyzed; 1 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
+    expect(result.stdout).toContain('coverage: 1/2 named top-level function declarations fully analyzed; 1 partial; 0 unsupported.')
     expect(result.stdout).toContain('Run `fr --audit [file]` for every function\'s contracts and refactoring suggestions.')
     expect(existsSync(join(projectDirectory, 'freerange-report'))).toBe(false)
 
@@ -110,7 +110,7 @@ export function outOfBounds(): number {
     expect(targeted.exitCode).toBe(1)
     const findingLines = (output: string) => output.split('\n\n')[0]
     expect(findingLines(targeted.stdout)).toBe(findingLines(result.stdout))
-    expect(targeted.stdout).toContain('coverage: 1/2 named top-level function declarations fully analyzed; 1 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
+    expect(targeted.stdout).toContain('coverage: 1/2 named top-level function declarations fully analyzed; 1 partial; 0 unsupported.')
     expect(targeted.stdout).not.toContain('requires:')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
@@ -215,7 +215,7 @@ export function clean(): number {
     // project coverage once at the end.
     expect(projectAudit.stdout).toStartWith(`${auditPreamble}\n\n# advice.ts (3/4 functions fully analyzed; 1 unsupported)`)
     expect(projectAudit.stdout.split('Refactoring suggestions are conditional examples')).toHaveLength(2)
-    expect(projectAudit.stdout.trimEnd()).toEndWith('coverage: 3/4 named top-level function declarations fully analyzed; 0 partial; 1 unsupported; 0/1 project files skipped for TypeScript errors.')
+    expect(projectAudit.stdout.trimEnd()).toEndWith('coverage: 3/4 named top-level function declarations fully analyzed; 0 partial; 1 unsupported.')
     // Analysis entries come before suggestions within the unit.
     expect(projectAudit.stdout.indexOf('## Contracts')).toBeLessThan(projectAudit.stdout.indexOf('## Refactoring suggestions'))
     expect(projectAudit.stdout).toContain(`divide
@@ -556,13 +556,18 @@ export function gap(): number { return GAP }
     const full = runCli(projectDirectory)
     expect(full.exitCode).toBe(1)
     expect(full.stderr).toContain("src/broken.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.")
-    expect(full.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed; 0 partial; 0 unsupported; 1/3 project files skipped for TypeScript errors.')
+    expect(full.stdout).toBe('')
+
+    const fullAudit = runCli(projectDirectory, '--audit')
+    expect(fullAudit.exitCode).toBe(1)
+    expect(fullAudit.stderr).toBe(full.stderr)
+    expect(fullAudit.stdout).toBe('')
 
     const targeted = runCli(join(projectDirectory, 'src'), 'target.ts')
     expect(targeted.exitCode).toBe(0)
     expect(targeted.stderr).not.toContain('broken.ts')
     expect(targeted.stdout).toContain('No lint findings.')
-    expect(targeted.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed; 0 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
+    expect(targeted.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed; 0 partial; 0 unsupported.')
 
     const targetedAudit = runCli(join(projectDirectory, 'src'), '--audit', 'target.ts')
     expect(targetedAudit.exitCode).toBe(0)
@@ -590,7 +595,7 @@ export function gap(): number { return GAP }
     const globalTypeError = runCli(projectDirectory)
     expect(globalTypeError.exitCode).toBe(1)
     expect(globalTypeError.stderr).toContain("Cannot find type definition file for 'missing-types-package'.")
-    expect(globalTypeError.stdout).toContain('3/3 project files skipped for TypeScript errors.')
+    expect(globalTypeError.stdout).toBe('')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
@@ -619,22 +624,23 @@ test('a nested lax tsconfig cannot hide the root project errors from the file ru
       'sub/tsconfig.json': JSON.stringify({compilerOptions: laxOptions, include: ['*.ts']}),
     })
 
-    // The strict root config governs sub/loose.ts, so its implicit any is an error and
-    // the file is skipped — in the project run and in the file run alike.
+    // The strict root config governs sub/loose.ts, so its implicit any stops both the
+    // project run and the file run before Freerange output.
     const project = runCli(projectDirectory)
     expect(project.exitCode).toBe(1)
     expect(project.stderr).toContain("sub/loose.ts(1,23): error TS7006: Parameter 'amount' implicitly has an 'any' type.")
-    expect(project.stdout).toContain('1/2 project files skipped for TypeScript errors.')
+    expect(project.stdout).toBe('')
 
     const targeted = runCli(projectDirectory, 'sub/loose.ts')
     expect(targeted.exitCode).toBe(1)
     expect(targeted.stderr).toContain("sub/loose.ts(1,23): error TS7006: Parameter 'amount' implicitly has an 'any' type.")
     expect(targeted.stdout).toBe('')
 
-    // The project audit has no unit for the skipped file, so the file audit prints none.
+    // Audit mode uses the same TypeScript-only failure path.
     const projectAudit = runCli(projectDirectory, '--audit')
     expect(projectAudit.exitCode).toBe(1)
-    expect(projectAudit.stdout).not.toContain('# sub/loose.ts')
+    expect(projectAudit.stderr).toBe(project.stderr)
+    expect(projectAudit.stdout).toBe('')
     const fileAudit = runCli(projectDirectory, '--audit', 'sub/loose.ts')
     expect(fileAudit.exitCode).toBe(1)
     expect(fileAudit.stdout).toBe('')

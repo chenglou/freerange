@@ -20,7 +20,6 @@ import {
   findTypeScriptConfig,
   loadTypeScriptProjectGraph,
   projectSources,
-  type LoadedTypeScriptProject,
   type ProjectSource,
 } from './typescript/project.ts'
 
@@ -48,8 +47,6 @@ type LintFinding =
   | ErrorLintFinding
 
 export type ProjectCoverage = {
-  files: number
-  typeErrorFiles: number
   functions: number
   analyzed: number
   partial: number
@@ -59,26 +56,24 @@ export type ProjectCoverage = {
 type ProjectScan = {
   files: DetailedAnalysis[]
   coverage: ProjectCoverage
-  hasTypeScriptErrors: boolean
   pretty: boolean
 }
 
-// `fr`: every file's lint findings plus project coverage. Findings are the CI gate, so
-// the returned failure covers error-level findings as well as TypeScript errors.
+// `fr`: every file's lint findings plus project coverage. TypeScript errors throw before
+// analysis; the returned failure covers Freerange's error-level findings.
 export function runProjectFindings(searchFrom: string): boolean {
   const scan = analyzeProject(searchFrom)
   const findings = scan.files.flatMap(collectLintFindings)
     .sort((left, right) =>
       left.file.localeCompare(right.file) || left.line - right.line || left.column - right.column)
   console.log(formatFindings(findings, scan.coverage, scan.pretty))
-  return scan.hasTypeScriptErrors || findings.some(finding => lintLevel(finding) === 'error')
+  return findings.some(finding => lintLevel(finding) === 'error')
 }
 
 // `fr <file>`: the project findings narrowed to one file — the same finding lines a
 // project run prints for the file, with the file's own coverage counts.
 export function runFileFindings(file: string): boolean {
   const target = analyzeTargetFile(file)
-  if (target == null) return true
   const findings = collectLintFindings(target.detailed)
     .sort((left, right) => left.line - right.line || left.column - right.column)
   console.log(formatFindings(findings, fileCoverage(target.detailed), target.pretty))
@@ -88,8 +83,8 @@ export function runFileFindings(file: string): boolean {
 // `fr --audit`: the deep layer at project scope. One unit per file — contracts, then
 // refactoring suggestions — with the explanatory prose once at the top and project
 // coverage once at the end. The units all come from the one shared project analysis;
-// nothing here creates a per-file TypeScript program. Audit output is informational: the
-// returned failure only signals TypeScript errors.
+// nothing here creates a per-file TypeScript program. Audit output is informational and
+// returns success; TypeScript errors throw before audit output.
 export function runProjectAudit(searchFrom: string): boolean {
   const scan = analyzeProject(searchFrom)
   const audits = scan.files.map(createFileAudit)
@@ -99,14 +94,13 @@ export function runProjectAudit(searchFrom: string): boolean {
     ...audits.map(audit => formatFileAuditUnit(audit, scan.pretty)),
     formatCoverage(scan.coverage),
   ].join('\n\n'))
-  return scan.hasTypeScriptErrors
+  return false
 }
 
 // `fr --audit <file>`: exactly one file's unit under the same preamble — a literal slice
 // of the project audit.
 export function runFileAudit(file: string): boolean {
   const target = analyzeTargetFile(file)
-  if (target == null) return true
   console.log([
     auditPreamble,
     formatFileAuditUnit(createFileAudit(target.detailed), target.pretty),
@@ -122,27 +116,15 @@ function analyzeProject(searchFrom: string): ProjectScan {
   const projects = loadTypeScriptProjectGraph(configPath)
   const rootProject = projects.at(-1)!
   const sources = projectSources(projects)
-  const diagnosticsByProject = new Map(projects.map(project => [project, collectProjectDiagnostics(project)]))
-  const allDiagnostics = uniqueDiagnostics(projects.flatMap(project => diagnosticsByProject.get(project)!.all))
-  printTypeScriptDiagnostics(allDiagnostics, rootProject.parsed.options, process.cwd())
+  const diagnostics = uniqueDiagnostics(projects.flatMap(project => ts.getPreEmitDiagnostics(project.program)))
+  requireNoTypeScriptErrors(diagnostics, rootProject.parsed.options)
 
   const files: DetailedAnalysis[] = []
-  let typeErrorFiles = 0
   let analyzed = 0
   let partial = 0
   let unsupported = 0
 
   for (const source of sources) {
-    const projectDiagnostics = diagnosticsByProject.get(source.project)!
-    const diagnostics = [
-      ...projectDiagnostics.global,
-      ...(projectDiagnostics.byFile.get(resolve(source.sourceFile.fileName)) ?? []),
-    ]
-    if (hasErrorDiagnostics(diagnostics)) {
-      typeErrorFiles++
-      continue
-    }
-
     const detailed = analyzeProjectSource(source, process.cwd())
     files.push(detailed)
     const perFile = fileCoverage(detailed)
@@ -154,14 +136,11 @@ function analyzeProject(searchFrom: string): ProjectScan {
   return {
     files,
     coverage: {
-      files: sources.length,
-      typeErrorFiles,
       functions: analyzed + partial + unsupported,
       analyzed,
       partial,
       unsupported,
     },
-    hasTypeScriptErrors: hasErrorDiagnostics(allDiagnostics),
     pretty: usePrettyOutput(rootProject.parsed.options['pretty']),
   }
 }
@@ -372,8 +351,6 @@ function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pret
 // uses; a file that reaches this point has no TypeScript errors, so nothing was skipped.
 function fileCoverage(detailed: DetailedAnalysis): ProjectCoverage {
   const coverage = {
-    files: 1,
-    typeErrorFiles: 0,
     functions: detailed.analysis.functions.length,
     analyzed: 0,
     partial: 0,
@@ -431,11 +408,10 @@ function formatDiagnosticLocation(file: string, line: number, column: number, pr
 }
 
 function formatCoverage(coverage: ProjectCoverage): string {
-  return `coverage: ${coverage.analyzed}/${coverage.functions} named top-level function declarations fully analyzed; ${coverage.partial} partial; ${coverage.unsupported} unsupported; ${coverage.typeErrorFiles}/${coverage.files} project files skipped for TypeScript errors.`
+  return `coverage: ${coverage.analyzed}/${coverage.functions} named top-level function declarations fully analyzed; ${coverage.partial} partial; ${coverage.unsupported} unsupported.`
 }
 
 // A target file analyzed on its own, with the output styling its project configures.
-// null means the file has TypeScript errors (already printed) and cannot be analyzed.
 type TargetFile = {detailed: DetailedAnalysis; pretty: boolean}
 
 // The configuration rule: like a bare `fr`, the tsconfig is resolved from the current
@@ -443,7 +419,7 @@ type TargetFile = {detailed: DetailedAnalysis; pretty: boolean}
 // not the configuration, so a nested tsconfig near the file cannot make `fr sub/file.ts`
 // disagree with what `fr` reports for that same file. When a project exists, the file
 // must belong to it; otherwise there is no project result for file mode to be a subset of.
-function analyzeTargetFile(file: string): TargetFile | null {
+function analyzeTargetFile(file: string): TargetFile {
   const absoluteFile = resolve(file)
   if (!existsSync(absoluteFile)) throw new Error(`File not found: ${absoluteFile}`)
   const configPath = findTypeScriptConfig(process.cwd())
@@ -458,8 +434,7 @@ function analyzeTargetFile(file: string): TargetFile | null {
     throw new Error(`File is not part of the project resolved from ${configPath}: ${absoluteFile}`)
   }
   const diagnostics = ts.getPreEmitDiagnostics(source.project.program, source.sourceFile)
-  printTypeScriptDiagnostics(diagnostics, rootProject.parsed.options, process.cwd())
-  if (hasErrorDiagnostics(diagnostics)) return null
+  requireNoTypeScriptErrors(diagnostics, rootProject.parsed.options)
   return {
     detailed: analyzeProjectSource(source, process.cwd()),
     pretty: usePrettyOutput(rootProject.parsed.options['pretty']),
@@ -472,40 +447,11 @@ function canonicalFilePath(file: string): string {
 }
 
 // A single-file program when no tsconfig resolves from the current directory.
-function analyzeFileAlone(absoluteFile: string): TargetFile | null {
-  try {
-    return {
-      detailed: analyzeCheckedSource(checkFile(absoluteFile), process.cwd()),
-      pretty: usePrettyOutput(undefined),
-    }
-  } catch (error) {
-    if (!(error instanceof TypeScriptDiagnosticsError)) throw error
-    printTypeScriptDiagnostics(error.diagnostics, error.options, process.cwd())
-    return null
+function analyzeFileAlone(absoluteFile: string): TargetFile {
+  return {
+    detailed: analyzeCheckedSource(checkFile(absoluteFile), process.cwd()),
+    pretty: usePrettyOutput(undefined),
   }
-}
-
-type CollectedProjectDiagnostics = {
-  all: readonly ts.Diagnostic[]
-  global: readonly ts.Diagnostic[]
-  byFile: Map<string, ts.Diagnostic[]>
-}
-
-function collectProjectDiagnostics(project: LoadedTypeScriptProject): CollectedProjectDiagnostics {
-  const all = ts.getPreEmitDiagnostics(project.program)
-  const global: ts.Diagnostic[] = []
-  const byFile = new Map<string, ts.Diagnostic[]>()
-  for (const diagnostic of all) {
-    if (diagnostic.file == null) {
-      global.push(diagnostic)
-      continue
-    }
-    const file = resolve(diagnostic.file.fileName)
-    const diagnostics = byFile.get(file)
-    if (diagnostics == null) byFile.set(file, [diagnostic])
-    else diagnostics.push(diagnostic)
-  }
-  return {all, global, byFile}
 }
 
 function analyzeProjectSource(
@@ -536,6 +482,16 @@ function printTypeScriptDiagnostics(
 ): void {
   if (diagnostics.length === 0) return
   console.error(formatTypeScriptDiagnostics(diagnostics, options, currentDirectory).trimEnd())
+}
+
+function requireNoTypeScriptErrors(
+  diagnostics: readonly ts.Diagnostic[],
+  options: ts.CompilerOptions,
+): void {
+  if (hasErrorDiagnostics(diagnostics)) {
+    throw new TypeScriptDiagnosticsError(diagnostics, options, process.cwd())
+  }
+  printTypeScriptDiagnostics(diagnostics, options, process.cwd())
 }
 
 function hasErrorDiagnostics(diagnostics: readonly ts.Diagnostic[]): boolean {
