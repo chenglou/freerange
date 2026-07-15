@@ -223,35 +223,39 @@ Always read the coverage line. No findings does not mean an unsupported file is 
 
 ## Analysis Limits
 
+If your production code actually needs support beyond these limits, please file an issue! We're open to relaxing the limits.
+
 ### Numbers
 
-Freerange's numeric analysis is designed around arithmetic used in layouts and other everyday application code. For each TypeScript `number`, Freerange tracks one continuous range, whether the value is an integer, whether it may be `NaN` or infinite, and at most one constant excluded by a branch. For example, `value !== 0` can preserve the fact that `0` is impossible.
+Freerange's numeric analysis is designed around arithmetic used in layouts and other everyday application code. For each TypeScript `number`, Freerange tracks one continuous range, whether the value is an integer, whether it may be `NaN` or infinite, and at most one exact number that a branch proved impossible. For example, after `value !== 0`, Freerange can remember that `value` cannot be `0`.
 
-Freerange does not keep disjoint ranges or arbitrary sets of possible numbers. Joining `1..2` with `10..11` produces `1..11`. When branches meet, the result covers every branch, and a later excluded constant may replace an earlier one.
+Freerange does not keep separate ranges or arbitrary sets of possible numbers. If one branch produces `1..2` and another produces `10..11`, Freerange keeps the combined range `1..11`. A later check that rules out a different exact number may replace the number remembered from an earlier check.
 
 Earlier versions included an exact rational linear prover based on Farkas' lemma and other relational machinery. The current analyzer does not use that machinery or an SMT solver. In practice, those approaches made analysis unpredictable without proving much more real-world code. We also decided against analyzing numbers as real numbers, which would have been sweet, because doing so produces false proofs: floating-point arithmetic is not associative, rounds results, and can overflow or underflow.
 
 ### Function calls
 
-Freerange follows calls to supported functions in the same file using the caller's current numeric information. Imported functions are not followed. Imported constants are followed only when they resolve to a numeric literal such as `export const GAP = 24`. Literal default parameters work in supported calls; object and calculated defaults do not, and extra runtime arguments are unsupported. Unknown calls, callback ordering, caught exceptions, mutation through aliases, and most framework effects remain outside the subset.
+Freerange follows calls to supported functions in the same file using the ranges known at each call. Imported functions are not followed. Imported constants are followed only when they resolve to a numeric literal such as `export const GAP = 24`. Literal default parameters work in supported calls; object and calculated defaults do not. Passing more arguments than the implementation declares is also unsupported. Unknown calls, when callbacks run, caught exceptions, changes made through another reference to the same object, and most framework behavior remain outside the subset.
 
 ### Static assertions
 
-Inside a `console.assert`, Freerange can follow common UI calculations through named values: `Math.min` and `Math.max`, addition or subtraction by a nonnegative value, the same multiplication by a nonnegative value on both sides of a comparison, bounds such as the result of `%` being below a positive divisor, and fields read from a freshly constructed record. These rules do not provide general transitivity: `left <= middle` and `middle <= right` do not by themselves prove `left <= right`.
+Inside a `console.assert`, Freerange can follow common UI calculations through named values: `Math.min` and `Math.max`, addition or subtraction by a nonnegative value, the same multiplication by a nonnegative value on both sides of a comparison, the fact that `index % columnCount < columnCount` when `columnCount` is positive, and fields read from a freshly constructed record. Freerange does not chain arbitrary comparisons: `left <= middle` and `middle <= right` do not by themselves prove `left <= right`.
 
 ### Loops
 
-Loops are analyzed until what Freerange knows at the start of an iteration stops changing; Freerange does not unroll runtime iterations or derive a closed formula. Ordinary counting loops usually settle after two or three updates. If that information still changes after 16 updates, analysis stops for that path.
+Freerange analyzes a loop again until the ranges known at the start of an iteration stop changing. Freerange does not simulate every runtime iteration or try to produce a formula for the final value. Ordinary counting loops usually settle after two or three analysis passes. If the ranges still change after 16 passes, analysis stops for that path.
 
-### Nested data
+### Objects and arrays
 
-Project-owned records, tuples, arrays, and tagged unions are followed through at most eight nested levels. A deeper property becomes unknown, while a function whose root input type cannot be represented is unsupported.
+Freerange follows records, tuples, arrays, and tagged unions declared in your project through at most eight nested levels. A deeper property becomes unknown. A function is unsupported when its top-level input type cannot be represented.
+
+Property reads are assumed to be stable and side-effect-free during one analyzed function call. A getter or Proxy that changes its answer or performs work is outside the model. Property writes, including assignments that invoke setters, are unsupported. Object spread is also unsupported because JavaScript copies only an object's own enumerable properties, which may not match the fields declared by its TypeScript type.
 
 ### Caller requirements
 
-When Freerange rewrites a local requirement into terms a caller can understand, it traces each operation in that function at most once. If tracing each operation once is not enough, Freerange prints a local `assumes` condition instead.
+When a division or array read creates a requirement inside a function, Freerange tries to express the requirement using the function's parameters so callers can be checked. Freerange follows each intermediate calculation at most once. If one pass cannot reach the parameters, Freerange prints a local `assumes` condition instead.
 
-These limits may lose precision or stop analysis; they never strengthen a claim.
+These limits may make a result less precise or stop analysis, but they cannot make a guarantee stronger than the code supports.
 
 ## Development
 
