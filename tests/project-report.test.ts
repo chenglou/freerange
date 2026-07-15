@@ -3,7 +3,6 @@ import {existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync} 
 import {tmpdir} from 'node:os'
 import {dirname, join} from 'node:path'
 import * as ts from 'typescript'
-import {auditPreamble} from '../src/audit.ts'
 import {formatTypeScriptDiagnostics} from '../src/typescript/diagnostics.ts'
 
 const freerangeCli = new URL('../fr.ts', import.meta.url).pathname
@@ -211,24 +210,21 @@ export function clean(): number {
 
     expect(projectAudit.exitCode).toBe(0)
     expect(projectAudit.stderr).toBe('')
-    // The explanatory prose prints once at the top, then one unit per file, then the
-    // project coverage once at the end.
-    expect(projectAudit.stdout).toStartWith(`${auditPreamble}\n\n# advice.ts (3/4 functions fully analyzed; 1 unsupported)`)
-    expect(projectAudit.stdout.split('Refactoring suggestions are conditional examples')).toHaveLength(2)
+    expect(projectAudit.stdout).toStartWith('# advice.ts (3/4 functions fully analyzed; 1 unsupported)')
     expect(projectAudit.stdout.trimEnd()).toEndWith('coverage: 3/4 named top-level function declarations fully analyzed; 0 partial; 1 unsupported.')
     // Analysis entries come before suggestions within the unit.
     expect(projectAudit.stdout.indexOf('## Contracts')).toBeLessThan(projectAudit.stdout.indexOf('## Refactoring suggestions'))
     expect(projectAudit.stdout).toContain(`divide
   requires: columnCount is nonzero (division at advice.ts:2:10)`)
-    expect(projectAudit.stdout).toContain('### Check the exact divisor')
-    expect(projectAudit.stdout).toContain('**Encode a real input rule where the calculation begins.**')
+    expect(projectAudit.stdout).toContain('  Check the exact divisor:')
+    expect(projectAudit.stdout).toContain('  Encode a real input rule where the calculation begins:')
+    expect(projectAudit.stdout).not.toContain('Example rewrite:')
 
-    // The file audit is the project audit narrowed to the file: same preamble, and the
-    // file's unit is character-for-character a slice of the project output.
+    // The file audit is character-for-character a slice of the project output.
     const fileAudit = runCli(projectDirectory, '--audit', 'advice.ts')
     expect(fileAudit.exitCode).toBe(0)
-    expect(fileAudit.stdout).toStartWith(`${auditPreamble}\n\n# advice.ts (`)
-    const unit = fileAudit.stdout.slice(auditPreamble.length).trim()
+    expect(fileAudit.stdout).toStartWith('# advice.ts (')
+    const unit = fileAudit.stdout.trim()
     expect(projectAudit.stdout).toContain(unit)
 
     const extraPath = runCli(projectDirectory, '--audit', 'advice.ts', 'other.ts')
@@ -484,7 +480,7 @@ export function ignoresImplicitAny(value): number { return 1 }
 
     const projectAudit = runCli(projectDirectory, '--audit')
     expect(projectAudit.exitCode).toBe(0)
-    expect(projectAudit.stdout).toContain('### Handle a possibly missing array element')
+    expect(projectAudit.stdout).toContain('  Handle a possibly missing array element:')
     expect(projectAudit.stdout).toContain('in increment')
     expect(projectAudit.stdout).not.toContain('in guardedIncrement')
 
@@ -572,7 +568,7 @@ export function gap(): number { return GAP }
     const targetedAudit = runCli(join(projectDirectory, 'src'), '--audit', 'target.ts')
     expect(targetedAudit.exitCode).toBe(0)
     expect(targetedAudit.stderr).not.toContain('broken.ts')
-    expect(targetedAudit.stdout).toContain('\n# target.ts (')
+    expect(targetedAudit.stdout).toStartWith('# target.ts (')
     expect(targetedAudit.stdout).not.toContain('src/target.ts')
     expect(targetedAudit.stdout).toContain('return is a finite integer number from 24 through 24')
 

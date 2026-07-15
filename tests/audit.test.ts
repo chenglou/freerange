@@ -1,7 +1,6 @@
 import {expect, test} from 'bun:test'
 import {
   analyzeSource,
-  auditPreamble,
   auditSource,
   formatFileAuditUnit,
   refactorGuide,
@@ -45,7 +44,7 @@ function returnedNumber(fn: (...arguments_: unknown[]) => unknown, ...arguments_
   return result
 }
 
-test('every refactoring example says something the analyzer still proves', () => {
+test('every suggested rewrite changes the analyzer result as claimed', () => {
   const guarded = guide('guard-derived-value')
   expect(analyzed(analyzeSource('guard-before.ts', guarded.before), 'remap').requires).toHaveLength(1)
   expect(analyzed(analyzeSource('guard-after.ts', guarded.after), 'remap').requires).toEqual([])
@@ -85,7 +84,7 @@ test('every refactoring example says something the analyzer still proves', () =>
   expect(analyzed(analyzeSource('index-after.ts', indexed.after), 'valueAt').requires).toEqual([])
 })
 
-test('behavior tests pin the caveats printed beside each example', async () => {
+test('behavior tests pin the suggestion caveats', async () => {
   const guarded = guide('guard-derived-value')
   const remapBefore = exportedFunction(await loadGuideModule(guarded.before), 'remap')
   const remapAfter = exportedFunction(await loadGuideModule(guarded.after), 'remap')
@@ -213,21 +212,29 @@ test('file audits lead with honest coverage and route only relevant checked patt
   // Analysis entries always print before suggestions within a unit.
   expect(output.indexOf('## Contracts')).toBeGreaterThan(0)
   expect(output.indexOf('## Contracts')).toBeLessThan(output.indexOf('## Refactoring suggestions'))
-  expect(output).toContain('### Check the exact divisor')
-  // Run-level prose lives in the preamble, printed once per run, never inside a unit.
-  expect(auditPreamble).toContain('conditional examples, not automatic fixes')
-  expect(output).not.toContain('conditional examples, not automatic fixes')
+  expect(output).toContain('  Check the exact divisor:')
   for (const guideID of [
     'guard-derived-value',
     'write-explicit-condition',
     'use-loop-for-aggregation',
     'guard-array-index',
   ] as const) {
-    expect(output).toContain(refactorGuide(guideID).after)
+    const guide = refactorGuide(guideID)
+    expect(output).toContain(guide.title)
+    expect(output).toContain(`Use when: ${guide.caveat}`)
+    expect(output).not.toContain(guide.after)
   }
-  expect(output).toContain('### Other options')
-  expect(output).toContain('**Encode a real input rule where the calculation begins.**')
+  expect(output).toContain('Encode a real input rule where the calculation begins:')
+  expect(output).not.toContain('Example rewrite:')
+  expect(output).not.toContain('Other options')
   expect(output).not.toContain(refactorGuide('encode-input-rule').before)
+
+  const coloredOutput = formatFileAuditUnit(audit, true)
+  expect(coloredOutput).toContain('# \u001B[96mlayout.ts\u001B[0m (')
+  expect(coloredOutput).toContain('at \u001B[96mlayout.ts\u001B[0m:')
+  expect(coloredOutput).toContain('\u001B[96mlayout.ts\u001B[0m:6:14 in divide')
+  expect(coloredOutput).not.toContain('layout.ts:')
+  expect(output).not.toContain('\u001B[')
 
   // A do-while stays outside the subset (while itself lowers now), and no catalog guide
   // claims a safe rewrite for one, so the audit must say plainly that nothing applies.
@@ -349,7 +356,7 @@ test('partial audits retain requirements found before a path stopped', () => {
   const observedRequirement = audit.references.find(reference =>
     reference.functionName === 'partial' && reference.reason.kind === 'requires')
   expect(observedRequirement?.guideIDs).toEqual(['guard-derived-value', 'encode-input-rule'])
-  expect(formatFileAuditUnit(audit)).toContain('### Check the exact divisor')
+  expect(formatFileAuditUnit(audit)).toContain('  Check the exact divisor:')
 })
 
 test('array callbacks route by structured method kind', () => {

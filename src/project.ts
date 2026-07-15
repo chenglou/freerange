@@ -9,7 +9,7 @@ import {existsSync, realpathSync} from 'node:fs'
 import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
-import {auditPreamble, createFileAudit, formatFileAuditUnit} from './audit.ts'
+import {createFileAudit, formatFileAuditUnit} from './audit.ts'
 import type {AssertionVerdict, FunctionAnalysis, RequirementFailure} from './engine/outcome.ts'
 import type {SiteID} from './ir/ids.ts'
 import {reportPath, siteLocation} from './ir/program.ts'
@@ -90,7 +90,6 @@ export function runProjectAudit(searchFrom: string): boolean {
   const audits = scan.files.map(createFileAudit)
     .sort((left, right) => left.file.localeCompare(right.file))
   console.log([
-    auditPreamble,
     ...audits.map(audit => formatFileAuditUnit(audit, scan.pretty)),
     formatCoverage(scan.coverage),
   ].join('\n\n'))
@@ -101,10 +100,7 @@ export function runProjectAudit(searchFrom: string): boolean {
 // of the project audit.
 export function runFileAudit(file: string): boolean {
   const target = analyzeTargetFile(file)
-  console.log([
-    auditPreamble,
-    formatFileAuditUnit(createFileAudit(target.detailed), target.pretty),
-  ].join('\n\n'))
+  console.log(formatFileAuditUnit(createFileAudit(target.detailed), target.pretty))
   return false
 }
 
