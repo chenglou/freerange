@@ -316,7 +316,7 @@ function lowerForOfStatement(statement: ts.ForOfStatement, context: FunctionCont
       kind: 'arrayIndex',
       array,
       index: counter,
-      mode: 'proven',
+      mode: 'bare',
     }),
   )
   context.loops.push({header, carried, advance})

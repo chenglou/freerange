@@ -210,11 +210,10 @@ function evaluateInstructionKinded(
       const indexKey = canonicalValueKey(instruction.index, context.expressionContext)
       const arrayKey = canonicalValueKey(instruction.array, context.expressionContext)
       const assumedValid = hasIndexFact(state.valueFacts, 'validIndex', indexKey, arrayKey)
-      // Four proofs of in-bounds: for-of construction, a complete prior requirement,
-      // intervals, or the strict below-length half from a guard combined with the index's
-      // own integer/nonnegative facts.
-      const inBounds = instruction.mode === 'proven'
-        || assumedValid
+      // Three proofs of in-bounds: a complete prior requirement, intervals, or the strict
+      // below-length half from a guard combined with the index's own integer/nonnegative
+      // facts. A for-of loop reaches the same third proof through its generated guard.
+      const inBounds = assumedValid
         || (index.integer && !index.mayBeNaN && index.lower >= 0 && index.upper < length.lower)
         || (index.integer && !index.mayBeNaN && index.lower >= 0
           && hasIndexFact(state.valueFacts, 'belowLength', indexKey, arrayKey))
@@ -228,7 +227,7 @@ function evaluateInstructionKinded(
         // and length ranges admit no such integer, every concrete read misses.
         || firstPossibleIndex > lastPossibleIndex
       if (provablyOut) {
-        if (instruction.mode === 'asserted' || instruction.mode === 'proven') {
+        if (instruction.mode === 'asserted') {
           return failedRequirement({kind: 'elementInBounds', site: instruction.site})
         }
         return value({kind: 'nullish', sentinels: 'undefined'})
@@ -1380,17 +1379,6 @@ function comparisonLocalProof(
 ): AbstractBoolean | null {
   if (left.mayBeNaN || right.mayBeNaN) return null
   const proof = createComparisonProof(state, context.expressionContext)
-
-  if (proof.same(instruction.left, instruction.right)) {
-    switch (instruction.operator) {
-      case 'equal':
-      case 'lessThanOrEqual':
-      case 'greaterThanOrEqual': return exactBoolean(true)
-      case 'notEqual':
-      case 'lessThan':
-      case 'greaterThan': return exactBoolean(false)
-    }
-  }
 
   switch (instruction.operator) {
     case 'lessThan': {

@@ -26,12 +26,12 @@ export type InstructionIR =
   // An element read. Bare reads honestly carry possible undefined regardless of the
   // project's TypeScript options; bareUnchecked marks the case where those options hide
   // undefined and Freerange should explain a later kind mismatch. Asserted reads create
-  // an assumption when bounds are unknown, while proven is the for-of counter.
+  // an assumption when bounds are unknown.
   | (InstructionBase & {
       kind: 'arrayIndex'
       array: ValueID
       index: ValueID
-      mode: 'bare' | 'bareUnchecked' | 'asserted' | 'proven'
+      mode: 'bare' | 'bareUnchecked' | 'asserted'
     })
   // `value === null` and friends. sentinel 'nullish' is the loose form (== null, and the
   // ?? test), which covers both sentinels; negated flips the polarity (!==, !=).
