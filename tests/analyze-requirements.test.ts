@@ -301,7 +301,7 @@ describe('requirements and numeric checks', () => {
     // Inside case 4 the subject is exactly 4, so the division discharges with no
     // requirement — the same narrowing an if (step === 4) gets.
     expect(analyzedFunction(report, 'narrows').requires).toEqual([])
-    expect(analyzedFunction(report, 'narrows').ensures).toEqual(['return is a finite number from 0 through 25'])
+    expect(analyzedFunction(report, 'narrows').ensures).toEqual(['return is a finite integer number from 0 through 25'])
     const entries = new Map(report.functions.map(fn => [fn.name, fn]))
     const falls = entries.get('falls')!
     if (falls.kind !== 'unsupported') throw new Error(`expected falls to be unsupported, got ${falls.kind}`)

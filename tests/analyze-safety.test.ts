@@ -439,7 +439,7 @@ describe('acceptance and module safety', () => {
         return Infinity
       }
     `)
-    expect(analyzedFunction(report, 'clampFromBelow').ensures).toEqual(['return is a finite number from 0 through 0'])
+    expect(analyzedFunction(report, 'clampFromBelow').ensures).toEqual(['return is a finite integer number from 0 through 0'])
     expect(analyzedFunction(report, 'unbounded').ensures).toEqual(['return is a possibly non-finite number from Infinity through Infinity'])
     expect(analyzedFunction(report, 'shadowed').ensures).toEqual(['return is a finite integer number from 5 through 5'])
   })

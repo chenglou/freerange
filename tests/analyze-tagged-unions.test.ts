@@ -50,7 +50,7 @@ describe('tagged unions and narrowing', () => {
     ])
     expect(analyzedFunction(report, 'elseIfChain').ensures).toEqual(['return is a finite number'])
     // The two variants' exact constants survive the join and re-split at the caller.
-    expect(analyzedFunction(report, 'useIt').ensures).toEqual(['return is a finite number from 50 through 240'])
+    expect(analyzedFunction(report, 'useIt').ensures).toEqual(['return is a finite integer number from 50 through 240'])
     expect(analyzedFunction(report, 'switchOnTag').ensures).toEqual(['return is a finite number'])
     expect(analyzedFunction(report, 'pick').ensures).toEqual([
       "return.type is 'sidebar' or 'mobile'",

@@ -543,7 +543,7 @@ describe('control flow and contracts', () => {
       'count is finite and not NaN',
       `the divisor at ${file}:6:19 is nonzero`,
     ])
-    expect(drain.ensures).toEqual(['return is a finite number from 100 through 100'])
+    expect(drain.ensures).toEqual(['return is a finite integer number from 100 through 100'])
   })
 
   test('does not analyze caller statements past a partially supported call or leak callee state changes', () => {
@@ -664,8 +664,8 @@ describe('control flow and contracts', () => {
     expect(fn.ensures).toEqual(['return is a finite number at least 1'])
 
     const unrelated = analyzedFunction(report, 'unrelatedDestinationStaysUnchanged')
-    // Math.min mixes an integer with a non-integer operand, so no integer flag survives.
-    expect(unrelated.ensures).toEqual(['return is a finite number from 0 through 0'])
+    // The clamp is exactly zero, so its result is an integer even though one input was not.
+    expect(unrelated.ensures).toEqual(['return is a finite integer number from 0 through 0'])
   })
 
   test('infers, propagates, and discharges nonzero preconditions', () => {
