@@ -1153,6 +1153,7 @@ function recordNonzeroComparisonFacts(
   expressionContext: ExpressionContext,
 ): void {
   for (const id of [check.left, check.right]) {
+    if (expressionContext.instructionByValue[id]?.kind === 'constant') continue
     const held = requiredValue(state, id)
     if (held.kind === 'number' && !includesZero(held)) recordNonzeroValueFact(state, id, expressionContext)
   }

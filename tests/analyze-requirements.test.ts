@@ -1,4 +1,5 @@
 import {describe, expect, test} from 'bun:test'
+import {mergeStates, type ExecutionState} from '../src/engine/state.ts'
 import {analyzeSource} from '../src/index.ts'
 import {analyzedFunction} from './analyze-helpers.ts'
 
@@ -450,6 +451,50 @@ describe('requirements and numeric checks', () => {
     // The relation is paired per array: guarding a's length says nothing about b.
     expect(analyzedFunction(report, 'wrongArray').requires)
       .toEqual([`i is a valid b index (element read at ${file}:20:69)`])
+  })
+
+  test('branch joins keep the shared part of two index checks', () => {
+    const report = analyzeSource('joined-index-facts.ts', `
+      export function guardedFirst(values: number[], index: number, guarded: boolean): number {
+        if (!Number.isInteger(index) || index < 0) return 0
+        if (guarded) {
+          if (index >= values.length) return 0
+        } else if (values[index]! === Infinity) return Infinity
+        return values[index]!
+      }
+      export function readFirst(values: number[], index: number, guarded: boolean): number {
+        if (!Number.isInteger(index) || index < 0) return 0
+        if (guarded) {
+          if (values[index]! === Infinity) return Infinity
+        } else {
+          if (index >= values.length) return 0
+        }
+        return values[index]!
+      }
+      export function differentArrays(values: number[], other: number[], index: number, guarded: boolean): number {
+        if (!Number.isInteger(index) || index < 0) return 0
+        if (guarded) {
+          if (index >= values.length) return 0
+        } else if (other[index]! === Infinity) return Infinity
+        return values[index]!
+      }
+    `)
+
+    for (const name of ['guardedFirst', 'readFirst']) {
+      expect(analyzedFunction(report, name).requires).toHaveLength(1)
+      expect(analyzedFunction(report, name).requires[0]).toContain('index is a valid values index')
+    }
+    expect(analyzedFunction(report, 'differentArrays').requires).toHaveLength(2)
+
+    const previous: ExecutionState = {
+      frame: {values: []}, shared: [],
+      valueFacts: [{kind: 'validIndex', index: 'index', array: 'values'}],
+    }
+    const candidate: ExecutionState = {
+      frame: {values: []}, shared: [],
+      valueFacts: [{kind: 'belowLength', index: 'index', array: 'values'}],
+    }
+    expect(mergeStates(previous, candidate, false)).toEqual({state: candidate, changed: true})
   })
 
   test('unproven asserted reads mint a requires when nameable, an assumes otherwise', () => {

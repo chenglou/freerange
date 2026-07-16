@@ -52,7 +52,21 @@ export function addValueFact(facts: ValueFact[], candidate: ValueFact): void {
 }
 
 export function intersectValueFacts(left: ValueFact[], right: ValueFact[]): ValueFact[] {
-  return left.filter(fact => right.some(other => sameValueFact(fact, other)))
+  const intersection: ValueFact[] = []
+  for (const leftFact of left) {
+    for (const rightFact of right) {
+      const shared = intersectValueFact(leftFact, rightFact)
+      if (shared != null) addValueFact(intersection, shared)
+    }
+  }
+  return intersection
+}
+
+function intersectValueFact(left: ValueFact, right: ValueFact): ValueFact | null {
+  if (sameValueFact(left, right)) return left
+  if (left.kind === 'nonzero' || right.kind === 'nonzero') return null
+  if (left.index !== right.index || left.array !== right.array) return null
+  return {kind: 'belowLength', index: left.index, array: left.array}
 }
 
 function sameValueFact(left: ValueFact, right: ValueFact): boolean {
@@ -124,7 +138,10 @@ export function mergeStates(previous: ExecutionState, candidate: ExecutionState,
     }
   }
   const valueFacts = intersectValueFacts(previous.valueFacts, candidate.valueFacts)
-  if (valueFacts.length !== previous.valueFacts.length) changed = true
+  if (
+    valueFacts.length !== previous.valueFacts.length
+    || valueFacts.some(fact => !previous.valueFacts.some(previousFact => sameValueFact(fact, previousFact)))
+  ) changed = true
   const state: ExecutionState = {
     frame: {values},
     shared,
