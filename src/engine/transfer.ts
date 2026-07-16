@@ -256,13 +256,10 @@ function evaluateInstructionKinded(
         }
         // The function's contract now assumes this read is valid. Keep the index facts
         // and the exact array/index relationship for later reads on this path.
-        writeThroughProducers(state, instruction.index, {
-          ...index,
-          lower: Math.ceil(Math.max(index.lower, 0)),
-          upper: Math.floor(index.upper),
-          integer: true,
-          mayBeNaN: false,
-        }, context.expressionContext.instructionByValue)
+        writeThroughProducers(
+          state, instruction.index, validIndexNumber(index),
+          context.expressionContext.instructionByValue,
+        )
         addValueFact(state.valueFacts, {kind: 'validIndex', index: indexKey, array: arrayKey})
       }
       return passthroughValue(element)
@@ -1163,16 +1160,18 @@ function requiredNumberWithFacts(
   let result = requiredNumber(state, id)
   const key = canonicalValueKey(id, expressionContext)
   if (state.valueFacts.some(fact => fact.kind === 'validIndex' && fact.index === key)) {
-    result = {
-      ...result,
-      lower: Math.ceil(Math.max(result.lower, 0)),
-      upper: Math.floor(result.upper),
-      integer: true,
-      mayBeNaN: false,
-    }
+    result = validIndexNumber(result)
   }
   if (hasNonzeroFact(state.valueFacts, key)) result = excludePointFrom(result, constantNumber(0))
   return result
+}
+
+function validIndexNumber(value: AbstractNumber): AbstractNumber {
+  return {
+    ...value, integer: true, mayBeNaN: false,
+    lower: Math.ceil(Math.max(value.lower, 0)),
+    upper: Math.floor(value.upper),
+  }
 }
 
 function recordNonzeroComparisonFacts(
