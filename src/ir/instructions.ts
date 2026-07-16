@@ -68,9 +68,9 @@ export type InstructionIR =
   // additionally lives in the requirement expression language; these can join it when a
   // rounded divisor shows the need.
   | (InstructionBase & {kind: 'mathUnary'; operator: 'ceil' | 'round' | 'trunc' | 'sqrt'; value: ValueID})
-  // A string's .length: a fresh nonnegative integer, no operand carried (the string is
-  // opaque and the length is unrelated across reads).
-  | (InstructionBase & {kind: 'stringLength'})
+  // A string's .length is a nonnegative integer. Carrying the string lets repeated reads
+  // of the same immutable value keep their identity.
+  | (InstructionBase & {kind: 'stringLength'; value: ValueID})
   // parseFloat / parseInt / Number(x): an honest NaN source — any number including NaN
   // and the infinities; parseInt's result is an integer when it is a number at all.
   // Arguments are lowered by the caller and not carried.
@@ -105,13 +105,13 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'nullishConstant':
     case 'opaqueConstant':
     case 'unknownBoolean':
-    case 'stringLength':
     case 'parsedNumber':
     case 'booleanConstant':
     case 'moduleRead':
     case 'moduleHavoc':
     case 'platformValue':
       return
+    case 'stringLength': visit(instruction.value); return
     case 'moduleWrite': visit(instruction.value); return
     case 'binary': visit(instruction.left); visit(instruction.right); return
     case 'compare': visit(instruction.left); visit(instruction.right); return

@@ -3,6 +3,249 @@ import {analyzeSource} from '../src/index.ts'
 import {analyzedFunction} from './analyze-helpers.ts'
 
 describe('requirements and numeric checks', () => {
+  test('one evaluated number stays identical through arithmetic, stable reads, and calls', () => {
+    const report = analyzeSource('same-value.ts', `
+      function identity(value: number): number { return value }
+      function ratio(total: number, left: number, right: number): number {
+        return total / (left - right)
+      }
+      function forwardedRatio(total: number, left: number, right: number): number {
+        return ratio(total, left, right)
+      }
+      export function difference(value: number): number { return value - value }
+      export function doubled(value: number): number { return value + value }
+      export function square(value: number): number { return value * value }
+      export function quotient(value: number): number { return value / value }
+      export function remainder(value: number): number { return value % value }
+      export function lengths(values: number[], text: string): number {
+        return (values.length - values.length) + (text.length - text.length)
+      }
+      export function sameArgument(total: number, value: number): number {
+        return ratio(total, value, value)
+      }
+      export function sameStoredResult(total: number, value: number): number {
+        const result = identity(value)
+        return ratio(total, result, result)
+      }
+      export function sameProperty(total: number, box: {value: number}): number {
+        return ratio(total, box.value, box.value)
+      }
+      export function nestedLocalRecords(value: number): number {
+        const inner = {value}
+        const outer = {inner}
+        return outer.inner.value - value
+      }
+      export function nestedRecordRequirement(total: number, divisor: number): number {
+        const inner = {divisor}
+        const outer = {inner}
+        return total / outer.inner.divisor
+      }
+      export function sameThroughWrapper(total: number, value: number): number {
+        return forwardedRatio(total, value, value)
+      }
+      export function separateCalls(total: number, value: number): number {
+        return ratio(total, identity(value), identity(value))
+      }
+    `)
+
+    expect(analyzedFunction(report, 'difference').ensures)
+      .toEqual(['return is a finite integer number from 0 through 0'])
+    expect(analyzedFunction(report, 'doubled').ensures[0]).not.toContain('NaN')
+    expect(analyzedFunction(report, 'square').ensures[0]).toContain('from 0 through Infinity')
+    expect(analyzedFunction(report, 'quotient').ensures)
+      .toEqual(['return is a finite integer number from 1 through 1'])
+    expect(analyzedFunction(report, 'remainder').ensures)
+      .toEqual(['return is a finite integer number from 0 through 0'])
+    expect(analyzedFunction(report, 'lengths').ensures)
+      .toEqual(['return is a finite integer number from 0 through 0'])
+    expect(analyzedFunction(report, 'nestedLocalRecords').ensures)
+      .toEqual(['return is a finite integer number from 0 through 0'])
+    const nestedRequirement = analyzedFunction(report, 'nestedRecordRequirement')
+    expect(nestedRequirement.requires).toHaveLength(1)
+    expect(nestedRequirement.assumptions.filter(line => line.includes('divisor at'))).toHaveLength(0)
+
+    for (const name of ['sameArgument', 'sameStoredResult', 'sameProperty', 'sameThroughWrapper']) {
+      const fn = report.functions.find(candidate => candidate.name === name)
+      if (fn?.kind !== 'partial') throw new Error(`expected ${name} to reject the impossible call`)
+      expect(fn.partialReasons[0]).toContain('violates its nonzero divisor requirement')
+    }
+    // Matching source text is not identity: these calls are evaluated separately.
+    expect(analyzedFunction(report, 'separateCalls').assumptions)
+      .toContain('the divisor at same-value.ts:4:16 is nonzero')
+  })
+
+  test('same-value comparisons preserve JavaScript NaN behavior', () => {
+    const report = analyzeSource('same-value-comparisons.ts', `
+      export function selfLess(text: string): number {
+        const parsed = Number.parseFloat(text)
+        return parsed < parsed ? 1 : 2
+      }
+      export function selfEqual(text: string): number {
+        const parsed = Number.parseFloat(text)
+        return parsed === parsed ? 1 : 2
+      }
+      export function finiteSelf(value: number): number {
+        if (value !== value) return 1
+        if (value >= value) return 2
+        return 3
+      }
+      export function booleanSelf(flag: boolean): number {
+        return flag === flag ? 1 : 2
+      }
+    `)
+
+    expect(analyzedFunction(report, 'selfLess').ensures)
+      .toEqual(['return is a finite integer number from 2 through 2'])
+    expect(analyzedFunction(report, 'selfEqual').ensures)
+      .toEqual(['return is a finite integer number from 1 through 2'])
+    expect(analyzedFunction(report, 'finiteSelf').ensures)
+      .toEqual(['return is a finite integer number from 2 through 2'])
+    expect(analyzedFunction(report, 'booleanSelf').ensures)
+      .toEqual(['return is a finite integer number from 1 through 1'])
+  })
+
+  test('a requirement applies to later uses of the same stored value on that path', () => {
+    const report = analyzeSource('requirement-reuse.ts', `
+      function divideOnce(total: number, divisor: number): number {
+        return total / divisor
+      }
+      function requireNonzero(divisor: number): number {
+        console.assert(divisor !== 0)
+        return 0
+      }
+      function dividePair(left: number, right: number): number {
+        return 1 / left + 2 / right
+      }
+      function readPair(values: number[], first: number, second: number): number {
+        return values[first]! + values[second]!
+      }
+      export function storedDivisor(left: number, right: number, base: number, offset: number): number {
+        const divisor = base - offset
+        return left / divisor + right / divisor
+      }
+      export function recomputedDivisor(left: number, right: number, base: number, offset: number): number {
+        return left / (base - offset) + right / (base - offset)
+      }
+      export function repeatedRead(values: number[], index: number): number {
+        return values[index]! - values[index]!
+      }
+      export function savedProperty(box: {value: number}): number {
+        const saved = box.value
+        return 1 / box.value + 2 / saved
+      }
+      export function afterCompletedCall(left: number, right: number, divisor: number): number {
+        const first = divideOnce(left, divisor)
+        return first + right / divisor
+      }
+      export function afterDeclaredRequirement(total: number, divisor: number): number {
+        const checked = requireNonzero(divisor)
+        return checked + total / divisor
+      }
+      export function duplicateArguments(value: number): number {
+        return dividePair(value, value)
+      }
+      export function duplicateIndexes(values: number[], index: number): number {
+        return readPair(values, index, index)
+      }
+      export function repeatedElementDivisor(values: number[], index: number): number {
+        return 1 / values[index]! + 2 / values[index]!
+      }
+      export function guardedRepeatedElement(values: number[], index: number): number {
+        if (values[index]! !== 0) return 1 / values[index]!
+        return 0
+      }
+      export function replacedDivisor(total: number, divisor: number): number {
+        const first = total / divisor
+        divisor = 0
+        return first + total / divisor
+      }
+      export function replacedIndex(values: number[], index: number): number {
+        const first = values[index]!
+        index = -1
+        return first + values[index]!
+      }
+      export function separateBranches(flag: boolean, total: number, divisor: number): number {
+        if (flag) return total / divisor
+        return (total + 1) / divisor
+      }
+      export function branchThenUse(flag: boolean, left: number, right: number, divisor: number): number {
+        let result = 0
+        if (flag) result = left / divisor
+        return result + right / divisor
+      }
+      export function loopThenUse(count: number, left: number, right: number, divisor: number): number {
+        let result = 0
+        for (let index = 0; index < count; index += 1) result = result + left / divisor
+        return result + right / divisor
+      }
+      export function requirementBeforeLoop(count: number, left: number, right: number, divisor: number): number {
+        let result = left / divisor
+        for (let index = 0; index < count; index += 1) result = result + right / divisor
+        return result
+      }
+      export function separateArrays(left: number[], right: number[], index: number): number {
+        return left[index]! + right[index]!
+      }
+      export function fractionalIndex(values: number[]): number {
+        return values[0.5]!
+      }
+      export function infiniteIndex(values: number[]): number {
+        return values[Infinity]!
+      }
+      export function tuplePastEnd(
+        values: [number, number, number, number, number, number],
+        index: number,
+      ): number {
+        if (index >= 5.5 && index <= 6.5) return values[index]!
+        return 0
+      }
+      export function freshReads(): number {
+        return performance.now() - performance.now()
+      }
+    `)
+
+    expect(analyzedFunction(report, 'storedDivisor').requires).toHaveLength(1)
+    expect(analyzedFunction(report, 'recomputedDivisor').requires).toHaveLength(2)
+    expect(analyzedFunction(report, 'repeatedRead').requires).toHaveLength(1)
+    expect(analyzedFunction(report, 'repeatedRead').ensures)
+      .toEqual(['return is a finite integer number from 0 through 0'])
+    for (const name of [
+      'savedProperty',
+      'afterCompletedCall',
+      'afterDeclaredRequirement',
+      'duplicateArguments',
+    ]) {
+      expect(analyzedFunction(report, name).requires).toHaveLength(1)
+    }
+    expect(analyzedFunction(report, 'duplicateIndexes').requires).toHaveLength(1)
+    const repeatedElement = analyzedFunction(report, 'repeatedElementDivisor')
+    expect(repeatedElement.requires).toHaveLength(1)
+    expect(repeatedElement.assumptions.filter(line => line.includes('divisor at'))).toHaveLength(1)
+    const guardedElement = analyzedFunction(report, 'guardedRepeatedElement')
+    expect(guardedElement.requires).toHaveLength(1)
+    expect(guardedElement.assumptions.filter(line => line.includes('divisor at'))).toHaveLength(0)
+    expect(analyzedFunction(report, 'separateBranches').requires).toHaveLength(2)
+    expect(analyzedFunction(report, 'branchThenUse').requires).toHaveLength(2)
+    expect(analyzedFunction(report, 'loopThenUse').requires).toHaveLength(2)
+    expect(analyzedFunction(report, 'requirementBeforeLoop').requires).toHaveLength(1)
+    expect(analyzedFunction(report, 'separateArrays').requires).toHaveLength(2)
+    expect(analyzedFunction(report, 'freshReads').ensures[0]).not.toContain('from 0 through 0')
+
+    for (const name of [
+      'replacedDivisor',
+      'replacedIndex',
+      'fractionalIndex',
+      'infiniteIndex',
+      'tuplePastEnd',
+    ]) {
+      const fn = report.functions.find(candidate => candidate.name === name)
+      if (fn?.kind !== 'partial') throw new Error(`expected ${name} to reject the impossible operation`)
+    }
+    const fractional = report.functions.find(candidate => candidate.name === 'fractionalIndex')
+    if (fractional?.kind !== 'partial') throw new Error('expected fractionalIndex to be partial')
+    expect(fractional.partialReasons[0]).toContain('reads an element provably outside the array')
+  })
+
   test('switch dispatch and rejection boundaries', () => {
     // Owner decision: every non-empty case body ends in break or return, stacked empty
     // labels share the next body, default comes last. Under that rule a switch is exactly

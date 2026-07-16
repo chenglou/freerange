@@ -19,28 +19,47 @@ export type SharedState = ModuleSlot[]
 export type ExecutionState = {
   frame: FunctionFrame
   shared: SharedState
-  // The one relational fact the analysis carries: "this value is a valid index into
-  // that array" — established by the bounds-check guard `i >= 0 && i < arr.length`
-  // (the lower bound and integrality live on the value's own interval; the list records
-  // only the below-length half, named by canonical value keys so repeated property
-  // reads of the same record match, and seeded across calls for argument pairs).
-  // Sound to keep for the whole evaluation: IR values never change and arrays are
-  // immutable after construction, so the fact cannot be invalidated. Joins still
-  // intersect, since a fact must hold on
-  // every incoming path. Deliberately not a general relational domain: one relation kind,
-  // no transitivity, no arithmetic over it. A handful of pairs per state at most, so a
-  // plain deduplicated array with linear scans.
-  validIndexPairs: ValidIndexPair[]
+  // Conditions established by a guard or by a requirement/assumption already recorded
+  // on this path. Value keys name immutable runtime values, so assignment naturally uses
+  // a new key. Joins intersect the list. This is deliberately a closed set of three facts,
+  // with no transitivity or arithmetic, stored as a small deduplicated array.
+  valueFacts: ValueFact[]
 }
 
-export type ValidIndexPair = {index: string; array: string}
+export type ValueFact =
+  | {kind: 'nonzero'; value: string}
+  // The strict `index < array.length` half of a bounds guard. The index's own abstract
+  // number must still prove integer, non-NaN, and nonnegative.
+  | {kind: 'belowLength'; index: string; array: string}
+  // A requirement or assumption for an asserted read proves the complete condition.
+  | {kind: 'validIndex'; index: string; array: string}
 
-export function hasValidIndexPair(pairs: ValidIndexPair[], index: string, array: string): boolean {
-  return pairs.some(pair => pair.index === index && pair.array === array)
+export function hasNonzeroFact(facts: ValueFact[], value: string): boolean {
+  return facts.some(fact => fact.kind === 'nonzero' && fact.value === value)
 }
 
-export function addValidIndexPair(pairs: ValidIndexPair[], index: string, array: string): void {
-  if (!hasValidIndexPair(pairs, index, array)) pairs.push({index, array})
+export function hasIndexFact(
+  facts: ValueFact[],
+  kind: 'belowLength' | 'validIndex',
+  index: string,
+  array: string,
+): boolean {
+  return facts.some(fact => fact.kind === kind && fact.index === index && fact.array === array)
+}
+
+export function addValueFact(facts: ValueFact[], candidate: ValueFact): void {
+  if (!facts.some(fact => sameValueFact(fact, candidate))) facts.push(candidate)
+}
+
+export function intersectValueFacts(left: ValueFact[], right: ValueFact[]): ValueFact[] {
+  return left.filter(fact => right.some(other => sameValueFact(fact, other)))
+}
+
+function sameValueFact(left: ValueFact, right: ValueFact): boolean {
+  if (left.kind !== right.kind) return false
+  if (left.kind === 'nonzero' && right.kind === 'nonzero') return left.value === right.value
+  if (left.kind === 'nonzero' || right.kind === 'nonzero') return false
+  return left.index === right.index && left.array === right.array
 }
 
 export function emptySharedState(moduleCount: number): SharedState {
@@ -58,14 +77,14 @@ export function cloneState(state: ExecutionState): ExecutionState {
   return {
     frame: {values: state.frame.values.slice()},
     shared: cloneSharedState(state.shared),
-    // Pair objects are never mutated, only appended or filtered, so a shallow copy suffices.
-    validIndexPairs: state.validIndexPairs.slice(),
+    // Facts are never mutated, only appended or filtered, so a shallow copy suffices.
+    valueFacts: state.valueFacts.slice(),
   }
 }
 
 // A new state field must participate in both the merged value and `changed`. Listing the
 // fields here makes that review mandatory when ExecutionState grows.
-const mergedStateFields: Record<keyof ExecutionState, true> = {frame: true, shared: true, validIndexPairs: true}
+const mergedStateFields: Record<keyof ExecutionState, true> = {frame: true, shared: true, valueFacts: true}
 
 // Joins one incoming state into the block's previous state and reports whether the block
 // must run again. The comparison happens while each joined value is already in hand, so
@@ -104,13 +123,12 @@ export function mergeStates(previous: ExecutionState, candidate: ExecutionState,
       if (!sameValues(previousSlot.value, merged)) changed = true
     }
   }
-  const validIndexPairs = previous.validIndexPairs.filter(pair =>
-    hasValidIndexPair(candidate.validIndexPairs, pair.index, pair.array))
-  if (validIndexPairs.length !== previous.validIndexPairs.length) changed = true
+  const valueFacts = intersectValueFacts(previous.valueFacts, candidate.valueFacts)
+  if (valueFacts.length !== previous.valueFacts.length) changed = true
   const state: ExecutionState = {
     frame: {values},
     shared,
-    validIndexPairs,
+    valueFacts,
   }
   return {state, changed}
 }

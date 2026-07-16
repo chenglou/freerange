@@ -39,18 +39,21 @@ import {
   peelNonzero,
   canonicalValueKey,
   numericExpression,
+  resolveStoredValue,
+  sameRuntimeValue,
   staticRequirement,
   type ExpressionContext,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {completedEvaluation, type FunctionEvaluation, type RequirementFailure, type Stop} from './outcome.ts'
 import {
-  addValidIndexPair,
+  addValueFact,
   cloneState,
-  hasValidIndexPair,
+  hasIndexFact,
+  hasNonzeroFact,
   type ExecutionState,
   type SharedState,
-  type ValidIndexPair,
+  type ValueFact,
 } from './state.ts'
 
 type EvaluateFunction = (
@@ -59,7 +62,9 @@ type EvaluateFunction = (
   argumentExpressions: Array<NumericExpression | null>,
   sharedState: SharedState,
   callStack: FunctionID[],
-  seededIndexPairs: ValidIndexPair[],
+  valueFacts: ValueFact[],
+  parameterIdentityKeys: string[],
+  identityNamespace: string,
 ) => FunctionEvaluation
 
 export type TransferContext = {
@@ -196,29 +201,31 @@ function evaluateInstructionKinded(
     }
     case 'arrayIndex': {
       const sequence = requiredSequence(state, instruction.array)
-      const index = requiredNumber(state, instruction.index)
+      const index = requiredNumberWithFacts(state, instruction.index, context.expressionContext)
       const element = sequence.kind === 'tuple'
         ? tupleElement(sequence, index)
         : sequence.element
       const length = sequence.kind === 'tuple' ? constantNumber(sequence.elements.length) : sequence.length
-      // Three proofs of in-bounds: the for-of desugaring's by-construction counter, the
-      // interval argument (index tops out below every possible length), and the recorded
-      // bounds-check relation (`i >= 0 && i < arr.length` — the lower bound and
-      // integrality still come from the index's own interval; a float index fails here
-      // honestly, since arr[1.5] misses).
+      const indexKey = canonicalValueKey(instruction.index, context.expressionContext)
+      const arrayKey = canonicalValueKey(instruction.array, context.expressionContext)
+      const assumedValid = hasIndexFact(state.valueFacts, 'validIndex', indexKey, arrayKey)
+      // Four proofs of in-bounds: for-of construction, a complete prior requirement,
+      // intervals, or the strict below-length half from a guard combined with the index's
+      // own integer/nonnegative facts.
       const inBounds = instruction.mode === 'proven'
+        || assumedValid
         || (index.integer && !index.mayBeNaN && index.lower >= 0 && index.upper < length.lower)
         || (index.integer && !index.mayBeNaN && index.lower >= 0
-          && hasValidIndexPair(
-            state.validIndexPairs,
-            canonicalValueKey(instruction.index, context.expressionContext),
-            canonicalValueKey(instruction.array, context.expressionContext),
-          ))
+          && hasIndexFact(state.valueFacts, 'belowLength', indexKey, arrayKey))
       // A provably out-of-bounds read: for the asserted form the assertion lied; for the
       // bare form the value is exactly undefined. An empty sequence is the special case
       // where every read is out of bounds.
+      const firstPossibleIndex = Math.ceil(Math.max(index.lower, 0))
+      const lastPossibleIndex = Math.floor(Math.min(index.upper, length.upper - 1))
       const provablyOut = element == null
-        || (index.integer && !index.mayBeNaN && (index.lower >= length.upper || index.upper < 0))
+        // Array indexes are nonnegative integers below the array's length. If the index
+        // and length ranges admit no such integer, every concrete read misses.
+        || firstPossibleIndex > lastPossibleIndex
       if (provablyOut) {
         if (instruction.mode === 'asserted' || instruction.mode === 'proven') {
           return failedRequirement({kind: 'elementInBounds', site: instruction.site})
@@ -246,13 +253,22 @@ function evaluateInstructionKinded(
           })
         } else {
           addBoundsAssumption(context.boundsAssumptions, {site: instruction.site, kind: 'elementInBounds'})
-          return passthroughValue(element)
         }
+        // The function's contract now assumes this read is valid. Keep the index facts
+        // and the exact array/index relationship for later reads on this path.
+        writeThroughProducers(state, instruction.index, {
+          ...index,
+          lower: Math.ceil(Math.max(index.lower, 0)),
+          upper: Math.floor(index.upper),
+          integer: true,
+          mayBeNaN: false,
+        }, context.expressionContext.instructionByValue)
+        addValueFact(state.valueFacts, {kind: 'validIndex', index: indexKey, array: arrayKey})
       }
       return passthroughValue(element)
     }
     case 'numberCheck': {
-      const operand = requiredNumber(state, instruction.value)
+      const operand = requiredNumberWithFacts(state, instruction.value, context.expressionContext)
       return value(evaluateNumberCheck(instruction.predicate, operand))
     }
     case 'tagCheck': {
@@ -403,12 +419,17 @@ function evaluateInstructionKinded(
       // two-point lattice, numbers from their intervals.
       const left = requiredValue(state, instruction.left)
       const right = requiredValue(state, instruction.right)
+      const same = sameRuntimeValue(instruction.left, instruction.right, context.expressionContext)
       if (left.kind === 'boolean' && right.kind === 'boolean'
         && (instruction.operator === 'equal' || instruction.operator === 'notEqual')) {
+        if (same) return value(exactBoolean(instruction.operator === 'equal'))
         return value(compareBooleans(left, right, instruction.operator === 'notEqual'))
       }
-      const leftNumber = requiredNumber(state, instruction.left)
-      const rightNumber = requiredNumber(state, instruction.right)
+      const leftNumber = requiredNumberWithFacts(state, instruction.left, context.expressionContext)
+      const rightNumber = requiredNumberWithFacts(state, instruction.right, context.expressionContext)
+      if (same) {
+        return value(compareSameNumber(intersectSameNumbers(leftNumber, rightNumber), instruction.operator))
+      }
       const intervalResult = compareNumbers(leftNumber, rightNumber, instruction.operator)
       return value(intervalResult)
     }
@@ -427,7 +448,7 @@ function evaluateInstructionKinded(
       mayBeNaN: false,
     }, [], instruction.site)
     case 'mathUnary': {
-      const operand = requiredNumber(state, instruction.value)
+      const operand = requiredNumberWithFacts(state, instruction.value, context.expressionContext)
       return computedNumber(
         instruction.operator === 'sqrt' ? squareRootNumber(operand) : roundedNumber(instruction.operator, operand),
         [operand],
@@ -435,7 +456,7 @@ function evaluateInstructionKinded(
       )
     }
     case 'floor': {
-      const operand = requiredNumber(state, instruction.value)
+      const operand = requiredNumberWithFacts(state, instruction.value, context.expressionContext)
       return computedNumber(floorNumber(operand), [operand], instruction.site)
     }
     case 'platformValue': return passthroughValue({
@@ -446,7 +467,7 @@ function evaluateInstructionKinded(
       mayBeNaN: false,
     })
     case 'absolute': {
-      const operand = requiredNumber(state, instruction.value)
+      const operand = requiredNumberWithFacts(state, instruction.value, context.expressionContext)
       return computedNumber(absoluteNumber(operand), [operand], instruction.site)
     }
     case 'not': {
@@ -480,16 +501,16 @@ function evaluateInstructionKinded(
       }
       state.frame = refined.frame
       state.shared = refined.shared
-      state.validIndexPairs = refined.validIndexPairs
+      state.valueFacts = refined.valueFacts
       addPrecondition(context.preconditions, requirement)
       return value({kind: 'void'})
     }
     case 'minimum': {
-      const operands = instruction.values.map(id => requiredNumber(state, id))
+      const operands = instruction.values.map(id => requiredNumberWithFacts(state, id, context.expressionContext))
       return computedNumber(minimumNumbers(operands), operands, instruction.site)
     }
     case 'maximum': {
-      const operands = instruction.values.map(id => requiredNumber(state, id))
+      const operands = instruction.values.map(id => requiredNumberWithFacts(state, id, context.expressionContext))
       return computedNumber(maximumNumbers(operands), operands, instruction.site)
     }
     case 'call': {
@@ -503,27 +524,20 @@ function evaluateInstructionKinded(
       }
       const arguments_ = instruction.arguments.map(id => requiredValue(state, id))
       const argumentExpressions = instruction.arguments.map(id => numericExpression(id, context.expressionContext))
-      // A caller's bounds check travels into the callee the way interval facts already do
-      // through argument values: every argument pair whose valid-index relation holds
-      // here seeds the same relation on the callee's parameters, so a guarded call site
-      // discharges the callee's element read instead of inheriting its requirement.
+      // Parameters use their caller arguments' identity keys. The same small fact list
+      // therefore works inside the callee and comes back after every normal return, so a
+      // requirement established by a completed helper call applies below that call.
       const argumentKeys = instruction.arguments.map(id => canonicalValueKey(id, context.expressionContext))
-      const seededIndexPairs: ValidIndexPair[] = []
-      for (let indexPosition = 0; indexPosition < argumentKeys.length; indexPosition++) {
-        for (let arrayPosition = 0; arrayPosition < argumentKeys.length; arrayPosition++) {
-          if (indexPosition === arrayPosition) continue
-          if (hasValidIndexPair(state.validIndexPairs, argumentKeys[indexPosition]!, argumentKeys[arrayPosition]!)) {
-            addValidIndexPair(seededIndexPairs, `p${indexPosition}`, `p${arrayPosition}`)
-          }
-        }
-      }
+      const calleeNamespace = `${context.expressionContext.identityNamespace}call:${instruction.function}:${instruction.site}/`
       const evaluation = context.evaluateFunction(
         instruction.function,
         arguments_,
         argumentExpressions,
         state.shared,
         context.callStack,
-        seededIndexPairs,
+        state.valueFacts,
+        argumentKeys,
+        calleeNamespace,
       )
       // A partial callee's result is discarded wholesale: the callee ran on a clone, and
       // state.shared is assigned only on the complete path below, so a partial callee's
@@ -550,21 +564,20 @@ function evaluateInstructionKinded(
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
+      state.valueFacts = completed.valueFacts.filter(fact =>
+        !valueFactUsesNamespace(fact, calleeNamespace))
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
       return passthroughValue(completed.returnValue)
     }
     case 'binary': {
-      const left = requiredNumber(state, instruction.left)
-      const right = requiredNumber(state, instruction.right)
-      // x * x is a square: the same IR value on both sides is the same runtime value, so
-      // the product cannot be negative (dx * dx in distance math). The domain cannot see
-      // value identity, so the clamp lives here.
-      if (instruction.operator === 'multiply' && instruction.left === instruction.right) {
-        const squared = multiplyNumbers(left, right)
-        const clamped = squared.lower < 0 ? {...squared, lower: 0} : squared
-        return computedNumber(clamped, [left, right], instruction.site)
-      }
+      const left = requiredNumberWithFacts(state, instruction.left, context.expressionContext)
+      const right = requiredNumberWithFacts(state, instruction.right, context.expressionContext)
+      const sameOperand = sameRuntimeValue(
+        instruction.left,
+        instruction.right,
+        context.expressionContext,
+      ) ? intersectSameNumbers(left, right) : null
       if (
         (instruction.operator === 'divide' || instruction.operator === 'remainder')
         && isDefinitelyZero(right)
@@ -592,19 +605,36 @@ function evaluateInstructionKinded(
         } else {
           addPrecondition(context.preconditions, peelNonzero(expression, instruction.site, operation))
         }
+        // Preconditions and assumptions are promises made by the caller. Later uses of
+        // this same stored divisor on this path may rely on the promise just recorded.
+        recordNonzeroValueFact(state, instruction.right, context.expressionContext)
+        writeThroughProducers(
+          state,
+          instruction.right,
+          excludePointFrom(right, constantNumber(0)),
+          context.expressionContext.instructionByValue,
+        )
         // Ensures assume the requires: with the nonzero requirement recorded, the quotient
         // is computed over the divisor's range with zero cut out. An integer divisor gives
         // a genuinely finite result; a non-integer one can still sit arbitrarily close to
         // zero and stays possibly non-finite. The remainder is bounded by both operands.
         return computedNumber(
-          instruction.operator === 'divide'
-            ? divideNumbersNonzeroDivisor(left, right)
-            : remainderNumbers(left, right, true),
+          sameOperand == null
+            ? instruction.operator === 'divide'
+              ? divideNumbersNonzeroDivisor(left, right)
+              : remainderNumbers(left, right, true)
+            : evaluateSameOperandBinary(instruction.operator, sameOperand),
           [left, right],
           instruction.site,
         )
       }
-      return computedNumber(evaluateBinary(instruction.operator, left, right), [left, right], instruction.site)
+      return computedNumber(
+        sameOperand == null
+          ? evaluateBinary(instruction.operator, left, right)
+          : evaluateSameOperandBinary(instruction.operator, sameOperand),
+        [left, right],
+        instruction.site,
+      )
     }
   }
 }
@@ -613,6 +643,12 @@ export function addBoundsAssumption(assumptions: BoundsAssumption[], candidate: 
   if (!assumptions.some(assumption => assumption.site === candidate.site && assumption.kind === candidate.kind)) {
     assumptions.push(candidate)
   }
+}
+
+function valueFactUsesNamespace(fact: ValueFact, namespace: string): boolean {
+  const marker = `v:${namespace}`
+  if (fact.kind === 'nonzero') return fact.value.includes(marker)
+  return fact.index.includes(marker) || fact.array.includes(marker)
 }
 
 function sentinelsAdmit(sentinels: 'null' | 'undefined' | 'both', sentinel: 'null' | 'undefined'): boolean {
@@ -948,8 +984,8 @@ function refineComparison(
     if (leftKnown != null && !refineTo(comparison.right, equalHolds ? leftKnown : !leftKnown)) return null
     return result
   }
-  const left = requiredNumber(result, comparison.left)
-  const right = requiredNumber(result, comparison.right)
+  const left = requiredNumberWithFacts(result, comparison.left, expressionContext)
+  const right = requiredNumberWithFacts(result, comparison.right, expressionContext)
   const operator = truth ? comparison.operator : invertedComparison(comparison.operator)
   // The branch where the written condition did not hold is also where a NaN operand lands,
   // with the OTHER operand unconstrained. Inverting an ordered comparison and refining
@@ -1005,21 +1041,21 @@ function refineComparison(
   if (operator === 'lessThan') {
     const rightProducer = producers[comparison.right]
     if (rightProducer?.kind === 'arrayLength') {
-      addValidIndexPair(
-        result.validIndexPairs,
-        canonicalValueKey(comparison.left, expressionContext),
-        canonicalValueKey(rightProducer.array, expressionContext),
-      )
+      addValueFact(result.valueFacts, {
+        kind: 'belowLength',
+        index: canonicalValueKey(comparison.left, expressionContext),
+        array: canonicalValueKey(rightProducer.array, expressionContext),
+      })
     }
   }
   if (operator === 'greaterThan') {
     const leftProducer = producers[comparison.left]
     if (leftProducer?.kind === 'arrayLength') {
-      addValidIndexPair(
-        result.validIndexPairs,
-        canonicalValueKey(comparison.right, expressionContext),
-        canonicalValueKey(leftProducer.array, expressionContext),
-      )
+      addValueFact(result.valueFacts, {
+        kind: 'belowLength',
+        index: canonicalValueKey(comparison.right, expressionContext),
+        array: canonicalValueKey(leftProducer.array, expressionContext),
+      })
     }
   }
   const emptied = refinedLeft.lower > refinedLeft.upper || refinedRight.lower > refinedRight.upper
@@ -1047,6 +1083,7 @@ function refineComparison(
   // rebuilds the record.
   writeThroughProducers(result, comparison.left, refinedLeft, producers)
   writeThroughProducers(result, comparison.right, refinedRight, producers)
+  recordNonzeroComparisonFacts(result, comparison, expressionContext)
   return result
 }
 
@@ -1084,6 +1121,45 @@ function requiredNumber(state: ExecutionState, id: ValueID): AbstractNumber {
   const value = requiredValue(state, id)
   if (value.kind !== 'number') throw new KindMismatch(`IR value ${id} is not a number`, id)
   return value
+}
+
+function requiredNumberWithFacts(
+  state: ExecutionState,
+  id: ValueID,
+  expressionContext: ExpressionContext,
+): AbstractNumber {
+  let result = requiredNumber(state, id)
+  const key = canonicalValueKey(id, expressionContext)
+  if (state.valueFacts.some(fact => fact.kind === 'validIndex' && fact.index === key)) {
+    result = {
+      ...result,
+      lower: Math.ceil(Math.max(result.lower, 0)),
+      upper: Math.floor(result.upper),
+      integer: true,
+      mayBeNaN: false,
+    }
+  }
+  if (hasNonzeroFact(state.valueFacts, key)) result = excludePointFrom(result, constantNumber(0))
+  return result
+}
+
+function recordNonzeroComparisonFacts(
+  state: ExecutionState,
+  check: Extract<InstructionIR, {kind: 'compare'}>,
+  expressionContext: ExpressionContext,
+): void {
+  for (const id of [check.left, check.right]) {
+    const held = requiredValue(state, id)
+    if (held.kind === 'number' && !includesZero(held)) recordNonzeroValueFact(state, id, expressionContext)
+  }
+}
+
+function recordNonzeroValueFact(
+  state: ExecutionState,
+  value: ValueID,
+  expressionContext: ExpressionContext,
+): void {
+  addValueFact(state.valueFacts, {kind: 'nonzero', value: canonicalValueKey(value, expressionContext)})
 }
 
 export function requiredBoolean(state: ExecutionState, id: ValueID): AbstractBoolean {
@@ -1179,6 +1255,62 @@ function evaluateBinary(
   }
 }
 
+function intersectSameNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
+  const met = meetValues(left, right)
+  if (met.kind !== 'number') throw new Error('Meeting two numbers produced a non-number')
+  return met
+}
+
+// These are JavaScript operations on one already-evaluated value, not algebraic rewrites
+// of two expressions that happen to look alike. In particular, x + x cannot combine
+// opposite infinities, while x - x can still be NaN when x is infinite.
+function evaluateSameOperandBinary(
+  operator: Extract<InstructionIR, {kind: 'binary'}>['operator'],
+  operand: AbstractNumber,
+): AbstractNumber {
+  switch (operator) {
+    case 'add': {
+      const doubled = addNumbers(operand, operand)
+      return {...doubled, mayBeNaN: operand.mayBeNaN}
+    }
+    case 'subtract': return {
+      kind: 'number',
+      lower: 0,
+      upper: 0,
+      integer: true,
+      mayBeNaN: operand.mayBeNaN || !isFiniteNumber(operand),
+    }
+    case 'multiply': {
+      const lowerSquare = operand.lower * operand.lower
+      const upperSquare = operand.upper * operand.upper
+      const crossesZero = operand.lower <= 0 && operand.upper >= 0
+      return {
+        kind: 'number',
+        lower: crossesZero
+          ? operand.integer && operand.excludesPoint === 0 ? 1 : 0
+          : Math.min(lowerSquare, upperSquare),
+        upper: Math.max(lowerSquare, upperSquare),
+        integer: operand.integer,
+        mayBeNaN: operand.mayBeNaN,
+      }
+    }
+    case 'divide': return {
+      kind: 'number',
+      lower: 1,
+      upper: 1,
+      integer: true,
+      mayBeNaN: operand.mayBeNaN || !isFiniteNumber(operand),
+    }
+    case 'remainder': return {
+      kind: 'number',
+      lower: 0,
+      upper: 0,
+      integer: true,
+      mayBeNaN: operand.mayBeNaN || !isFiniteNumber(operand),
+    }
+  }
+}
+
 // Assertion-only comparison proofs walk the immutable producer graph. Producer edges
 // point to earlier values, so literal reads terminate without cycle tracking. Ordering
 // rules may revisit the same pair through several min/max operands, so those pairs remain
@@ -1215,47 +1347,42 @@ function comparisonLocalProof(
 ): AbstractBoolean | null {
   if (left.mayBeNaN || right.mayBeNaN) return null
   const proof = createComparisonProof(state, context.expressionContext)
-  const exact = (answer: boolean): AbstractBoolean => ({
-    kind: 'boolean',
-    canBeTrue: answer,
-    canBeFalse: !answer,
-  })
 
   if (proof.same(instruction.left, instruction.right)) {
     switch (instruction.operator) {
       case 'equal':
       case 'lessThanOrEqual':
-      case 'greaterThanOrEqual': return exact(true)
+      case 'greaterThanOrEqual': return exactBoolean(true)
       case 'notEqual':
       case 'lessThan':
-      case 'greaterThan': return exact(false)
+      case 'greaterThan': return exactBoolean(false)
     }
   }
 
   switch (instruction.operator) {
     case 'lessThan': {
-      if (proof.strictlyBelow(instruction.left, instruction.right)) return exact(true)
-      return proof.atMost(instruction.right, instruction.left) ? exact(false) : null
+      if (proof.strictlyBelow(instruction.left, instruction.right)) return exactBoolean(true)
+      return proof.atMost(instruction.right, instruction.left) ? exactBoolean(false) : null
     }
     case 'lessThanOrEqual': {
-      if (proof.atMost(instruction.left, instruction.right)) return exact(true)
-      return proof.strictlyBelow(instruction.right, instruction.left) ? exact(false) : null
+      if (proof.atMost(instruction.left, instruction.right)) return exactBoolean(true)
+      return proof.strictlyBelow(instruction.right, instruction.left) ? exactBoolean(false) : null
     }
     case 'greaterThan': {
-      if (proof.strictlyBelow(instruction.right, instruction.left)) return exact(true)
-      return proof.atMost(instruction.left, instruction.right) ? exact(false) : null
+      if (proof.strictlyBelow(instruction.right, instruction.left)) return exactBoolean(true)
+      return proof.atMost(instruction.left, instruction.right) ? exactBoolean(false) : null
     }
     case 'greaterThanOrEqual': {
-      if (proof.atMost(instruction.right, instruction.left)) return exact(true)
-      return proof.strictlyBelow(instruction.left, instruction.right) ? exact(false) : null
+      if (proof.atMost(instruction.right, instruction.left)) return exactBoolean(true)
+      return proof.strictlyBelow(instruction.left, instruction.right) ? exactBoolean(false) : null
     }
     case 'equal': {
       return proof.strictlyBelow(instruction.left, instruction.right)
-        || proof.strictlyBelow(instruction.right, instruction.left) ? exact(false) : null
+        || proof.strictlyBelow(instruction.right, instruction.left) ? exactBoolean(false) : null
     }
     case 'notEqual': {
       return proof.strictlyBelow(instruction.left, instruction.right)
-        || proof.strictlyBelow(instruction.right, instruction.left) ? exact(true) : null
+        || proof.strictlyBelow(instruction.right, instruction.left) ? exactBoolean(true) : null
     }
   }
 }
@@ -1270,31 +1397,12 @@ function createComparisonProof(
 } {
   const atMostMemo = new Map<string, boolean>()
 
-  // A read through a fresh record literal is the immutable value stored in that field.
-  // Resolving recursively lets frame.content.right reach the arithmetic that built it.
-  const resolveLiteralRead = (value: ValueID): ValueID => {
-    const producer = context.instructionByValue[value]
-    if (producer?.kind === 'property') {
-      const object = resolveLiteralRead(producer.object)
-      const objectProducer = context.instructionByValue[object]
-      if (objectProducer?.kind === 'object') {
-        const property = objectProducer.properties.find(candidate => candidate.name === producer.property)
-        if (property != null) return resolveLiteralRead(property.value)
-      }
-    }
-    return value
-  }
-
   const heldNumber = (value: ValueID): AbstractNumber | null => {
-    const held = state.frame.values[resolveLiteralRead(value)]
+    const held = state.frame.values[resolveStoredValue(value, context)]
     return held?.kind === 'number' ? held : null
   }
 
-  const same = (rawLeft: ValueID, rawRight: ValueID): boolean => {
-    const left = resolveLiteralRead(rawLeft)
-    const right = resolveLiteralRead(rawRight)
-    return left === right || canonicalValueKey(left, context) === canonicalValueKey(right, context)
-  }
+  const same = (left: ValueID, right: ValueID): boolean => sameRuntimeValue(left, right, context)
 
   const nonnegative = (value: ValueID): boolean => {
     const held = heldNumber(value)
@@ -1302,8 +1410,8 @@ function createComparisonProof(
   }
 
   const atMost = (rawLeft: ValueID, rawRight: ValueID): boolean => {
-    const left = resolveLiteralRead(rawLeft)
-    const right = resolveLiteralRead(rawRight)
+    const left = resolveStoredValue(rawLeft, context)
+    const right = resolveStoredValue(rawRight, context)
     if (same(left, right)) return true
 
     const leftNumber = heldNumber(left)
@@ -1390,8 +1498,8 @@ function createComparisonProof(
   }
 
   const strictlyBelow = (rawLeft: ValueID, rawRight: ValueID): boolean => {
-    const left = resolveLiteralRead(rawLeft)
-    const right = resolveLiteralRead(rawRight)
+    const left = resolveStoredValue(rawLeft, context)
+    const right = resolveStoredValue(rawRight, context)
     const leftNumber = heldNumber(left)
     const rightNumber = heldNumber(right)
     if (leftNumber != null && rightNumber != null
@@ -1425,6 +1533,21 @@ function compareNumbers(left: AbstractNumber, right: AbstractNumber, operator: C
       return {kind: 'boolean', canBeTrue: equal.canBeFalse, canBeFalse: equal.canBeTrue}
     }
   }
+}
+
+function compareSameNumber(operand: AbstractNumber, operator: ComparisonOperator): AbstractBoolean {
+  switch (operator) {
+    case 'lessThan':
+    case 'greaterThan': return exactBoolean(false)
+    case 'equal':
+    case 'lessThanOrEqual':
+    case 'greaterThanOrEqual': return operand.mayBeNaN ? unknownBoolean() : exactBoolean(true)
+    case 'notEqual': return operand.mayBeNaN ? unknownBoolean() : exactBoolean(false)
+  }
+}
+
+function exactBoolean(answer: boolean): AbstractBoolean {
+  return {kind: 'boolean', canBeTrue: answer, canBeFalse: !answer}
 }
 
 // Exact over the two-point lattice: definitely equal when both sides are the same known

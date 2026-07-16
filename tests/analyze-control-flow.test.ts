@@ -477,9 +477,9 @@ describe('control flow and contracts', () => {
     // no caller requirement exists. This used to stop the path with divisorUnknown and
     // lose everything downstream; it now records the assumption through the same channel
     // asserted element reads use, and the quotient computes over the divisor's range with
-    // zero cut out — an integer nonzero divisor has magnitude at least 1, so the return
-    // is genuinely finite GIVEN the assumes line. (At runtime step does reach 0 for
-    // count >= 2; the violated assumption makes the claims vacuous, like any assumes.)
+    // zero cut out. The assumption also applies to later visits to this operation, so the
+    // only executions satisfying it divide by 1 and return 100. (At runtime step reaches
+    // 0 for count >= 2; the violated assumption makes the claims vacuous, like any assumes.)
     const report = analyzeSource('revisited-division.ts', `
       export function drain(count: number): number {
         let total = 100
@@ -497,7 +497,7 @@ describe('control flow and contracts', () => {
       'count is finite and not NaN',
       `the divisor at ${file}:6:19 is nonzero`,
     ])
-    expect(drain.ensures).toEqual(['return is a finite number'])
+    expect(drain.ensures).toEqual(['return is a finite number from 100 through 100'])
   })
 
   test('does not analyze caller statements past a partially supported call or leak callee state changes', () => {

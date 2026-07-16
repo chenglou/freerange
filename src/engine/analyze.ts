@@ -19,12 +19,13 @@ import {
   cloneSharedState,
   cloneState,
   emptySharedState,
+  intersectValueFacts,
   joinModuleSlots,
   mergeStates,
   type ExecutionState,
   type ModuleSlot,
   type SharedState,
-  type ValidIndexPair,
+  type ValueFact,
 } from './state.ts'
 import {
   asRefinableCheck,
@@ -62,6 +63,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     initializerState,
     program,
     [],
+    {identityNamespace: 'module/'},
   )
   const moduleValues = publishedModuleValues(program, initializer.run, initializer.evaluation)
   const functionEntrySharedState = seedModuleSlots(program, moduleValues)
@@ -94,8 +96,10 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       sharedState,
       program,
       [],
-      [],
-      readsModules[functionID] === true ? initializerBounds : [],
+      {
+        boundsAssumptions: readsModules[functionID] === true ? initializerBounds : [],
+        identityNamespace: `function:${functionID}/`,
+      },
     )
     functions.push(publishedAnalysis(fn, evaluation))
   }
@@ -243,7 +247,7 @@ type BlockRun = {
   // The latest return recorded from the block; overwritten on re-visits (incoming states
   // grow monotonically, so the last visit supersedes earlier ones) and joined only after
   // the worklist drains.
-  pendingReturn: {value: AbstractValue; shared: SharedState} | null
+  pendingReturn: {value: AbstractValue; shared: SharedState; valueFacts: ValueFact[]} | null
 }
 
 type AssertionObservation = {
@@ -265,6 +269,13 @@ type EvaluationRun = {
   moduleEnd: ModuleSlot[] | null
 }
 
+type EvaluationSeed = {
+  boundsAssumptions?: BoundsAssumption[]
+  valueFacts?: ValueFact[]
+  parameterIdentityKeys?: string[]
+  identityNamespace?: string
+}
+
 function runEvaluation(
   fn: FunctionIR,
   functionID: FunctionID | null,
@@ -273,24 +284,26 @@ function runEvaluation(
   sharedState: SharedState,
   program: ProgramIR,
   callStack: FunctionID[],
-  seededIndexPairs?: ValidIndexPair[],
-  seededBoundsAssumptions: BoundsAssumption[] = [],
+  seed: EvaluationSeed = {},
 ): {evaluation: FunctionEvaluation; run: EvaluationRun} {
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
   const initial: ExecutionState = {
     frame: {values: []},
     shared: cloneSharedState(sharedState),
-    // Call sites seed the caller's proven argument relations (keyed p0, p1, ... which is
-    // exactly what canonicalValueKey produces for the parameters here).
-    validIndexPairs: seededIndexPairs ?? [],
+    valueFacts: seed.valueFacts?.slice() ?? [],
   }
   for (let index = 0; index < fn.parameters.length; index++) {
     initial.frame.values[fn.parameters[index]!.value] = arguments_[index]!
   }
-  const expressionContext = createExpressionContext(fn, argumentExpressions)
+  const expressionContext = createExpressionContext(
+    fn,
+    argumentExpressions,
+    seed.parameterIdentityKeys,
+    seed.identityNamespace ?? fn.name,
+  )
   const preconditions: InferredPrecondition[] = []
-  const boundsAssumptions: BoundsAssumption[] = [...seededBoundsAssumptions]
+  const boundsAssumptions: BoundsAssumption[] = [...(seed.boundsAssumptions ?? [])]
   const successors = blockSuccessors(fn)
   const run: EvaluationRun = {
     fn,
@@ -316,13 +329,24 @@ function runEvaluation(
       expressions: Array<NumericExpression | null>,
       calleeState: SharedState,
       stack: FunctionID[],
-      seededIndexPairs: ValidIndexPair[],
+      valueFacts: ValueFact[],
+      parameterIdentityKeys: string[],
+      identityNamespace: string,
     ) => {
       const calleeFn = program.functions[callee]
       if (calleeFn == null) throw new Error(`Unknown function ${callee}`)
       // Callers turn calls to unlowered functions into calleeStopped records first.
       if (calleeFn.kind !== 'lowered') throw new Error(`Analysis reached unlowered function ${calleeFn.name}`)
-      return runEvaluation(calleeFn, callee, values, expressions, calleeState, program, stack, seededIndexPairs).evaluation
+      return runEvaluation(
+        calleeFn,
+        callee,
+        values,
+        expressions,
+        calleeState,
+        program,
+        stack,
+        {valueFacts, parameterIdentityKeys, identityNamespace},
+      ).evaluation
     },
   }
   let queueIndex = 0
@@ -371,7 +395,11 @@ function runEvaluation(
         const value = block.terminator.value == null
           ? {kind: 'void'} as const
           : requiredValue(state, block.terminator.value)
-        run.blocks[blockID]!.pendingReturn = {value, shared: cloneSharedState(state.shared)}
+        run.blocks[blockID]!.pendingReturn = {
+          value,
+          shared: cloneSharedState(state.shared),
+          valueFacts: state.valueFacts.slice(),
+        }
         break
       }
       // A thrown path ends without contributing: no return value, no stop record. The
@@ -472,12 +500,13 @@ function runEvaluation(
     const pending = run.blocks[blockID]!.pendingReturn
     if (pending == null || suppressed[blockID] === true) continue
     if (normal == null) {
-      normal = {returnValue: pending.value, sharedState: pending.shared}
+      normal = {returnValue: pending.value, sharedState: pending.shared, valueFacts: pending.valueFacts}
       continue
     }
     normal = {
       returnValue: joinValues(normal.returnValue, pending.value),
       sharedState: joinModuleSlots(normal.sharedState, pending.shared),
+      valueFacts: intersectValueFacts(normal.valueFacts, pending.valueFacts),
     }
   }
 

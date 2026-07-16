@@ -545,14 +545,12 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       const array = lowerExpression(current.expression, context)
       return addInstruction(context, current, {kind: 'arrayLength', array})
     }
-    // A string's length is the one modeled read on an opaque string: a fresh nonnegative
-    // integer (each read fresh — two reads of the same string relate only through a
-    // local, the same freshness story as element reads). Every other string property
-    // keeps rejecting below.
+    // A string's length is the one modeled read on an opaque string. Carry the immutable
+    // receiver so repeated reads can be recognized as the same number.
     if (receiverKind === 'opaque' && current.name.text === 'length'
       && (objectType.flags & ts.TypeFlags.StringLike) !== 0) {
-      lowerExpression(current.expression, context)
-      return addInstruction(context, current, {kind: 'stringLength'})
+      const value = lowerExpression(current.expression, context)
+      return addInstruction(context, current, {kind: 'stringLength', value})
     }
     // An enum member read gets its own name and rewrite; the generic receiver prose
     // ("property read from typeof Direction") names the checker's type, not the construct.

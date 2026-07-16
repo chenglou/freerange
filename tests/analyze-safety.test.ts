@@ -545,7 +545,7 @@ describe('acceptance and module safety', () => {
       }
     `)
     expect(analyzedFunction(report, 'differenceAfterOverflow').ensures).toEqual([
-      'return is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at nan-attribution.ts:4:16)',
+      'return is a possibly NaN integer number from 0 through 0 (NaN possible from the operation at nan-attribution.ts:4:16)',
     ])
   })
 

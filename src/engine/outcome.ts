@@ -2,7 +2,7 @@ import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
 import type {FunctionIR, UnsupportedFunctionIR, UnsupportedReason} from '../ir/program.ts'
 import type {BoundsAssumption, InferredPrecondition} from '../requirements/model.ts'
-import type {SharedState} from './state.ts'
+import type {SharedState, ValueFact} from './state.ts'
 
 export type RequirementFailure =
   | {kind: 'declared'; site: SiteID; status: 'refuted' | 'unproven'}
@@ -65,7 +65,7 @@ export type AssertionVerdict = {
 // `if (flag > 0) return 10; unsupportedThing()` the true branch returns 10 while the other
 // path stops. Empty `stops` means every path completed.
 export type FunctionEvaluation = {
-  normal: {returnValue: AbstractValue; sharedState: SharedState} | null
+  normal: {returnValue: AbstractValue; sharedState: SharedState; valueFacts: ValueFact[]} | null
   preconditions: InferredPrecondition[]
   boundsAssumptions: BoundsAssumption[]
   assertions: AssertionVerdict[]
@@ -79,6 +79,7 @@ export type FunctionEvaluation = {
 export type CompletedEvaluation = {
   returnValue: AbstractValue
   sharedState: SharedState
+  valueFacts: ValueFact[]
   preconditions: InferredPrecondition[]
   boundsAssumptions: BoundsAssumption[]
 }
@@ -88,6 +89,7 @@ export function completedEvaluation(evaluation: FunctionEvaluation): CompletedEv
   return {
     returnValue: evaluation.normal.returnValue,
     sharedState: evaluation.normal.sharedState,
+    valueFacts: evaluation.normal.valueFacts,
     preconditions: evaluation.preconditions,
     boundsAssumptions: evaluation.boundsAssumptions,
   }

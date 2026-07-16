@@ -202,6 +202,8 @@ Freerange's numeric analysis is designed around arithmetic used in layouts and o
 
 Freerange does not keep separate ranges or arbitrary sets of possible numbers. If one branch produces `1..2` and another produces `10..11`, Freerange keeps the combined range `1..11`. A later check that rules out a different exact number may replace the number remembered from an earlier check.
 
+Freerange recognizes repeated uses of one already-computed value, including aliases, stable property and array reads, lengths, and duplicate arguments passed to a supported function in the same file. For example, `const span = right - left; span - span` is exactly `0` unless `span` is infinite or `NaN`. Two separate evaluations are not assumed equal, even when their source code looks the same; store the result in a local when that identity matters.
+
 Earlier versions included an exact rational linear prover based on Farkas' lemma and other relational machinery. The current analyzer does not use that machinery or an SMT solver. In practice, those approaches made analysis unpredictable without proving much more real-world code. We also decided against analyzing numbers as real numbers, which would have been sweet, because doing so produces false proofs: floating-point arithmetic is not associative, rounds results, and can overflow or underflow.
 
 ### Function calls
@@ -224,7 +226,7 @@ Property reads are assumed to be stable and side-effect-free during one analyzed
 
 ### Caller requirements
 
-When a division or array read creates a requirement inside a function, Freerange tries to express the requirement using the function's parameters so callers can be checked. Freerange follows each intermediate calculation at most once. If one pass cannot reach the parameters, Freerange prints a local `assumes` condition instead.
+When a division or array read creates a requirement inside a function, Freerange tries to express the requirement using the function's parameters so callers can be checked. A later operation on the same stored value and path may rely on that requirement; assigning a new value or repeating the calculation starts over. Freerange follows each intermediate calculation at most once. If one pass cannot reach the parameters, Freerange prints a local `assumes` condition instead.
 
 These limits may make a result less precise or stop analysis, but they cannot make a guarantee stronger than the code supports.
 

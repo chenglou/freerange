@@ -5,6 +5,11 @@ import type {InferredPrecondition, NumericExpression} from './model.ts'
 
 export type ExpressionContext = {
   parameterExpressions: Array<NumericExpression | null>
+  // Calls pass the caller's value keys directly, so duplicate arguments and facts created
+  // in a callee refer to the same identity as the caller. Local keys use a nested namespace
+  // to avoid colliding with the caller's ValueIDs.
+  parameterIdentityKeys: string[]
+  identityNamespace: string
   parameterIndexByValue: Array<number | undefined>
   instructionByValue: Array<InstructionIR | undefined>
   instructionCount: number
@@ -13,9 +18,17 @@ export type ExpressionContext = {
 export function createExpressionContext(
   fn: FunctionIR,
   parameterExpressions: Array<NumericExpression | null>,
+  parameterIdentityKeys?: string[],
+  identityNamespace = `${fn.name}/`,
 ): ExpressionContext {
+  const identityKeys = parameterIdentityKeys ?? fn.parameters.map((_, index) => `p${index}`)
+  if (identityKeys.length !== fn.parameters.length) {
+    throw new Error(`Expected ${fn.parameters.length} parameter identity keys for ${fn.name}`)
+  }
   const context: ExpressionContext = {
     parameterExpressions,
+    parameterIdentityKeys: identityKeys,
+    identityNamespace,
     parameterIndexByValue: [],
     instructionByValue: [],
     instructionCount: 0,
@@ -32,6 +45,23 @@ export function createExpressionContext(
   return context
 }
 
+// Follow assignments and reads through records built in this function. The returned IR
+// value is the value that was actually stored, so ordinary analysis, assertion proofs,
+// and requirement expressions all use the same definition of identity.
+export function resolveStoredValue(value: ValueID, context: ExpressionContext): ValueID {
+  const producer = context.instructionByValue[value]
+  if (producer?.kind === 'moduleWrite') return resolveStoredValue(producer.value, context)
+  if (producer?.kind === 'property') {
+    const object = resolveStoredValue(producer.object, context)
+    const objectProducer = context.instructionByValue[object]
+    if (objectProducer?.kind === 'object') {
+      const property = objectProducer.properties.find(candidate => candidate.name === producer.property)
+      if (property != null) return resolveStoredValue(property.value, context)
+    }
+  }
+  return value
+}
+
 // The producer walk expands a value's defining DAG into an expression tree, and a value
 // used twice appears twice — chained squaring (`const b = a * a; const c = b * b`) doubles
 // per level, so tree size is exponential in the worst case while the DAG stays linear.
@@ -43,6 +73,8 @@ export function createExpressionContext(
 export function numericExpression(value: ValueID, context: ExpressionContext): NumericExpression | null {
   let remainingVisits = context.instructionCount
   const walk = (current: ValueID): NumericExpression | null => {
+    const stored = resolveStoredValue(current, context)
+    if (stored !== current) return walk(stored)
     const parameterIndex = context.parameterIndexByValue[current]
     if (parameterIndex != null) return context.parameterExpressions[parameterIndex] ?? null
     const instruction = context.instructionByValue[current]
@@ -97,16 +129,6 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       // read over a nameable array could join the expression language later; not yet.
       case 'arrayLength': return null
       case 'property': {
-        // A read through a freshly built record resolves to the value that went in — the
-        // record is immutable, so with `const copy = {columns: grid.columns}`,
-        // copy.columns IS the grid.columns read stored at construction. This keeps
-        // explicit-field copies nameable: dividing by copy.columns still requires
-        // grid.columns nonzero.
-        const producer = context.instructionByValue[instruction.object]
-        if (producer?.kind === 'object') {
-          const source = producer.properties.find(property => property.name === instruction.property)
-          if (source != null) return walk(source.value)
-        }
         const base = walk(instruction.object)
         return base == null ? null : {kind: 'property', base, name: instruction.property}
       }
@@ -136,19 +158,29 @@ export function staticRequirement(
   return null
 }
 
-// A stable name for the runtime value an IR value holds, used to key valid-index pairs:
-// two reads of config.sizes lower to distinct IR values, but both canonicalize to the
-// same key, so the bounds-check guard matches the element read. Sound because the walked
-// forms cannot change between occurrences: parameters and local values are immutable, and
-// a property read off the same base names the same immutable record property. Module reads
-// stay value-keyed because the binding may change; snapshot a module value into a local
-// before checking and using it when the two reads must match.
+// A stable name for the runtime value an IR value holds. Forward value facts and exact
+// same-value operations share this rule instead of maintaining separate notions of
+// identity. Property and array reads are stable under the accepted subset's immutability
+// rules; module and platform reads stay value-keyed because they may change between reads.
 export function canonicalValueKey(value: ValueID, context: ExpressionContext): string {
+  const stored = resolveStoredValue(value, context)
+  if (stored !== value) return canonicalValueKey(stored, context)
   const parameterIndex = context.parameterIndexByValue[value]
-  if (parameterIndex != null) return `p${parameterIndex}`
+  if (parameterIndex != null) return context.parameterIdentityKeys[parameterIndex] ?? `p${parameterIndex}`
   const producer = context.instructionByValue[value]
-  if (producer?.kind === 'property') return `${canonicalValueKey(producer.object, context)}.${producer.property}`
-  return `v${value}`
+  if (producer?.kind === 'property') {
+    return `${canonicalValueKey(producer.object, context)}.${JSON.stringify(producer.property)}`
+  }
+  if (producer?.kind === 'arrayLength') return `${canonicalValueKey(producer.array, context)}.length`
+  if (producer?.kind === 'stringLength') return `${canonicalValueKey(producer.value, context)}.length`
+  if (producer?.kind === 'arrayIndex') {
+    return `${canonicalValueKey(producer.array, context)}[${canonicalValueKey(producer.index, context)}]`
+  }
+  return `v:${context.identityNamespace}${value}`
+}
+
+export function sameRuntimeValue(left: ValueID, right: ValueID, context: ExpressionContext): boolean {
+  return left === right || canonicalValueKey(left, context) === canonicalValueKey(right, context)
 }
 
 export function addPrecondition(preconditions: InferredPrecondition[], candidate: InferredPrecondition): void {
