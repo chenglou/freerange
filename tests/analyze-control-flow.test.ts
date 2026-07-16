@@ -12,7 +12,7 @@ const preconditionsFixture = new URL('./fixtures/preconditions.ts', import.meta.
 const preconditionsReportPath = 'tests/fixtures/preconditions.ts'
 
 describe('control flow and contracts', () => {
-  test('branch refinements keep existing number and boolean facts consistent', () => {
+  test('number refinements keep existing facts consistent', () => {
     const report = analyzeSource('refinement-consistency.ts', `
       export function exactIndex(values: [number, number], index: number): number {
         if (index === 1) return values[index]!
@@ -32,18 +32,9 @@ describe('control flow and contracts', () => {
         }
         return 1
       }
-      export function directBoolean(flag: boolean): number {
-        if (flag) return flag ? 1 : 100
-        return flag ? 100 : 2
-      }
-      export function negatedBoolean(flag: boolean): number {
-        if (!flag) return flag ? 100 : 1
-        return flag ? 2 : 100
-      }
-      export function storedComparison(value: number): number {
-        const positive = value > 0
-        if (positive) return positive ? 1 : 100
-        return positive ? 100 : 2
+      export function excludedPointSurvivesLaterBounds(value: number): number {
+        if (value !== 4 && value >= 4) return 100 / (value - 4)
+        return 0
       }
       export function equalitySharesIntegrality(values: [number, number], rawIndex: number, candidate: number): number {
         const index = Math.floor(rawIndex)
@@ -62,10 +53,7 @@ describe('control flow and contracts', () => {
     }
     expect(analyzedFunction(report, 'excludedEquality').ensures)
       .toEqual(['return is a finite integer number from 1 through 1'])
-    for (const name of ['directBoolean', 'negatedBoolean', 'storedComparison']) {
-      expect(analyzedFunction(report, name).ensures)
-        .toEqual(['return is a finite integer number from 1 through 2'])
-    }
+    expect(analyzedFunction(report, 'excludedPointSurvivesLaterBounds').requires).toEqual([])
     expect(analyzedFunction(report, 'equalitySharesIntegrality').requires).toEqual([])
     expect(analyzedFunction(report, 'integerOverflowCanEqualInfinity').ensures)
       .toEqual(['return is a finite integer number from 0 through 1'])

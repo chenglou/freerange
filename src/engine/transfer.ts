@@ -1107,38 +1107,6 @@ export function refineCheck(
   }
 }
 
-// Every taken branch knows the truth value of the condition that selected it. Check
-// instructions additionally refine their operands; a bare boolean still narrows itself,
-// and `!flag` carries the opposite value back to `flag`.
-export function refineBranchCondition(
-  state: ExecutionState,
-  condition: ValueID,
-  truth: boolean,
-  expressionContext: ExpressionContext,
-): ExecutionState | null {
-  const producer = expressionContext.instructionByValue[condition]
-  const check = asRefinableCheck(producer)
-  const result = check == null
-    ? cloneState(state)
-    : refineCheck(state, check, truth, expressionContext)
-  if (result == null) return null
-
-  const refineBoolean = (value: ValueID, mustBe: boolean): boolean => {
-    const held = requiredBoolean(result, value)
-    if (mustBe ? !held.canBeTrue : !held.canBeFalse) return false
-    writeThroughProducers(
-      result,
-      value,
-      {kind: 'boolean', canBeTrue: mustBe, canBeFalse: !mustBe},
-      expressionContext.instructionByValue,
-    )
-    const valueProducer = expressionContext.instructionByValue[value]
-    return valueProducer?.kind !== 'not' || refineBoolean(valueProducer.value, !mustBe)
-  }
-
-  return refineBoolean(condition, truth) ? result : null
-}
-
 function requiredNumber(state: ExecutionState, id: ValueID): AbstractNumber {
   const value = requiredValue(state, id)
   if (value.kind !== 'number') throw new KindMismatch(`IR value ${id} is not a number`, id)
