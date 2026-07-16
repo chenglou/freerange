@@ -28,10 +28,9 @@ import {
   type ValueFact,
 } from './state.ts'
 import {
-  asRefinableCheck,
   branchConditionOutcome,
   evaluateInstruction,
-  refineCheck,
+  refineBranchCondition,
   requiredValue,
 } from './transfer.ts'
 
@@ -440,22 +439,22 @@ function runEvaluation(
           break
         }
         const condition = conditionOutcome.value
-        // expressionContext.instructionByValue is the one which-instruction-produced-this
-        // table; a condition refines only when that instruction is a check (refineCheck
-        // dispatches over the check kinds in one place).
-        const check = asRefinableCheck(expressionContext.instructionByValue[block.terminator.condition])
         if (condition.canBeTrue) {
-          // refineCheck clones internally; the bare-condition arm clones only when the
-          // other arm still needs the working state.
-          const branch = check != null
-            ? refineCheck(state, check, true, expressionContext)
-            : condition.canBeFalse ? cloneState(state) : state
+          const branch = refineBranchCondition(
+            state,
+            block.terminator.condition,
+            true,
+            expressionContext,
+          )
           if (branch != null) propagate(branch, blockID, block.terminator.whenTrue, run)
         }
         if (condition.canBeFalse) {
-          const branch = check != null
-            ? refineCheck(state, check, false, expressionContext)
-            : state
+          const branch = refineBranchCondition(
+            state,
+            block.terminator.condition,
+            false,
+            expressionContext,
+          )
           if (branch != null) propagate(branch, blockID, block.terminator.whenFalse, run)
         }
         break

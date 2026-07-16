@@ -16,6 +16,7 @@ import {
   maximumNumbers,
   minimumNumbers,
   multiplyNumbers,
+  pointExcluded,
   subtractNumbers,
   type AbstractNumber,
 } from '../domain/number.ts'
@@ -124,7 +125,7 @@ function value(result: Exclude<AbstractValue, AbstractNumber>): ValueStep {
 }
 
 function passthroughValue(result: AbstractValue): ValueStep {
-  return {kind: 'value', value: result}
+  return {kind: 'value', value: result.kind === 'number' ? normalizeRefinedNumber(result) : result}
 }
 
 // Report annotations only: a degraded result inherits the relevant operand site, or, when
@@ -132,7 +133,7 @@ function passthroughValue(result: AbstractValue): ValueStep {
 // separate sites because an overflow can enable a later operation to produce NaN without
 // being the operation that produced it.
 function computedNumber(raw: AbstractNumber, operands: AbstractNumber[], site: SiteID): ValueStep {
-  return {kind: 'value', value: withLossBlame(raw, operands, site)}
+  return {kind: 'value', value: withLossBlame(normalizeRefinedNumber(raw), operands, site)}
 }
 
 function withLossBlame(result: AbstractNumber, operands: AbstractNumber[], site: SiteID): AbstractNumber {
@@ -836,17 +837,17 @@ function meetValues(current: AbstractValue, refined: AbstractValue): AbstractVal
   switch (refined.kind) {
     case 'number': {
       if (current.kind !== 'number') return refined
-      const met: AbstractNumber = {
+      let met = normalizeRefinedNumber({
         kind: 'number',
         lower: Math.max(current.lower, refined.lower),
         upper: Math.min(current.upper, refined.upper),
         integer: current.integer || refined.integer,
         mayBeNaN: current.mayBeNaN && refined.mayBeNaN,
-      }
+      })
       // An intersection keeps every fact either cover proved; only one point fits the
       // field, and the refined side's is the fresher fact.
       const excludedPoint = refined.excludesPoint ?? current.excludesPoint
-      if (excludedPoint != null) met.excludesPoint = excludedPoint
+      if (excludedPoint != null) met = normalizeRefinedNumber({...met, excludesPoint: excludedPoint})
       if (!isFiniteNumber(met)) {
         const nonFiniteSite = refined.nonFiniteSite ?? current.nonFiniteSite
         if (nonFiniteSite != null) met.nonFiniteSite = nonFiniteSite
@@ -1115,6 +1116,38 @@ export function refineCheck(
     case 'numberCheck': return refineNumberCheck(state, check, truth, expressionContext.instructionByValue)
     case 'tagCheck': return refineTagCheck(state, check, truth, expressionContext.instructionByValue)
   }
+}
+
+// Every taken branch knows the truth value of the condition that selected it. Check
+// instructions additionally refine their operands; a bare boolean still narrows itself,
+// and `!flag` carries the opposite value back to `flag`.
+export function refineBranchCondition(
+  state: ExecutionState,
+  condition: ValueID,
+  truth: boolean,
+  expressionContext: ExpressionContext,
+): ExecutionState | null {
+  const producer = expressionContext.instructionByValue[condition]
+  const check = asRefinableCheck(producer)
+  const result = check == null
+    ? cloneState(state)
+    : refineCheck(state, check, truth, expressionContext)
+  if (result == null) return null
+
+  const refineBoolean = (value: ValueID, mustBe: boolean): boolean => {
+    const held = requiredBoolean(result, value)
+    if (mustBe ? !held.canBeTrue : !held.canBeFalse) return false
+    writeThroughProducers(
+      result,
+      value,
+      {kind: 'boolean', canBeTrue: mustBe, canBeFalse: !mustBe},
+      expressionContext.instructionByValue,
+    )
+    const valueProducer = expressionContext.instructionByValue[value]
+    return valueProducer?.kind !== 'not' || refineBoolean(valueProducer.value, !mustBe)
+  }
+
+  return refineBoolean(condition, truth) ? result : null
 }
 
 function requiredNumber(state: ExecutionState, id: ValueID): AbstractNumber {
@@ -1525,7 +1558,10 @@ function compareNumbers(left: AbstractNumber, right: AbstractNumber, operator: C
     case 'greaterThanOrEqual': return compareNumbers(right, left, 'lessThanOrEqual')
     case 'equal': {
       const definitelyEqual = left.lower === left.upper && right.lower === right.upper && left.lower === right.lower
-      const definitelyDifferent = left.upper < right.lower || right.upper < left.lower
+      const definitelyDifferent = left.upper < right.lower
+        || right.upper < left.lower
+        || (left.lower === left.upper && pointExcluded(right, left.lower))
+        || (right.lower === right.upper && pointExcluded(left, right.lower))
       return booleanRange(definitelyEqual, definitelyDifferent)
     }
     case 'notEqual': {
@@ -1612,7 +1648,26 @@ function withBounds(value: AbstractNumber, lower: number, upper: number): Abstra
   // A possibly infinite value lives at its interval's infinite end, so a refinement that
   // clips the interval to finite bounds also proves finiteness — with finiteness derived
   // from the bounds, that now holds by construction.
-  return {...value, lower: refinedLower, upper: refinedUpper}
+  return normalizeRefinedNumber({...value, lower: refinedLower, upper: refinedUpper})
+}
+
+// Keep the number record internally consistent after an intersection. Exact integer
+// singletons are integers regardless of how they were reached, and an excluded point
+// that becomes an endpoint moves the endpoint past that impossible value.
+function normalizeRefinedNumber(value: AbstractNumber): AbstractNumber {
+  let lower = value.lower
+  let upper = value.upper
+  const integer = value.integer || (lower === upper && Number.isInteger(lower))
+  const {excludesPoint, ...rest} = value
+  if (excludesPoint != null) {
+    if (lower === excludesPoint) lower = strictLower(excludesPoint, integer)
+    if (upper === excludesPoint) upper = strictUpper(excludesPoint, integer)
+  }
+  const normalized: AbstractNumber = {...rest, lower, upper, integer}
+  if (excludesPoint != null && lower < excludesPoint && excludesPoint < upper) {
+    normalized.excludesPoint = excludesPoint
+  }
+  return normalized
 }
 
 // The exact refinement for a strict comparison: for integers the next integer, for floats

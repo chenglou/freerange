@@ -12,6 +12,52 @@ const preconditionsFixture = new URL('./fixtures/preconditions.ts', import.meta.
 const preconditionsReportPath = 'tests/fixtures/preconditions.ts'
 
 describe('control flow and contracts', () => {
+  test('branch refinements keep existing number and boolean facts consistent', () => {
+    const report = analyzeSource('refinement-consistency.ts', `
+      export function exactIndex(values: [number, number], index: number): number {
+        if (index === 1) return values[index]!
+        return values[0]!
+      }
+      export function clampedIndex(values: [number, number], input: number): number {
+        const index = Math.min(1, Math.max(1, input))
+        return values[index]!
+      }
+      export function zeroProductIndex(values: [number], input: number): number {
+        const index = input * 0
+        return values[index]!
+      }
+      export function excludedEquality(value: number): number {
+        if (value !== 4) {
+          if (value === 4) return 100
+        }
+        return 1
+      }
+      export function directBoolean(flag: boolean): number {
+        if (flag) return flag ? 1 : 100
+        return flag ? 100 : 2
+      }
+      export function negatedBoolean(flag: boolean): number {
+        if (!flag) return flag ? 100 : 1
+        return flag ? 2 : 100
+      }
+      export function storedComparison(value: number): number {
+        const positive = value > 0
+        if (positive) return positive ? 1 : 100
+        return positive ? 100 : 2
+      }
+    `)
+
+    for (const name of ['exactIndex', 'clampedIndex', 'zeroProductIndex']) {
+      expect(analyzedFunction(report, name).requires).toEqual([])
+    }
+    expect(analyzedFunction(report, 'excludedEquality').ensures)
+      .toEqual(['return is a finite integer number from 1 through 1'])
+    for (const name of ['directBoolean', 'negatedBoolean', 'storedComparison']) {
+      expect(analyzedFunction(report, name).ensures)
+        .toEqual(['return is a finite integer number from 1 through 2'])
+    }
+  })
+
   test('the showcase module analyzes completely, every function contracted', () => {
     // A subset-conformant miniature of the demo's world (fixtures/showcase.ts): module
     // state trees, spring physics, nullable frame timing, tuple config tables, array
