@@ -1012,16 +1012,9 @@ function refineComparison(
       refinedRight = withBounds(right, right.lower, Math.min(right.upper, left.upper))
       break
     case 'equal': {
-      const lower = Math.max(left.lower, right.lower)
-      const upper = Math.min(left.upper, right.upper)
-      refinedLeft = withBounds(left, lower, upper)
-      refinedRight = withBounds(right, lower, upper)
-      // Equal values share the excluded point: if either side cannot hold it, neither can.
-      const sharedPoint = refinedLeft.excludesPoint ?? refinedRight.excludesPoint
-      if (sharedPoint != null) {
-        refinedLeft = {...refinedLeft, excludesPoint: sharedPoint}
-        refinedRight = {...refinedRight, excludesPoint: sharedPoint}
-      }
+      const intersection = intersectSameNumbers(left, right)
+      refinedLeft = intersection
+      refinedRight = intersection
       break
     }
     case 'notEqual': {
@@ -1157,7 +1150,19 @@ function requiredNumberWithFacts(
   id: ValueID,
   expressionContext: ExpressionContext,
 ): AbstractNumber {
-  let result = requiredNumber(state, id)
+  const result = numberWithFacts(state, id, expressionContext)
+  if (result == null) throw new KindMismatch(`IR value ${id} is not a number`, id)
+  return result
+}
+
+function numberWithFacts(
+  state: ExecutionState,
+  id: ValueID,
+  expressionContext: ExpressionContext,
+): AbstractNumber | null {
+  const held = state.frame.values[id]
+  if (held?.kind !== 'number') return null
+  let result = held
   const key = canonicalValueKey(id, expressionContext)
   if (state.valueFacts.some(fact => fact.kind === 'validIndex' && fact.index === key)) {
     result = validIndexNumber(result)
@@ -1363,9 +1368,9 @@ function staticAssertionObservation(
     return {kind: 'boolean', canBeTrue: operand.canBeFalse, canBeFalse: operand.canBeTrue}
   }
   if (producer?.kind !== 'compare') return held
-  const left = requiredValue(state, producer.left)
-  const right = requiredValue(state, producer.right)
-  if (left.kind !== 'number' || right.kind !== 'number') return held
+  const left = numberWithFacts(state, producer.left, context.expressionContext)
+  const right = numberWithFacts(state, producer.right, context.expressionContext)
+  if (left == null || right == null) return held
   return comparisonLocalProof(left, right, producer, state, context) ?? held
 }
 
@@ -1418,8 +1423,7 @@ function createComparisonProof(
   const atMostMemo = new Map<string, boolean>()
 
   const heldNumber = (value: ValueID): AbstractNumber | null => {
-    const held = state.frame.values[resolveStoredValue(value, context)]
-    return held?.kind === 'number' ? held : null
+    return numberWithFacts(state, resolveStoredValue(value, context), context)
   }
 
   const same = (left: ValueID, right: ValueID): boolean => sameRuntimeValue(left, right, context)

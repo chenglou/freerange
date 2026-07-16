@@ -45,6 +45,16 @@ describe('control flow and contracts', () => {
         if (positive) return positive ? 1 : 100
         return positive ? 100 : 2
       }
+      export function equalitySharesIntegrality(values: [number, number], rawIndex: number, candidate: number): number {
+        const index = Math.floor(rawIndex)
+        if (index < 0 || index >= 2) return 0
+        if (candidate === index) return values[candidate]!
+        return 0
+      }
+      export function integerOverflowCanEqualInfinity(value: number): number {
+        const overflowedInteger = Math.floor(value) + 1e308
+        return overflowedInteger === Infinity ? 1 : 0
+      }
     `)
 
     for (const name of ['exactIndex', 'clampedIndex', 'zeroProductIndex']) {
@@ -56,6 +66,9 @@ describe('control flow and contracts', () => {
       expect(analyzedFunction(report, name).ensures)
         .toEqual(['return is a finite integer number from 1 through 2'])
     }
+    expect(analyzedFunction(report, 'equalitySharesIntegrality').requires).toEqual([])
+    expect(analyzedFunction(report, 'integerOverflowCanEqualInfinity').ensures)
+      .toEqual(['return is a finite integer number from 0 through 1'])
   })
 
   test('the showcase module analyzes completely, every function contracted', () => {

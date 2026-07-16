@@ -436,6 +436,21 @@ describe('static console.assert contracts', () => {
         if (ordered) return 1
         return 0
       }
+
+      function readEntry(values: number[], index: number): number {
+        return values[index]!
+      }
+
+      export function calleeFactsReachProducerProofs(
+        values: number[],
+        index: number,
+        base: number,
+      ): number {
+        readEntry(values, index)
+        const shifted = base + index
+        console.assert(base <= shifted)
+        return shifted
+      }
     `)
 
     expect(analyzedFunction(report, 'producerProofs').assertions?.map(assertion => assertion.verdict))
@@ -455,6 +470,8 @@ describe('static console.assert contracts', () => {
     const shared = analyzedFunction(report, 'assertedValueDoesNotStrengthenBranch')
     expect(shared.assertions?.map(assertion => assertion.verdict)).toEqual(['proven'])
     expect(shared.ensures).toEqual(['return is a finite integer number from 0 through 1'])
+    expect(analyzedFunction(report, 'calleeFactsReachProducerProofs').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['proven'])
   })
 
   test('producer proofs compose without a hidden expression-depth limit', () => {

@@ -336,7 +336,9 @@ export function isDefinitelyZero(value: AbstractNumber): boolean {
 // integer flag against a fractional point, or by the excluded-point cut.
 export function pointExcluded(value: AbstractNumber, point: number): boolean {
   if (point < value.lower || point > value.upper) return true
-  if (value.integer && !Number.isInteger(point)) return true
+  // `integer` describes every finite inhabitant; the interval may still include an
+  // infinity introduced by overflow. Only a finite fractional point is impossible.
+  if (value.integer && Number.isFinite(point) && !Number.isInteger(point)) return true
   return value.excludesPoint === point
 }
 
