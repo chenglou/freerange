@@ -90,7 +90,7 @@ const availableWidth = frame.right - frame.left
 console.assert(availableWidth >= 0)
 ```
 
-(You can strip `console.assert` in production, as you may already be doing.)
+(You can strip `console.assert` in production with bundler or Bun's drop feature, as you may already be doing.)
 
 #### Things Worth Asserting
 
