@@ -561,8 +561,7 @@ function evaluateInstructionKinded(
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
-      state.valueFacts = completed.valueFacts.filter(fact =>
-        !valueFactUsesNamespace(fact, calleeNamespace))
+      state.valueFacts = completed.valueFacts
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
       return passthroughValue(completed.returnValue)
@@ -640,12 +639,6 @@ export function addBoundsAssumption(assumptions: BoundsAssumption[], candidate: 
   if (!assumptions.some(assumption => assumption.site === candidate.site && assumption.kind === candidate.kind)) {
     assumptions.push(candidate)
   }
-}
-
-function valueFactUsesNamespace(fact: ValueFact, namespace: string): boolean {
-  const marker = `v:${namespace}`
-  if (fact.kind === 'nonzero') return fact.value.includes(marker)
-  return fact.index.includes(marker) || fact.array.includes(marker)
 }
 
 function sentinelsAdmit(sentinels: 'null' | 'undefined' | 'both', sentinel: 'null' | 'undefined'): boolean {
