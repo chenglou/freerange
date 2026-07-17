@@ -30,7 +30,7 @@ export type FunctionContext = {
   checker: ts.TypeChecker
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>
   moduleBindingsBySymbol: Map<ts.Symbol, ModuleBindingID>
-  staticAnnotations: StaticAnnotation[]
+  staticAnnotations: Map<ts.CallExpression, StaticAnnotation>
   // The ProgramIR.sites table, shared across all function lowerings; pushing assigns the
   // next dense SiteID.
   sites: SourceSpan[]
@@ -67,7 +67,7 @@ export function createFunctionContext(
     checker,
     functionsBySymbol,
     moduleBindingsBySymbol,
-    staticAnnotations,
+    staticAnnotations: new Map(staticAnnotations.map(annotation => [annotation.call, annotation])),
     sites,
     nextValue: 0,
     currentBlock: entry,

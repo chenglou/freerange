@@ -8,36 +8,43 @@ export type FunctionUsage = {
 
 export function functionUsage(program: ProgramIR): FunctionUsage[] {
   return program.functions.map(fn => {
-    const callees: FunctionID[] = []
-    const moduleBindings: ModuleBindingID[] = []
+    const callees = new Set<FunctionID>()
+    const moduleBindings = new Set<ModuleBindingID>()
     if (fn.kind === 'lowered') {
       for (const block of fn.blocks) {
         for (const instruction of block.instructions) {
-          if (instruction.kind === 'call' && !callees.includes(instruction.function)) {
-            callees.push(instruction.function)
-          }
-          if (instruction.kind === 'moduleRead' && !moduleBindings.includes(instruction.binding)) {
-            moduleBindings.push(instruction.binding)
-          }
+          if (instruction.kind === 'call') callees.add(instruction.function)
+          if (instruction.kind === 'moduleRead') moduleBindings.add(instruction.binding)
         }
       }
     }
-    return {callees, moduleBindings}
+    return {callees: [...callees], moduleBindings: [...moduleBindings]}
   })
 }
 
-export function functionsReadingModules(usage: FunctionUsage[]): boolean[] {
-  const readsModules = usage.map(fn => fn.moduleBindings.length > 0)
-  let changed = true
-  while (changed) {
-    changed = false
-    for (let caller = 0; caller < usage.length; caller++) {
-      if (readsModules[caller] === true) continue
-      if (usage[caller]!.callees.some(callee => readsModules[callee] === true)) {
-        readsModules[caller] = true
-        changed = true
+export function transitiveModuleBindings(
+  usage: FunctionUsage[],
+  direct: ReadonlyArray<ReadonlySet<ModuleBindingID>> = usage.map(fn => new Set(fn.moduleBindings)),
+): Set<ModuleBindingID>[] {
+  const callers: FunctionID[][] = usage.map(() => [])
+  for (let caller = 0; caller < usage.length; caller++) {
+    for (const callee of usage[caller]!.callees) callers[callee]!.push(caller)
+  }
+
+  const bindings = direct.map(items => new Set(items))
+  const queue: Array<{functionID: FunctionID; binding: ModuleBindingID}> = []
+  for (let functionID = 0; functionID < bindings.length; functionID++) {
+    for (const binding of bindings[functionID]!) queue.push({functionID, binding})
+  }
+  let index = 0
+  while (index < queue.length) {
+    const {functionID, binding} = queue[index++]!
+    for (const caller of callers[functionID]!) {
+      if (!bindings[caller]!.has(binding)) {
+        bindings[caller]!.add(binding)
+        queue.push({functionID: caller, binding})
       }
     }
   }
-  return readsModules
+  return bindings
 }

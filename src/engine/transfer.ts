@@ -314,11 +314,11 @@ function evaluateInstructionKinded(
     })
     case 'moduleRead': {
       const slot = state.shared[instruction.binding]
-      if (slot == null) throw new Error(`Unknown module binding ${instruction.binding}`)
-      if (slot.kind === 'uninitialized') {
+      if (slot === undefined) throw new Error(`Unknown module binding ${instruction.binding}`)
+      if (slot === null) {
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'moduleRead', binding: instruction.binding}}}
       }
-      return passthroughValue(slot.value)
+      return passthroughValue(slot)
     }
     case 'moduleWrite': {
       const assigned = requiredValue(state, instruction.value)
@@ -331,7 +331,7 @@ function evaluateInstructionKinded(
       // category is single-kind: value/kind writes are type-checked against the declared
       // number, boolean, or record shape.
       if (binding.category.kind !== 'opaque') {
-        state.shared[instruction.binding] = {kind: 'value', value: assigned}
+        state.shared[instruction.binding] = assigned
       }
       return passthroughValue(assigned)
     }
@@ -342,8 +342,8 @@ function evaluateInstructionKinded(
       // Covering, not assumed-finite: values computed from this slot can publish without
       // any assumes line, so the reset must include NaN and infinities.
       state.shared[instruction.binding] = declaredKind == null
-        ? {kind: 'uninitialized'}
-        : {kind: 'value', value: coveringKindValue(declaredKind)}
+        ? null
+        : coveringKindValue(declaredKind)
       return value({kind: 'void'})
     }
     case 'object': {
@@ -496,7 +496,7 @@ function evaluateInstructionKinded(
       if (refined == null) {
         return failedRequirement({kind: 'declared', site: instruction.site, status: 'refuted'})
       }
-      state.frame = refined.frame
+      state.values = refined.values
       state.shared = refined.shared
       state.valueFacts = refined.valueFacts
       addPrecondition(context.preconditions, requirement)
@@ -763,12 +763,12 @@ function writeThroughProducers(
   refined: AbstractValue,
   producers: Array<InstructionIR | undefined>,
 ): void {
-  const current = state.frame.values[id]
+  const current = state.values[id]
   const met = current == null ? refined : meetValues(current, refined)
-  state.frame.values[id] = met
+  state.values[id] = met
   const producer = producers[id]
   if (producer?.kind === 'property') {
-    const parent = state.frame.values[producer.object]
+    const parent = state.values[producer.object]
     if (parent?.kind === 'record') {
       const rebuilt: AbstractValue = {
         kind: 'record',
@@ -814,7 +814,7 @@ function writeThroughProducers(
     return
   }
   if (producer?.kind === 'arrayLength' && met.kind === 'number') {
-    const parent = state.frame.values[producer.array]
+    const parent = state.values[producer.array]
     if (parent?.kind !== 'array') return
     const length = meetValues(parent.length, met)
     if (length.kind !== 'number') return
@@ -1128,7 +1128,7 @@ function numberWithFacts(
   id: ValueID,
   expressionContext: ExpressionContext,
 ): AbstractNumber | null {
-  const held = state.frame.values[id]
+  const held = state.values[id]
   if (held?.kind !== 'number') return null
   let result = held
   const key = canonicalValueKey(id, expressionContext)
@@ -1210,7 +1210,7 @@ function possiblyMissingElementReadSite(
 ): SiteID | null {
   const producer = producers[valueID]
   if (producer?.kind !== 'arrayIndex' || producer.mode !== 'bareUnchecked') return null
-  const value = state.frame.values[valueID]
+  const value = state.values[valueID]
   if (value == null) return null
   const canBeUndefined = (value.kind === 'nullish' || value.kind === 'maybeNullish')
     && value.sentinels !== 'null'
@@ -1241,7 +1241,7 @@ function requiredRecord(state: ExecutionState, id: ValueID): AbstractRecord {
 }
 
 export function requiredValue(state: ExecutionState, id: ValueID): AbstractValue {
-  const value = state.frame.values[id]
+  const value = state.values[id]
   if (value == null) throw new Error(`Missing IR value ${id}`)
   return value
 }

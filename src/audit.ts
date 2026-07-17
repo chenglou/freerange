@@ -315,19 +315,18 @@ export function formatFileAuditUnit(audit: FileAudit, pretty = false): string {
   }
 
   if (audit.guideIDs.length > 0) {
-    const printedSuggestions: {site: number; guideID: RefactorGuideID}[] = []
+    const printedSuggestions = new Set<string>()
     lines.push(
       '',
       '## Refactoring suggestions',
     )
     for (const reference of audit.references) {
       const guideIDs = reference.guideIDs.filter(guideID =>
-        !printedSuggestions.some(suggestion =>
-          suggestion.site === reference.span.start && suggestion.guideID === guideID))
+        !printedSuggestions.has(`${reference.span.start}:${guideID}`))
       if (guideIDs.length === 0) continue
       lines.push('')
       for (const guideID of guideIDs) {
-        printedSuggestions.push({site: reference.span.start, guideID})
+        printedSuggestions.add(`${reference.span.start}:${guideID}`)
         const guide = refactorGuide(guideID)
         const prefix = formatDiagnosticPrefix(
           {file: audit.file, line: reference.line, column: reference.column},

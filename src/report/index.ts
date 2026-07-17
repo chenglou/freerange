@@ -1,8 +1,8 @@
 import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {AssertionVerdict, FunctionAnalysis, ProgramAnalysis, RequirementFailure, Stop} from '../engine/outcome.ts'
-import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
-import {functionUsage} from '../ir/function-usage.ts'
+import type {FunctionID, ModuleBindingID, SiteID, ValueID} from '../ir/ids.ts'
+import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
 import {forEachOperand} from '../ir/instructions.ts'
 import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
@@ -284,7 +284,7 @@ const keepEverything: KeepPath = () => true
 function assumptionLines(
   fn: FunctionIR,
   program: ProgramIR,
-  assumedBindings: boolean[],
+  assumedBindings: ReadonlySet<ModuleBindingID>,
   boundsAssumptions: BoundsAssumption[],
 ): string[] {
   const assumptions: string[] = []
@@ -296,8 +296,7 @@ function assumptionLines(
   // Module bindings filter at whole-binding granularity: assumedBindings already contains
   // only the bindings this function (or a callee) reads, and a callee's reads arrive as a
   // binding ID with no path detail, so a read binding keeps all its lines.
-  for (let bindingID = 0; bindingID < program.moduleBindings.length; bindingID++) {
-    if (assumedBindings[bindingID] !== true) continue
+  for (const bindingID of assumedBindings) {
     const binding = program.moduleBindings[bindingID]!
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) throw new Error(`Module binding ${binding.name} has no declared kind to assume`)
@@ -584,38 +583,19 @@ function pushDeclaredAssumptions(path: string, segments: string[], declared: Dec
 function functionModuleAssumptions(
   program: ProgramIR,
   analysis: ProgramAnalysis,
-): boolean[][] {
-  const assumedBindings: boolean[][] = []
+): Set<ModuleBindingID>[] {
   const usage = functionUsage(program)
-  for (const fn of usage) {
-    const reads: boolean[] = []
+  const direct = usage.map(fn => {
+    const reads = new Set<ModuleBindingID>()
     for (const bindingID of fn.moduleBindings) {
       if (analysis.moduleValues[bindingID] != null) continue
       const binding = program.moduleBindings[bindingID]
       if (binding == null) throw new Error(`Unknown module binding ${bindingID}`)
-      if (declaredKindOf(binding.category) != null) {
-        reads[bindingID] = true
-      }
+      if (declaredKindOf(binding.category) != null) reads.add(bindingID)
     }
-    assumedBindings.push(reads)
-  }
-  // Call graphs can have cycles. Callers inherit their callees' module assumptions.
-  let changed = true
-  while (changed) {
-    changed = false
-    for (let caller = 0; caller < assumedBindings.length; caller++) {
-      for (const callee of usage[caller]!.callees) {
-        const calleeAssumed = assumedBindings[callee]!
-        for (let bindingID = 0; bindingID < calleeAssumed.length; bindingID++) {
-          if (calleeAssumed[bindingID] === true && assumedBindings[caller]![bindingID] !== true) {
-            assumedBindings[caller]![bindingID] = true
-            changed = true
-          }
-        }
-      }
-    }
-  }
-  return assumedBindings
+    return reads
+  })
+  return transitiveModuleBindings(usage, direct)
 }
 
 // The only place stop prose exists; everything else branches on reason.kind.

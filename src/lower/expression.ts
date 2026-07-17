@@ -13,7 +13,7 @@ import {
   unsupported,
   type FunctionContext,
 } from './context.ts'
-import {annotationForExpression, type StaticAnnotation} from './static-intrinsics.ts'
+import type {StaticAnnotation} from './static-intrinsics.ts'
 import {isUndefinedGlobal, numericLiteralValue, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
 
 // The only entry point through which assignments lower. Statement positions (expression
@@ -248,11 +248,10 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     // The contextual type may sit behind a nullable wrapper (`const config: Config |
     // null = flag ? {...} : null`): the literal builds the non-missing part, so the
     // filling and tag detection look through the wrapper at those members.
-    const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
     const contextMembers: readonly ts.Type[] = contextual == null
       ? []
       : contextual.isUnion()
-        ? contextual.types.filter(member => (member.flags & missingFlags) === 0)
+        ? nonMissingUnionMembers(contextual)
         : [contextual]
     if (contextMembers.length === 1 && valueKind(contextMembers[0]!, context.checker) === 'object') {
       fillOptionalsFrom(contextMembers[0]!)
@@ -391,7 +390,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       : addInstruction(context, current, {kind: 'compare', operator: comparison!, left, right})
   }
   if (ts.isCallExpression(current)) {
-    const staticAnnotation = annotationForExpression(current, context.staticAnnotations)
+    const staticAnnotation = context.staticAnnotations.get(current)
     if (staticAnnotation != null) return lowerStaticAnnotation(staticAnnotation, context)
     if (ts.isIdentifier(current.expression)) {
       // Global parseFloat / parseInt / Number(x): honest NaN-carrying results, like their

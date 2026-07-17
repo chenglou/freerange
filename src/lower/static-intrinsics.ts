@@ -42,11 +42,12 @@ export function scanStaticAnnotations(
   return {
     functions: declarations.map((declaration, index) => {
       const calls = callsByFunction[index]!
+      const callSet = new Set(calls)
       const leading = new Set<ts.CallExpression>()
       if (declaration.body != null) {
         for (const statement of declaration.body.statements) {
           if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)
-            || !calls.includes(statement.expression)) break
+            || !callSet.has(statement.expression)) break
           leading.add(statement.expression)
         }
       }
@@ -54,13 +55,6 @@ export function scanStaticAnnotations(
     }),
     outsideTopLevelFunctions,
   }
-}
-
-export function annotationForExpression(
-  expression: ts.CallExpression,
-  annotations: StaticAnnotation[],
-): StaticAnnotation | null {
-  return annotations.find(annotation => annotation.call === expression) ?? null
 }
 
 function annotationForCall(call: ts.CallExpression, role: StaticAnnotationRole): StaticAnnotation {

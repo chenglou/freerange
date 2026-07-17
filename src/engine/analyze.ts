@@ -1,7 +1,7 @@
 import {constantNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
-import {functionsReadingModules, functionUsage} from '../ir/function-usage.ts'
+import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
 import {declaredKindOf, declaredKindValue, holdsMutableStructure, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
@@ -23,7 +23,6 @@ import {
   joinModuleSlots,
   mergeStates,
   type ExecutionState,
-  type ModuleSlot,
   type SharedState,
   type ValueFact,
 } from './state.ts'
@@ -50,7 +49,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
   for (let binding = 0; binding < program.moduleBindings.length; binding++) {
     const category = program.moduleBindings[binding]!.category
     if (category.kind === 'importedConstant') {
-      initializerState[binding] = {kind: 'value', value: constantNumber(category.value)}
+      initializerState[binding] = constantNumber(category.value)
     }
   }
   // The initializer runs first, so top-level calls into declared functions see the module
@@ -67,7 +66,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
   )
   const moduleValues = publishedModuleValues(program, initializer.run, initializer.evaluation)
   const functionEntrySharedState = seedModuleSlots(program, moduleValues)
-  const readsModules = functionsReadingModules(functionUsage(program))
+  const moduleReads = transitiveModuleBindings(functionUsage(program))
   const initializerBounds = initializer.evaluation.boundsAssumptions
   const functions: FunctionAnalysis[] = []
   for (let functionID = 0; functionID < program.functions.length; functionID++) {
@@ -97,7 +96,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       program,
       [],
       {
-        boundsAssumptions: readsModules[functionID] === true ? initializerBounds : [],
+        boundsAssumptions: moduleReads[functionID]!.size > 0 ? initializerBounds : [],
         identityNamespace: `function:${functionID}/`,
       },
     )
@@ -151,16 +150,16 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
 // so is an imported constant's literal; otherwise a binding of representable declared kind
 // (number, boolean, record shape) contributes that kind, and every other binding stays
 // uninitialized so reads stop.
-function seedModuleSlots(program: ProgramIR, moduleValues: Array<AbstractValue | null>): ModuleSlot[] {
+function seedModuleSlots(program: ProgramIR, moduleValues: Array<AbstractValue | null>): SharedState {
   return program.moduleBindings.map((binding, index) => {
     const published = moduleValues[index]
-    if (published != null) return {kind: 'value', value: published}
+    if (published != null) return published
     if (binding.category.kind === 'importedConstant') {
-      return {kind: 'value', value: constantNumber(binding.category.value)}
+      return constantNumber(binding.category.value)
     }
     const declaredKind = declaredKindOf(binding.category)
-    if (declaredKind == null) return {kind: 'uninitialized'}
-    return {kind: 'value', value: declaredKindValue(declaredKind)}
+    if (declaredKind == null) return null
+    return declaredKindValue(declaredKind)
   })
 }
 
@@ -222,7 +221,7 @@ function publishedModuleValues(
     // nullish at the top level yet the array inside is exactly as alias-mutable.
     if (holdsMutableStructure(binding.category.declaredKind) && !fullyAnalyzed) return null
     const slot = end?.[index]
-    return slot?.kind === 'value' ? slot.value : null
+    return slot ?? null
   })
 }
 
@@ -266,7 +265,7 @@ type EvaluationRun = {
   // Dense by FunctionIR.assertions index when present.
   assertionObservations: Array<AssertionObservation | undefined>
   // Module slots joined across every stop, then with the normal end by the publish rule.
-  moduleEnd: ModuleSlot[] | null
+  moduleEnd: SharedState | null
 }
 
 type EvaluationSeed = {
@@ -289,12 +288,12 @@ function runEvaluation(
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
   const initial: ExecutionState = {
-    frame: {values: []},
+    values: [],
     shared: cloneSharedState(sharedState),
     valueFacts: seed.valueFacts?.slice() ?? [],
   }
   for (let index = 0; index < fn.parameters.length; index++) {
-    initial.frame.values[fn.parameters[index]!.value] = arguments_[index]!
+    initial.values[fn.parameters[index]!.value] = arguments_[index]!
   }
   const expressionContext = createExpressionContext(
     fn,
@@ -382,10 +381,10 @@ function runEvaluation(
           break instructionLoop
         case 'assertion':
           addAssertionObservation(run, result.assertion, result.observation)
-          state.frame.values[instruction.result] = result.value
+          state.values[instruction.result] = result.value
           break
         case 'value':
-          state.frame.values[instruction.result] = result.value
+          state.values[instruction.result] = result.value
           break
       }
     }
@@ -608,7 +607,7 @@ function addStop(
   run: EvaluationRun,
   blockID: BlockID,
   stop: Stop,
-  moduleCapture: ModuleSlot[],
+  moduleCapture: SharedState,
   instructionIndex: number,
 ): void {
   const block = run.blocks[blockID]!
@@ -642,7 +641,7 @@ function propagate(
   const argumentValues = edge.arguments.map(argument => requiredValue(state, argument))
   const candidate = state
   for (let index = 0; index < target.parameters.length; index++) {
-    candidate.frame.values[target.parameters[index]!] = argumentValues[index]!
+    candidate.values[target.parameters[index]!] = argumentValues[index]!
   }
   const previous = run.blocks[edge.block]!.incoming
   if (previous == null) {

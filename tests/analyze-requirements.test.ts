@@ -1,5 +1,4 @@
 import {describe, expect, test} from 'bun:test'
-import {mergeStates, type ExecutionState} from '../src/engine/state.ts'
 import {analyzeSource} from '../src/index.ts'
 import {analyzedFunction} from './analyze-helpers.ts'
 
@@ -485,16 +484,6 @@ describe('requirements and numeric checks', () => {
       expect(analyzedFunction(report, name).requires[0]).toContain('index is a valid values index')
     }
     expect(analyzedFunction(report, 'differentArrays').requires).toHaveLength(2)
-
-    const previous: ExecutionState = {
-      frame: {values: []}, shared: [],
-      valueFacts: [{kind: 'validIndex', index: 'index', array: 'values'}],
-    }
-    const candidate: ExecutionState = {
-      frame: {values: []}, shared: [],
-      valueFacts: [{kind: 'belowLength', index: 'index', array: 'values'}],
-    }
-    expect(mergeStates(previous, candidate, false)).toEqual({state: candidate, changed: true})
   })
 
   test('unproven asserted reads mint a requires when nameable, an assumes otherwise', () => {

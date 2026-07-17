@@ -1,23 +1,13 @@
 import type {AbstractValue} from '../domain/value.ts'
 import {joinValues, sameValues, widenValue} from '../domain/value.ts'
 
-export type FunctionFrame = {
-  values: Array<AbstractValue | undefined>
-}
-
-// One module binding's storage. Uninitialized is a distinct state (not just an unknown
-// value) so runtime import-cycle support can be added later; reading an uninitialized slot
-// stops the path.
-export type ModuleSlot =
-  | {kind: 'uninitialized'}
-  | {kind: 'value'; value: AbstractValue}
-
 // Indexed by ModuleBindingID, fixed length per program. Flows through calls, so a
-// callee's module writes are visible to the caller after a completed call.
-export type SharedState = ModuleSlot[]
+// callee's module writes are visible to the caller after a completed call. Null means the
+// binding is not initialized; reading it stops the path.
+export type SharedState = Array<AbstractValue | null>
 
 export type ExecutionState = {
-  frame: FunctionFrame
+  values: Array<AbstractValue | undefined>
   shared: SharedState
   // Conditions established by a guard or by a requirement/assumption already recorded
   // on this path. Value keys name immutable runtime values, so assignment naturally uses
@@ -77,9 +67,7 @@ function sameValueFact(left: ValueFact, right: ValueFact): boolean {
 }
 
 export function emptySharedState(moduleCount: number): SharedState {
-  const modules: ModuleSlot[] = []
-  for (let index = 0; index < moduleCount; index++) modules.push({kind: 'uninitialized'})
-  return modules
+  return Array.from({length: moduleCount}, () => null)
 }
 
 export function cloneSharedState(state: SharedState): SharedState {
@@ -89,7 +77,7 @@ export function cloneSharedState(state: SharedState): SharedState {
 
 export function cloneState(state: ExecutionState): ExecutionState {
   return {
-    frame: {values: state.frame.values.slice()},
+    values: state.values.slice(),
     shared: cloneSharedState(state.shared),
     // Facts are never mutated, only appended or filtered, so a shallow copy suffices.
     valueFacts: state.valueFacts.slice(),
@@ -98,19 +86,19 @@ export function cloneState(state: ExecutionState): ExecutionState {
 
 // A new state field must participate in both the merged value and `changed`. Listing the
 // fields here makes that review mandatory when ExecutionState grows.
-const mergedStateFields: Record<keyof ExecutionState, true> = {frame: true, shared: true, valueFacts: true}
+const mergedStateFields: Record<keyof ExecutionState, true> = {values: true, shared: true, valueFacts: true}
 
 // Joins one incoming state into the block's previous state and reports whether the block
 // must run again. The comparison happens while each joined value is already in hand, so
 // propagation does not walk the complete historical frame a second time.
 export function mergeStates(previous: ExecutionState, candidate: ExecutionState, widen: boolean): {state: ExecutionState; changed: boolean} {
   void mergedStateFields
-  const values: FunctionFrame['values'] = []
-  const length = Math.max(previous.frame.values.length, candidate.frame.values.length)
-  let changed = previous.frame.values.length !== length
+  const values: ExecutionState['values'] = []
+  const length = Math.max(previous.values.length, candidate.values.length)
+  let changed = previous.values.length !== length
   for (let index = 0; index < length; index++) {
-    const previousValue = previous.frame.values[index]
-    const candidateValue = candidate.frame.values[index]
+    const previousValue = previous.values[index]
+    const candidateValue = candidate.values[index]
     if (previousValue == null) {
       values[index] = candidateValue
       if (candidateValue != null) changed = true
@@ -125,16 +113,16 @@ export function mergeStates(previous: ExecutionState, candidate: ExecutionState,
   }
   const shared: SharedState = []
   for (let index = 0; index < previous.shared.length; index++) {
-    const previousSlot = previous.shared[index]!
-    const candidateSlot = candidate.shared[index]!
-    if (previousSlot.kind === 'uninitialized' || candidateSlot.kind === 'uninitialized') {
-      shared.push({kind: 'uninitialized'})
-      if (previousSlot.kind !== 'uninitialized') changed = true
+    const previousValue = previous.shared[index]
+    const candidateValue = candidate.shared[index]
+    if (previousValue == null || candidateValue == null) {
+      shared.push(null)
+      if (previousValue != null) changed = true
     } else {
-      const joined = joinValues(previousSlot.value, candidateSlot.value)
-      const merged = widen ? widenValue(previousSlot.value, joined) : joined
-      shared.push({kind: 'value', value: merged})
-      if (!sameValues(previousSlot.value, merged)) changed = true
+      const joined = joinValues(previousValue, candidateValue)
+      const merged = widen ? widenValue(previousValue, joined) : joined
+      shared.push(merged)
+      if (!sameValues(previousValue, merged)) changed = true
     }
   }
   const valueFacts = intersectValueFacts(previous.valueFacts, candidate.valueFacts)
@@ -143,7 +131,7 @@ export function mergeStates(previous: ExecutionState, candidate: ExecutionState,
     || valueFacts.some(fact => !previous.valueFacts.some(previousFact => sameValueFact(fact, previousFact)))
   ) changed = true
   const state: ExecutionState = {
-    frame: {values},
+    values,
     shared,
     valueFacts,
   }
@@ -152,15 +140,15 @@ export function mergeStates(previous: ExecutionState, candidate: ExecutionState,
 
 // Uninitialized dominates: a binding is only initialized when every joined path
 // initialized it.
-export function joinModuleSlots(left: ModuleSlot[], right: ModuleSlot[]): ModuleSlot[] {
-  const joined: ModuleSlot[] = []
+export function joinModuleSlots(left: SharedState, right: SharedState): SharedState {
+  const joined: SharedState = []
   for (let index = 0; index < left.length; index++) {
-    const leftSlot = left[index]!
-    const rightSlot = right[index]!
+    const leftValue = left[index]
+    const rightValue = right[index]
     joined.push(
-      leftSlot.kind === 'uninitialized' || rightSlot.kind === 'uninitialized'
-        ? {kind: 'uninitialized'}
-        : {kind: 'value', value: joinValues(leftSlot.value, rightSlot.value)},
+      leftValue == null || rightValue == null
+        ? null
+        : joinValues(leftValue, rightValue),
     )
   }
   return joined
