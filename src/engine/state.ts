@@ -11,13 +11,19 @@ export type ExecutionState = {
   shared: SharedState
   // Conditions established by a guard or by a requirement/assumption already recorded
   // on this path. Value keys name immutable runtime values, so assignment naturally uses
-  // a new key. Joins intersect the list. This is deliberately a closed set of three facts,
+  // a new key. Joins intersect the list. This is deliberately a closed set of five facts,
   // with no transitivity or arithmetic, stored as a small deduplicated array.
   valueFacts: ValueFact[]
 }
 
 export type ValueFact =
   | {kind: 'nonzero'; value: string}
+  // Unlike the default finite parameter value, this records that a caller requirement or
+  // an inherited caller fact established finiteness.
+  | {kind: 'finite'; value: string}
+  // A finite/integer guard that dominates one source block. The scope lets block entry
+  // replace this function's guard facts without discarding a caller's guard during a call.
+  | {kind: 'guardFinite'; value: string; scope: string}
   // The strict `index < array.length` half of a bounds guard. The index's own abstract
   // number must still prove integer, non-NaN, and nonnegative.
   | {kind: 'belowLength'; index: string; array: string}
@@ -26,6 +32,11 @@ export type ValueFact =
 
 export function hasNonzeroFact(facts: ValueFact[], value: string): boolean {
   return facts.some(fact => fact.kind === 'nonzero' && fact.value === value)
+}
+
+export function hasFiniteFact(facts: ValueFact[], value: string): boolean {
+  return facts.some(fact => (fact.kind === 'finite' || fact.kind === 'guardFinite')
+    && fact.value === value)
 }
 
 export function hasIndexFact(
@@ -54,7 +65,8 @@ export function intersectValueFacts(left: ValueFact[], right: ValueFact[]): Valu
 
 function intersectValueFact(left: ValueFact, right: ValueFact): ValueFact | null {
   if (sameValueFact(left, right)) return left
-  if (left.kind === 'nonzero' || right.kind === 'nonzero') return null
+  if (left.kind === 'nonzero' || left.kind === 'finite' || left.kind === 'guardFinite'
+    || right.kind === 'nonzero' || right.kind === 'finite' || right.kind === 'guardFinite') return null
   if (left.index !== right.index || left.array !== right.array) return null
   return {kind: 'belowLength', index: left.index, array: left.array}
 }
@@ -62,7 +74,12 @@ function intersectValueFact(left: ValueFact, right: ValueFact): ValueFact | null
 function sameValueFact(left: ValueFact, right: ValueFact): boolean {
   if (left.kind !== right.kind) return false
   if (left.kind === 'nonzero' && right.kind === 'nonzero') return left.value === right.value
-  if (left.kind === 'nonzero' || right.kind === 'nonzero') return false
+  if (left.kind === 'finite' && right.kind === 'finite') return left.value === right.value
+  if (left.kind === 'guardFinite' && right.kind === 'guardFinite') {
+    return left.value === right.value && left.scope === right.scope
+  }
+  if (left.kind === 'nonzero' || left.kind === 'finite' || left.kind === 'guardFinite'
+    || right.kind === 'nonzero' || right.kind === 'finite' || right.kind === 'guardFinite') return false
   return left.index === right.index && left.array === right.array
 }
 

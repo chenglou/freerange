@@ -43,6 +43,7 @@ import {
   resolveStoredValue,
   sameRuntimeValue,
   staticRequirement,
+  numericParameterPath,
   type ExpressionContext,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
@@ -50,6 +51,7 @@ import {completedEvaluation, type FunctionEvaluation, type RequirementFailure, t
 import {
   addValueFact,
   cloneState,
+  hasFiniteFact,
   hasIndexFact,
   hasNonzeroFact,
   type ExecutionState,
@@ -487,8 +489,25 @@ function evaluateInstructionKinded(
       if (!condition.canBeTrue) {
         return failedRequirement({kind: 'declared', site: instruction.site, status: 'refuted'})
       }
-      if (!condition.canBeFalse) return value({kind: 'void'})
       const requirement = staticRequirement(check, instruction.site, context.expressionContext)
+      if (!condition.canBeFalse) {
+        // A bare number parameter is finite only because function entry assumes it. Keep
+        // an explicitly written finite check as a caller requirement; a known finite
+        // literal or calculation has proved the check and can discharge it normally.
+        const recordsFiniteRequirement = check.kind === 'numberCheck'
+          && requirement?.kind === 'declaredNumberCheck'
+          && requirement.predicate === 'finite'
+          && numericParameterPath(requirement.expression) != null
+          && !hasFiniteFact(
+            state.valueFacts,
+            canonicalValueKey(check.value, context.expressionContext),
+          )
+        if (recordsFiniteRequirement) {
+          addPrecondition(context.preconditions, requirement)
+          recordFiniteValueFact(state, check.value, context.expressionContext)
+        }
+        return value({kind: 'void'})
+      }
       if (requirement == null) {
         return failedRequirement({kind: 'declared', site: instruction.site, status: 'unproven'})
       }
@@ -500,6 +519,9 @@ function evaluateInstructionKinded(
       state.shared = refined.shared
       state.valueFacts = refined.valueFacts
       addPrecondition(context.preconditions, requirement)
+      if (check.kind === 'numberCheck') {
+        recordFiniteValueFact(state, check.value, context.expressionContext)
+      }
       return value({kind: 'void'})
     }
     case 'minimum': {
@@ -644,7 +666,10 @@ export function addBoundsAssumption(assumptions: BoundsAssumption[], candidate: 
 
 function valueFactUsesNamespace(fact: ValueFact, namespace: string): boolean {
   const marker = `v:${namespace}`
-  if (fact.kind === 'nonzero') return fact.value.includes(marker)
+  if (fact.kind === 'nonzero' || fact.kind === 'finite') return fact.value.includes(marker)
+  if (fact.kind === 'guardFinite') {
+    return fact.value.includes(marker) || fact.scope.includes(namespace)
+  }
   return fact.index.includes(marker) || fact.array.includes(marker)
 }
 
@@ -916,7 +941,7 @@ function refineNumberCheck(
   state: ExecutionState,
   check: Extract<InstructionIR, {kind: 'numberCheck'}>,
   truth: boolean,
-  producers: Array<InstructionIR | undefined>,
+  expressionContext: ExpressionContext,
 ): ExecutionState | null {
   const result = cloneState(state)
   const operand = requiredNumber(result, check.value)
@@ -926,7 +951,7 @@ function refineNumberCheck(
     // value provably cannot be NaN. The failing branch launders: mayBeNaN clears.
     if (truth) return operand.mayBeNaN ? result : null
     const laundered: AbstractNumber = {...operand, mayBeNaN: false}
-    writeThroughProducers(result, check.value, laundered, producers)
+    writeThroughProducers(result, check.value, laundered, expressionContext.instructionByValue)
     return result
   }
   if (truth) {
@@ -942,7 +967,7 @@ function refineNumberCheck(
       refined = {...refined, integer: true, lower: Math.ceil(refined.lower), upper: Math.floor(refined.upper)}
     }
     if (refined.lower > refined.upper) return null
-    writeThroughProducers(result, check.value, refined, producers)
+    writeThroughProducers(result, check.value, refined, expressionContext.instructionByValue)
     return result
   }
   // The failing branch holds NaN, the infinities, and (for isInteger) every non-integer —
@@ -1102,7 +1127,7 @@ export function refineCheck(
   switch (check.kind) {
     case 'compare': return refineComparison(state, check, truth, expressionContext)
     case 'nullishCheck': return refineNullishCheck(state, check, truth, expressionContext.instructionByValue)
-    case 'numberCheck': return refineNumberCheck(state, check, truth, expressionContext.instructionByValue)
+    case 'numberCheck': return refineNumberCheck(state, check, truth, expressionContext)
     case 'tagCheck': return refineTagCheck(state, check, truth, expressionContext.instructionByValue)
   }
 }
@@ -1165,6 +1190,14 @@ function recordNonzeroValueFact(
   expressionContext: ExpressionContext,
 ): void {
   addValueFact(state.valueFacts, {kind: 'nonzero', value: canonicalValueKey(value, expressionContext)})
+}
+
+function recordFiniteValueFact(
+  state: ExecutionState,
+  value: ValueID,
+  expressionContext: ExpressionContext,
+): void {
+  addValueFact(state.valueFacts, {kind: 'finite', value: canonicalValueKey(value, expressionContext)})
 }
 
 export function requiredBoolean(state: ExecutionState, id: ValueID): AbstractBoolean {

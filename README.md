@@ -76,6 +76,8 @@ In the example above, calling `itemColumn(0, 2.2)` produces an error (`columnCou
 `console.assert` calls at the very beginning of a function, before any other statement, are caller requirements. Like parameter types, every caller must satisfy them.
 Any `console.assert` later in the function will be proven by Freerange for the function itself. Otherwise, Freerange reports an error.
 
+A caller requirement can require a number parameter to be an integer, require a number parameter or one of its fields to be finite, or compare a number parameter with a fixed numeric literal or module constant.
+
 For simplicity and predictability, `console.assert` currently works only in named top-level functions and accepts simple numeric checks:
 - `Number.isInteger`, `Number.isFinite`, `Number.isNaN`
 - Strict comparisons (`===`, `!==`, `<`, `>`, `<=`, `>=`) using number literals, object paths, and `array.length`

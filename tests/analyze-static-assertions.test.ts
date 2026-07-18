@@ -25,6 +25,7 @@ describe('static console.assert contracts', () => {
       'value >= 1',
     ])
     expect(consecutive.requires.some(requirement => requirement.includes('division'))).toBe(false)
+    expect(consecutive.assumptions).toEqual([])
 
     expect(analyzedFunction(report, 'propagatedRequirement').requires[0])
       .toContain('(width - 1) >= 0')
@@ -104,6 +105,172 @@ describe('static console.assert contracts', () => {
     const mutable = report.functions.find(fn => fn.name === 'mutableConstant')
     if (mutable?.kind !== 'unsupported') throw new Error('Expected mutableConstant to be unsupported')
     expect(mutable.unsupported).toContain('leading console.assert describes what callers must provide')
+  })
+
+  test('a leading finite check makes the default explicit and remains checked through calls', () => {
+    const report = analyzeSource('finite-requirement.ts', `
+      export function finiteValue(value: number): number {
+        console.assert(Number.isFinite(value))
+        return value
+      }
+      export function forwarded(value: number): number {
+        return finiteValue(value)
+      }
+      export function oneExplicit(first: number, second: number): number {
+        console.assert(Number.isFinite(first))
+        return first + second
+      }
+      export function finiteWidth(config: {width: number; height: number}): number {
+        console.assert(Number.isFinite(config.width))
+        return config.width + config.height
+      }
+      export function forwardedWidth(config: {width: number; height: number}): number {
+        return finiteWidth(config)
+      }
+      export function passedProperty(config: {width: number}): number {
+        return finiteValue(config.width)
+      }
+      export function knownWidth(): number {
+        return finiteWidth({width: 5, height: 10})
+      }
+      export function finiteNested(config: {frame: {width: number}}): number {
+        console.assert(Number.isFinite(config.frame.width))
+        return config.frame.width
+      }
+      export function knownFinite(): number {
+        return finiteValue(5)
+      }
+      function defaulted(value: number = 5): number {
+        console.assert(Number.isFinite(value))
+        return value
+      }
+      export function omittedDefault(): number {
+        return defaulted()
+      }
+      export function explicitUndefined(): number {
+        return defaulted(undefined)
+      }
+      export function possiblyOverflowing(value: number): number {
+        return finiteValue(value * 2)
+      }
+      export function infiniteLiteral(): number {
+        return finiteValue(1e309)
+      }
+      export function parsed(text: string): number {
+        const value = Number.parseFloat(text)
+        return finiteValue(value)
+      }
+      export function guardedParsed(text: string): number {
+        const value = Number.parseFloat(text)
+        if (!Number.isFinite(value)) return 0
+        return finiteValue(value)
+      }
+      export function guardedParameter(value: number): number {
+        if (!Number.isFinite(value)) return 0
+        return finiteValue(value)
+      }
+      export function integerGuardedParameter(value: number): number {
+        if (!Number.isInteger(value)) return 0
+        return finiteValue(value)
+      }
+      export function guardedProperty(config: {width: number; height: number}): number {
+        if (!Number.isFinite(config.width)) return 0
+        return finiteWidth(config)
+      }
+      export function guardedOnOnePath(shouldGuard: boolean, value: number): number {
+        if (shouldGuard && !Number.isFinite(value)) return 0
+        return finiteValue(value)
+      }
+      export function onlyRejectsNaN(value: number): number {
+        if (Number.isNaN(value)) return 0
+        return finiteValue(value)
+      }
+      export function emptyFiniteCheck(value: number): number {
+        if (Number.isFinite(value)) {}
+        return finiteValue(value)
+      }
+      export function guardedCallDoesNotEscape(value: number): number {
+        if (Number.isFinite(value)) finiteValue(value)
+        return finiteValue(value)
+      }
+      export function finiteBranchUsesInputAssumption(value: number): number {
+        if (Number.isFinite(value)) return 1
+        return 2
+      }
+      export function sameValueJoin(flag: boolean, value: number): number {
+        const alias = flag ? value : value
+        return finiteValue(alias)
+      }
+      export function destructuredFinite({width}: {width: number}): number {
+        console.assert(Number.isFinite(width))
+        return width
+      }
+    `)
+
+    const finite = analyzedFunction(report, 'finiteValue')
+    expect(finite.requires[0]).toContain('Number.isFinite(value)')
+    expect(finite.assumptions).toEqual([])
+    expect(finite.ensures).toEqual(['return is a finite number'])
+
+    const forwarded = analyzedFunction(report, 'forwarded')
+    expect(forwarded.requires[0]).toContain('Number.isFinite(value)')
+    expect(forwarded.assumptions).toEqual([])
+
+    const oneExplicit = analyzedFunction(report, 'oneExplicit')
+    expect(oneExplicit.requires[0]).toContain('Number.isFinite(first)')
+    expect(oneExplicit.assumptions).toEqual(['second is finite and not NaN'])
+
+    const finiteWidth = analyzedFunction(report, 'finiteWidth')
+    expect(finiteWidth.requires[0]).toContain('Number.isFinite(config.width)')
+    expect(finiteWidth.assumptions).toEqual(['config.height is finite and not NaN'])
+    for (const name of ['forwardedWidth', 'passedProperty']) {
+      const fn = analyzedFunction(report, name)
+      expect(fn.requires[0]).toContain('Number.isFinite(config.width)')
+      expect(fn.assumptions).toEqual(name === 'forwardedWidth'
+        ? ['config.height is finite and not NaN']
+        : [])
+    }
+    expect(analyzedFunction(report, 'knownWidth').requires).toEqual([])
+    const finiteNested = analyzedFunction(report, 'finiteNested')
+    expect(finiteNested.requires[0]).toContain('Number.isFinite(config.frame.width)')
+    expect(finiteNested.assumptions).toEqual([])
+
+    for (const name of [
+      'knownFinite',
+      'omittedDefault',
+      'explicitUndefined',
+      'guardedParsed',
+      'guardedParameter',
+      'integerGuardedParameter',
+      'guardedProperty',
+    ]) {
+      expect(analyzedFunction(report, name).requires).toEqual([])
+    }
+    for (const name of [
+      'guardedOnOnePath',
+      'onlyRejectsNaN',
+      'emptyFiniteCheck',
+      'guardedCallDoesNotEscape',
+      'sameValueJoin',
+    ]) {
+      expect(analyzedFunction(report, name).requires[0]).toContain('Number.isFinite(value)')
+    }
+    const destructured = analyzedFunction(report, 'destructuredFinite')
+    expect(destructured.requires[0]).toContain('Number.isFinite({width}.width)')
+    expect(destructured.assumptions).toEqual([])
+    expect(analyzedFunction(report, 'finiteBranchUsesInputAssumption').ensures).toEqual([
+      'return is a finite integer number from 1 through 1',
+    ])
+    expect(analyzedFunction(report, 'possiblyOverflowing').requires[0])
+      .toContain('Number.isFinite((value * 2))')
+
+    for (const name of ['infiniteLiteral', 'parsed']) {
+      const fn = report.functions.find(candidate => candidate.name === name)
+      if (fn?.kind !== 'partial') throw new Error(`Expected ${name} to be partial`)
+      expect(fn.partialReasons[0]).toContain(name === 'parsed'
+        ? 'could not express or prove'
+        : 'declared requirement definitely false')
+    }
   })
 
   test('leading requirements accept imported numeric literal constants', () => {
@@ -228,6 +395,10 @@ describe('static console.assert contracts', () => {
         console.assert(Number.isFinite(value))
         return value
       }
+      export function finiteArrayLength(values: number[]): number {
+        console.assert(Number.isFinite(values.length))
+        return values.length
+      }
       export function inlineDivision(value: number, divisor: number): number {
         const result = value
         console.assert(Number.isFinite(result / divisor))
@@ -300,7 +471,7 @@ describe('static console.assert contracts', () => {
       'optional',
       'expressionPosition',
       'relationalRequirement',
-      'finiteRequirement',
+      'finiteArrayLength',
       'inlineDivision',
       'inlineRemainder',
       'inlineIndex',
@@ -324,7 +495,6 @@ describe('static console.assert contracts', () => {
     expect(unsupported('called')).toContain('cannot call a function')
     expect(unsupported('constant')).toContain('one direct numeric comparison')
     expect(unsupported('relationalRequirement')).toContain('describes what callers must provide')
-    expect(unsupported('finiteRequirement')).toContain('describes what callers must provide')
     expect(unsupported('inlineDivision')).toContain('calculate or read the value before console.assert')
     expect(unsupported('inlineIndex')).toContain('calculate or read the value before console.assert')
     expect(unsupported('storedCondition')).toContain('one direct numeric comparison')
@@ -337,6 +507,8 @@ describe('static console.assert contracts', () => {
     expect(shadowed.unsupported).not.toContain('console.assert')
     expect(analyzedFunction(report, 'writtenNumberCheck').assertions?.map(assertion => assertion.verdict))
       .toEqual(['proven'])
+    expect(analyzedFunction(report, 'finiteRequirement').requires[0]).toContain('Number.isFinite(value)')
+    expect(analyzedFunction(report, 'finiteRequirement').assumptions).toEqual([])
     expect(analyzedFunction(report, 'positiveLiteral').assertions?.map(assertion => assertion.verdict))
       .toEqual(['proven'])
   })

@@ -16,6 +16,7 @@ import {
   type Stop,
 } from './outcome.ts'
 import {
+  addValueFact,
   cloneSharedState,
   cloneState,
   emptySharedState,
@@ -355,6 +356,15 @@ function runEvaluation(
     const entry = run.blocks[blockID]?.incoming
     if (block == null || entry == null) throw new Error(`Missing block ${blockID} in ${fn.name}`)
     const state = cloneState(entry.state)
+    state.valueFacts = state.valueFacts.filter(fact =>
+      fact.kind !== 'guardFinite' || fact.scope !== expressionContext.identityNamespace)
+    for (const value of expressionContext.guaranteedFiniteByBlock[blockID]!) {
+      addValueFact(state.valueFacts, {
+        kind: 'guardFinite',
+        value,
+        scope: expressionContext.identityNamespace,
+      })
+    }
     let stopped = false
     instructionLoop:
     for (let index = 0; index < block.instructions.length; index++) {
