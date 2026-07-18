@@ -151,6 +151,14 @@ Records join pointwise by property name, keeping only the names present on both 
 
 One expressiveness cost is accepted knowingly: two separately constructed records with equal property values are indistinguishable, so "definitely different objects" cannot be stated. Nothing observes object identity today — `===` never lowers for objects — and if object comparison ever enters the subset, the representation is the thing to revisit.
 
+## How should analysis work scale?
+
+Freerange does not promise the same running time as one JavaScript execution. One JavaScript run sees concrete inputs and one branch at a time; Freerange analyzes every supported top-level function, follows both sides of an unknown branch, and summarizes loops without executing every runtime iteration. Type classification and proof checking have no direct runtime counterpart.
+
+Graph-based analysis should not repeatedly visit the same graph node during one traversal. A block runs again only when its incoming abstract state changes, requirement expansion visits each producer instruction at most once, assertion proofs memoize each immutable value pair, and recursive type classification stores one answer per interned type and remaining depth. These tables use cheap stable IDs, are bounded by the source or TypeScript graph they traverse, and need no invalidation.
+
+Ordinary same-file calls use the evaluator's call stack and are not cached. An exponentially branching call tree can therefore take exponential time in both JavaScript and Freerange; accelerating the application's algorithm is not an analysis requirement. If code repeats one expensive pure call with the same arguments, storing the result in a local improves both runtime and analysis. A future call cache must show real use that cannot be fixed this way, use a key cheaper than the skipped evaluation, remain bounded on misses, and preserve every diagnostic and caller requirement.
+
 ## How should loops be analyzed?
 
 Do not unroll loops. Analyze the control flow until the abstract state stabilizes; otherwise stop at the analysis limit. Freerange does not use recurrence or collection summaries.
@@ -194,6 +202,7 @@ These prototypes and proposed directions have not shown enough independent value
 - JavaScript's 32-bit bitwise operators and `Math.imul`. The prototype modeled their signed and unsigned results coherently, including shifts, but none of the selected UI properties needed them. Reconsider when a real hash, mask, color, or index calculation needs a checked property; do not add them merely to accept more syntax.
 - One bounded relation saying two exact values differ. The design can remain small and would prove a subtraction nonzero after checking its two operands differ, but the only measured uses were copied remap helpers. Reconsider after a second independent case where binding the difference and checking that exact value is materially worse code.
 - Procedure specifications, also called function contracts, for imported functions. A sidecar file similar to `.d.ts` could state `requires` and `ensures` using the same small condition language as static assertions, then compile those declarations into function summaries. A provider should verify its implementation against the contract when source is available; otherwise consumers must see that the contract is trusted rather than proven. Pretext's text-measurement functions are a concrete candidate because their opaque numeric results currently stop useful layout analysis. Prototype this only when imported numeric helpers block a specific proof, and settle representation, validation, and bounded caching together.
+- Same-file call-result caching. A one-entry-per-callee prototype reduced identical call diamonds that are also exponential in JavaScript, but did not bound calls with changing arguments and had no measurable MJ Gallery benefit. Its deep cache key also made 1,000 trivial calls with an ignored 500-field record grow from about 1ms to 162ms. Reconsider only with a real workload, a key cheaper than the call, and a miss-heavy test that does not become worse.
 
 ## Punted
 

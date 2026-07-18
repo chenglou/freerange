@@ -275,67 +275,6 @@ type EvaluationSeed = {
   identityNamespace?: string
 }
 
-type RecentCallEvaluation = {
-  inputs: string
-  evaluation: FunctionEvaluation
-}
-
-function callInputKey(
-  arguments_: AbstractValue[],
-  argumentExpressions: Array<NumericExpression | null>,
-  sharedState: SharedState,
-  valueFacts: ValueFact[],
-  parameterIdentityKeys: string[],
-): string {
-  // The key includes the complete stored representation, including diagnostic source
-  // sites and record order. JSON normally merges NaN and infinities into null, so those
-  // numbers receive distinct encodings.
-  return JSON.stringify(
-    [arguments_, argumentExpressions, sharedState, valueFacts, parameterIdentityKeys],
-    (_key, value: unknown) => {
-      if (typeof value !== 'number') return value
-      if (Number.isNaN(value)) return {specialNumber: 'NaN'}
-      if (value === Infinity) return {specialNumber: 'Infinity'}
-      if (value === -Infinity) return {specialNumber: '-Infinity'}
-      if (Object.is(value, -0)) return {specialNumber: '-0'}
-      return value
-    },
-  )
-}
-
-function valueFactUsesNamespace(fact: ValueFact, namespace: string): boolean {
-  const marker = `v:${namespace}`
-  if (fact.kind === 'nonzero') return fact.value.includes(marker)
-  return fact.index.includes(marker) || fact.array.includes(marker)
-}
-
-function callerVisibleEvaluation(
-  evaluation: FunctionEvaluation,
-  identityNamespace: string,
-): FunctionEvaluation {
-  if (evaluation.normal == null) return evaluation
-  return {
-    ...evaluation,
-    normal: {
-      ...evaluation.normal,
-      valueFacts: evaluation.normal.valueFacts.filter(fact =>
-        !valueFactUsesNamespace(fact, identityNamespace)),
-    },
-  }
-}
-
-function cloneCachedEvaluation(evaluation: FunctionEvaluation): FunctionEvaluation {
-  if (evaluation.normal == null) return evaluation
-  return {
-    ...evaluation,
-    normal: {
-      ...evaluation.normal,
-      sharedState: cloneSharedState(evaluation.normal.sharedState),
-      valueFacts: evaluation.normal.valueFacts.slice(),
-    },
-  }
-}
-
 function runEvaluation(
   fn: FunctionIR,
   functionID: FunctionID | null,
@@ -377,9 +316,6 @@ function runEvaluation(
   // Invariant for the whole evaluation (engineering.md's loop-invariant rule): built once
   // instead of allocating a context object and closure per instruction per fixed-point
   // round. preconditions is shared by reference and accumulates.
-  // One recent complete result per callee collapses repeated equivalent calls without an
-  // unbounded memo table. Its inputs include every part of state the callee can observe.
-  const recentCalls = new Map<FunctionID, RecentCallEvaluation>()
   const transferContext = {
     program,
     callStack: functionID == null ? callStack : [...callStack, functionID],
@@ -400,11 +336,7 @@ function runEvaluation(
       if (calleeFn == null) throw new Error(`Unknown function ${callee}`)
       // Callers turn calls to unlowered functions into calleeStopped records first.
       if (calleeFn.kind !== 'lowered') throw new Error(`Analysis reached unlowered function ${calleeFn.name}`)
-      const inputs = callInputKey(values, expressions, calleeState, valueFacts, parameterIdentityKeys)
-      const recent = recentCalls.get(callee)
-      if (recent?.inputs === inputs) return cloneCachedEvaluation(recent.evaluation)
-
-      const evaluated = runEvaluation(
+      return runEvaluation(
         calleeFn,
         callee,
         values,
@@ -414,11 +346,6 @@ function runEvaluation(
         stack,
         {valueFacts, parameterIdentityKeys, identityNamespace},
       ).evaluation
-      const evaluation = callerVisibleEvaluation(evaluated, identityNamespace)
-      if (completedEvaluation(evaluation) != null) {
-        recentCalls.set(callee, {inputs, evaluation: cloneCachedEvaluation(evaluation)})
-      }
-      return evaluation
     },
   }
   let queueIndex = 0
