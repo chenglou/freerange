@@ -182,7 +182,7 @@ Freerange uses a few terms consistently:
 
 - `requires`: a condition the caller must satisfy. The function's guarantees assume the condition is true.
 - `ensures`: a guarantee about the returned value whenever the function returns.
-- `assumes`: an input condition Freerange accepts without proving, such as a number parameter being finite and not `NaN`.
+- `assumes`: an input condition Freerange accepts without proving, such as every element of an external `number[]` being finite and not `NaN`.
 - `proves`: a successful static `console.assert` check.
 - `unsupported`: Freerange cannot analyze the function because it uses code outside the analyzed subset. Freerange shows the first blocker you can potentially refactor.
 - `partially supported`: Freerange can analyze some, but not all, of the function.
@@ -201,6 +201,10 @@ If your production code actually needs support beyond these limits, please file 
 ### Numbers
 
 Freerange's numeric analysis is designed around arithmetic used in layouts and other everyday application code. For each TypeScript `number`, Freerange tracks one continuous range, whether the value is an integer, whether it may be `NaN` or infinite, and at most one exact number that a branch proved impossible. For example, after `value !== 0`, Freerange can remember that `value` cannot be `0`.
+
+A plain number parameter, record field, or fixed tuple position may hold any JavaScript number. Unless a caller requirement such as `Number.isFinite(value)` already proves it, Freerange still assumes that a value declared as `number` is actually a number, because TypeScript's `any` can bypass that declaration. Numeric operations add only caller requirements they can attribute directly to those inputs. For example, `value + 1` requires `value` not to be `NaN` but accepts either infinity, `value * 0` requires a finite value because `0 * Infinity` is `NaN`, and `2 / value` accepts either infinity but requires a nonzero value that is not `NaN`. A guard such as `if (!Number.isFinite(value)) return 0` handles the exceptional values without creating a numeric input requirement. When a bad result depends on a relationship between several broad values, Freerange leaves the result possibly `NaN` or infinite instead of inventing an arbitrary requirement. Numeric literal types are kept precisely enough that a parameter typed `1 | 2` is already known to be a finite integer from 1 through 2.
+
+Numbers inside arrays, nullable values, and tagged-union variants still use `assumes` lines. One unconditional caller requirement cannot honestly describe every array element or only the present variant of a conditional value.
 
 Freerange does not keep separate ranges or arbitrary sets of possible numbers. If one branch produces `1..2` and another produces `10..11`, Freerange keeps the combined range `1..11`. A later check that rules out a different exact number may replace the number remembered from an earlier check.
 
@@ -228,7 +232,9 @@ Property reads are assumed to be stable and side-effect-free during one analyzed
 
 ### Caller requirements
 
-When a division or array read creates a requirement inside a function, Freerange tries to express the requirement using the function's parameters so callers can be checked. A later operation on the same stored value and path may rely on that requirement; assigning a new value or repeating the calculation starts over. Freerange follows each intermediate calculation at most once. If one pass cannot reach the parameters, Freerange prints a local `assumes` condition instead.
+When ordinary arithmetic needs a plain numeric input not to be `NaN` or infinite, Freerange records that condition on the input. A guard can satisfy the condition, a supported call in the same file can pass it to its own callers, and a call with a definitely bad argument is an error.
+
+Division and asserted array reads create more specific requirements. Freerange tries to express those requirements using the function's parameters so callers can be checked. A later operation on the same stored value and path may rely on that requirement; assigning a new value or repeating the calculation starts over. Freerange follows each intermediate calculation at most once. If one pass cannot reach the parameters, Freerange prints a local `assumes` condition instead.
 
 These limits may make a result less precise or stop analysis, but they cannot make a guarantee stronger than the code supports.
 

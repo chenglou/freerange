@@ -216,8 +216,8 @@ export function clean(): number {
     expect(projectAudit.stdout.trimEnd()).toEndWith('coverage: 3/4 named top-level function declarations fully analyzed; 0 partially supported; 1 unsupported.')
     // Analysis entries come before suggestions within the unit.
     expect(projectAudit.stdout.indexOf('## Contracts')).toBeLessThan(projectAudit.stdout.indexOf('## Refactoring suggestions'))
-    expect(projectAudit.stdout).toContain(`divide
-  requires: columnCount is nonzero (division at advice.ts:2:10)`)
+    expect(projectAudit.stdout)
+      .toContain('  requires: columnCount is nonzero (division at advice.ts:2:10)')
     expect(projectAudit.stdout).toContain('advice.ts(2,10): suggestion [guard-derived-value]: Check the exact divisor.')
     expect(projectAudit.stdout).toContain('advice.ts(2,10): suggestion [encode-input-rule]: Encode a real input rule where the calculation begins.')
     expect(projectAudit.stdout.split('suggestion [guard-derived-value]')).toHaveLength(2)

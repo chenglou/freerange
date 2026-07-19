@@ -1,13 +1,23 @@
 import type {ArithmeticOperator, ComparisonOperator} from '../ir/instructions.ts'
 import {formatSite, type ProgramIR} from '../ir/program.ts'
-import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
+import type {NumericInputCondition, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 
-export type PreconditionOperation = 'division' | 'remainder' | 'element read' | 'declared requirement'
+export type PreconditionOperation = 'division' | 'remainder' | 'element read' | 'declared requirement' | 'numeric input'
+
+export function describeFailedNumericInput(condition: NumericInputCondition): string {
+  switch (condition) {
+    case 'finite': return 'is definitely NaN or infinite'
+    case 'notNaN': return 'is definitely NaN'
+    case 'notInfinite': return 'is definitely Infinity or -Infinity'
+  }
+}
 
 export function formatPrecondition(precondition: InferredPrecondition, parameterNames: string[], program: ProgramIR): string {
   const description = describePrecondition(precondition, parameterNames)
   const source = description.operation === 'declared requirement'
     ? 'declared at'
+    : description.operation === 'numeric input'
+      ? 'used at'
     : `${description.operation} at`
   return `${description.condition} (${source} ${formatSite(program, precondition.site)})`
 }
@@ -22,6 +32,8 @@ export function describePrecondition(
     condition: conditionWords(precondition, parameterNames),
     operation: precondition.kind === 'inBounds'
       ? 'element read'
+      : precondition.kind === 'numericInput'
+        ? 'numeric input'
       : precondition.kind === 'declaredComparison' || precondition.kind === 'declaredNumberCheck'
         ? 'declared requirement'
         : precondition.operation,
@@ -36,6 +48,9 @@ export function formatObservedNeed(precondition: InferredPrecondition, parameter
   }
   if (precondition.kind === 'inBounds') {
     return `the element read at ${formatSite(program, precondition.site)} hits an element only when ${conditionWords(precondition, parameterNames)}`
+  }
+  if (precondition.kind === 'numericInput') {
+    return `the numeric input used at ${formatSite(program, precondition.site)} is safe only when ${conditionWords(precondition, parameterNames)}`
   }
   return `the ${precondition.operation} at ${formatSite(program, precondition.site)} gives a finite result only when ${conditionWords(precondition, parameterNames)}`
 }
@@ -59,6 +74,19 @@ function conditionWords(precondition: InferredPrecondition, parameterNames: stri
         : precondition.predicate === 'finite' ? 'isFinite' : 'isNaN'
       return `Number.${predicate}(${formatExpression(precondition.expression, parameterNames)})`
     }
+    case 'numericInput': return formatNumericInput(precondition, parameterNames)
+  }
+}
+
+function formatNumericInput(
+  precondition: Extract<InferredPrecondition, {kind: 'numericInput'}>,
+  parameterNames: string[],
+): string {
+  const path = formatExpression(precondition.expression, parameterNames)
+  switch (precondition.condition) {
+    case 'finite': return `Number.isFinite(${path})`
+    case 'notNaN': return `!Number.isNaN(${path})`
+    case 'notInfinite': return `Number.isFinite(${path}) || Number.isNaN(${path})`
   }
 }
 
@@ -72,6 +100,7 @@ function formatExpression(expression: NumericExpression, parameterNames: string[
     case 'constant': return String(expression.value)
     case 'floor': return `Math.floor(${formatExpression(expression.operand, parameterNames)})`
     case 'property': return `${formatExpression(expression.base, parameterNames)}.${expression.name}`
+    case 'tupleElement': return `${formatExpression(expression.base, parameterNames)}[${expression.index}]`
     case 'binary': {
       return `(${formatExpression(expression.left, parameterNames)} ${operatorText(expression.operator)} ${formatExpression(expression.right, parameterNames)})`
     }

@@ -13,6 +13,9 @@ export type NumericExpression =
   // values are immutable after construction: the property cannot change between function
   // entry and the operation that needs the requirement.
   | {kind: 'property'; base: NumericExpression; name: string}
+  | {kind: 'tupleElement'; base: NumericExpression; index: number}
+
+export type NumericInputCondition = 'finite' | 'notNaN' | 'notInfinite'
 
 // An element read the engine could not prove in bounds: arr[i]! asserts presence, and
 // when the index interval does not sit inside the length interval, the entry's guarantees
@@ -72,5 +75,11 @@ export type InferredPrecondition =
       kind: 'declaredNumberCheck'
       predicate: 'integer' | 'finite' | 'nan'
       expression: NumericExpression
+      site: SiteID
+    }
+  | {
+      kind: 'numericInput'
+      expression: NumericExpression
+      condition: NumericInputCondition
       site: SiteID
     }

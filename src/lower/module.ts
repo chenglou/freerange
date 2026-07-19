@@ -5,6 +5,7 @@ import {
   holdsMutableStructure,
   moduleInitializerName,
   type DeclaredKind,
+  type DeclaredNumberInterval,
   type DeclaredVariant,
   type FunctionIR,
   type InitializerSkip,
@@ -130,14 +131,19 @@ function demoteModuleWritesInNode(
   checker: ts.TypeChecker,
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
   bindings: ModuleBindingIR[],
+  written?: Set<ModuleBindingID>,
 ): void {
+  const record = (binding: ModuleBindingID): void => {
+    demote(bindings, binding)
+    written?.add(binding)
+  }
   const target = (expression: ts.Expression): void => {
     // An assignment target can be a plain identifier or a destructuring pattern; every
     // identifier inside a pattern is conservatively a write.
     if (ts.isIdentifier(expression)) {
       const symbol = checker.getSymbolAtLocation(expression)
       const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-      if (binding != null) demote(bindings, binding)
+      if (binding != null) record(binding)
       return
     }
     const visitPattern = (child: ts.Node): void => {
@@ -146,14 +152,14 @@ function demoteModuleWritesInNode(
       if (ts.isShorthandPropertyAssignment(child)) {
         const symbol = checker.getShorthandAssignmentValueSymbol(child)
         const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-        if (binding != null) demote(bindings, binding)
+        if (binding != null) record(binding)
         ts.forEachChild(child, visitPattern)
         return
       }
       if (ts.isIdentifier(child)) {
         const symbol = checker.getSymbolAtLocation(child)
         const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-        if (binding != null) demote(bindings, binding)
+        if (binding != null) record(binding)
         return
       }
       ts.forEachChild(child, visitPattern)
@@ -221,12 +227,21 @@ export function lowerModuleInitializer(
       // binding — `Object.assign(config, overrides)` holds the binding in argument
       // position, `scores.push(999)` in receiver position, and an alias variant mentions
       // it nowhere — so no mention scan is sound for them. Scalars are copied on read;
-      // only a write-position form can change one, and those are collected above.
-      demoteAllModuleWrites(statement, checker, scan.bindingsBySymbol, scan.bindings)
+      // only a write-position form or invoked code can change one, and those are handled
+      // separately below.
+      const directWrites = demoteAllModuleWrites(
+        statement,
+        checker,
+        scan.bindingsBySymbol,
+        scan.bindings,
+      )
+      const invokesUnknownCode = mayInvokeUnknownCode(statement)
       for (let binding = 0; binding < scan.bindings.length; binding++) {
         const category = scan.bindings[binding]!.category
         const declared = declaredKindOf(category)
-        if (category.kind === 'kind' || (declared != null && holdsMutableStructure(declared))) {
+        if (directWrites.has(binding)
+          || (category.kind === 'kind' && invokesUnknownCode)
+          || (declared != null && holdsMutableStructure(declared))) {
           addInstruction(context, statement, {kind: 'moduleHavoc', binding})
         }
       }
@@ -247,6 +262,60 @@ export function lowerModuleInitializer(
     },
     skips,
   }
+}
+
+function isTopLevelUsingDeclaration(statement: ts.Statement): statement is ts.VariableStatement {
+  return ts.isVariableStatement(statement)
+    && (statement.declarationList.flags & ts.NodeFlags.Using) !== 0
+}
+
+// A skipped statement can change a scalar it does not name only by invoking code. Property
+// access is intentionally absent: the accepted model ignores getters, Proxies, custom
+// coercion, and observer callbacks. Creating a function also does not run its body.
+function mayInvokeUnknownCode(root: ts.Node): boolean {
+  let found = false
+  const defersUsingUntilModuleExit = ts.isVariableStatement(root)
+    && isTopLevelUsingDeclaration(root)
+  const visit = (node: ts.Node): void => {
+    if (found) return
+    if (node !== root && ts.isFunctionLike(node)) return
+    if (ts.isCallExpression(node)
+      || ts.isNewExpression(node)
+      || ts.isTaggedTemplateExpression(node)
+      || ts.isAwaitExpression(node)
+      || ts.isYieldExpression(node)
+      || ts.isForOfStatement(node)
+      || ts.isSpreadElement(node)
+      || ts.isArrayBindingPattern(node)
+      || (ts.isVariableDeclarationList(node)
+        && (node.flags & ts.NodeFlags.Using) !== 0
+        && !defersUsingUntilModuleExit)
+      // `[first] = source` is represented as an array literal on the assignment's left,
+      // but it still runs source[Symbol.iterator]().
+      || (ts.isBinaryExpression(node)
+        && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+        && containsArrayLiteral(node.left))
+      || ts.isJsxElement(node)
+      || ts.isJsxSelfClosingElement(node)
+      || ts.isJsxFragment(node)
+      || ts.isClassDeclaration(node)
+      || ts.isClassExpression(node)) {
+      found = true
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(root)
+  return found
+}
+
+function containsArrayLiteral(root: ts.Node): boolean {
+  if (ts.isArrayLiteralExpression(root)) return true
+  let found = false
+  ts.forEachChild(root, child => {
+    if (!found && containsArrayLiteral(child)) found = true
+  })
+  return found
 }
 
 // A direct top-level call evaluates its arguments before invoking the callee. When the
@@ -343,18 +412,27 @@ function demoteAllModuleWrites(
   checker: ts.TypeChecker,
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
   bindings: ModuleBindingIR[],
-): void {
+): Set<ModuleBindingID> {
+  const written = new Set<ModuleBindingID>()
   const visit = (node: ts.Node): void => {
-    demoteModuleWritesInNode(node, checker, bindingsBySymbol, bindings)
+    // Creating a function does not run its body. The whole-file binding scan still
+    // records that a later call could write the binding; this pass only tracks writes
+    // performed while the skipped top-level statement itself is evaluated.
+    if (node !== root && ts.isFunctionLike(node)) return
+    demoteModuleWritesInNode(node, checker, bindingsBySymbol, bindings, written)
     // A never-lowered declarator counts as a write to its own binding.
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const symbol = checker.getSymbolAtLocation(node.name)
       const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-      if (binding != null) demote(bindings, binding)
+      if (binding != null) {
+        demote(bindings, binding)
+        written.add(binding)
+      }
     }
     ts.forEachChild(node, visit)
   }
   visit(root)
+  return written
 }
 
 function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleBindingCategory {
@@ -484,7 +562,7 @@ export function declaredKind(type: ts.Type, checker: ts.TypeChecker, seen: ts.Ty
 
 function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
   switch (valueKind(type, checker)) {
-    case 'number': return {kind: 'number'}
+    case 'number': return {kind: 'number', interval: numericLiteralInterval(type)}
     case 'boolean': return {kind: 'boolean'}
     // `number | null` and friends: the declared kind wraps the non-missing part, keeping
     // which sentinels the type admits for seeding and report prose.
@@ -508,12 +586,7 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
         // to the bare union. Structural members keep the exactly-one rule — two record
         // shapes under a nullish wrapper are a tagged union, not a nullable record.
         const members = rest.map(member => declaredKind(member, checker, seen))
-        const first = members[0]
-        inner = first != null
-          && (first.kind === 'number' || first.kind === 'boolean' || first.kind === 'opaque')
-          && members.every(member => member != null && member.kind === first.kind)
-          ? first
-          : null
+        inner = joinScalarDeclaredKinds(members)
         // `owner: null | LightboxOwnerRoute` where the inner is itself a union of tagged
         // shapes: the non-missing members classify as one tagged union, and maybeNullish
         // carries it like any other inner.
@@ -602,6 +675,53 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
       return {kind: 'taggedUnion', tagProperty, variants: [firstVariant, ...restVariants]}
     }
     case null: return null
+  }
+}
+
+function numericLiteralInterval(type: ts.Type): DeclaredNumberInterval | null {
+  const members = type.isUnion() ? type.types : [type]
+  let lower = Infinity
+  let upper = -Infinity
+  let integer = true
+  for (const member of members) {
+    if ((member.flags & ts.TypeFlags.NumberLiteral) === 0) return null
+    const value = (member as ts.NumberLiteralType).value
+    if (!Number.isFinite(value)) return null
+    lower = Math.min(lower, value)
+    upper = Math.max(upper, value)
+    integer = integer && Number.isInteger(value)
+  }
+  return members.length === 0 ? null : {lower, upper, integer}
+}
+
+function joinScalarDeclaredKinds(members: Array<DeclaredKind | null>): DeclaredKind | null {
+  const first = members[0]
+  if (first == null) return null
+  switch (first.kind) {
+    case 'number': {
+      let interval = first.interval
+      for (let index = 1; index < members.length; index++) {
+        const member = members[index]
+        if (member?.kind !== 'number') return null
+        if (interval == null || member.interval == null) {
+          interval = null
+          continue
+        }
+        interval = {
+          lower: Math.min(interval.lower, member.interval.lower),
+          upper: Math.max(interval.upper, member.interval.upper),
+          integer: interval.integer && member.interval.integer,
+        }
+      }
+      return {kind: 'number', interval}
+    }
+    case 'boolean': return members.every(member => member?.kind === 'boolean') ? first : null
+    case 'opaque': return members.every(member => member?.kind === 'opaque') ? first : null
+    case 'record':
+    case 'nullish':
+    case 'tuple':
+    case 'array':
+    case 'taggedUnion': return null
   }
 }
 

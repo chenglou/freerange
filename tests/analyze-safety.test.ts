@@ -200,10 +200,11 @@ describe('acceptance and module safety', () => {
     // literal type, so the value kind never changes; config constants written this way are
     // ordinary code. The exact 4 flowing into the result proves the value passed through.
     const fn = analyzedFunction(report, 'stepsFor')
-    expect(fn.assumptions).toEqual(['durationMs is finite and not NaN'])
-    // Dividing by the exact 4 gives a concrete upper bound (largest finite double / 4),
-    // which is the proof the const-assertion value flowed through.
-    expect(fn.ensures).toEqual(['return is a finite number from 0 through 4.4942328371557893e+307'])
+    expect(fn.assumptions).toEqual(['durationMs is a number'])
+    expect(fn.requires[0]).toContain('!Number.isNaN(durationMs)')
+    // Infinity survives the lower clamp and division by 4. The exact 4 still flows
+    // through; the function simply no longer assumes every input is finite.
+    expect(fn.ensures).toEqual(['return is a possibly non-finite number from 0 through Infinity'])
   })
 
   test('a type-check suppression comment puts the whole file outside the subset', () => {
@@ -311,7 +312,8 @@ describe('acceptance and module safety', () => {
     expect(laundersArgument?.kind).toBe('partial')
     // A bare return of the carried value completes — with an empty contract.
     expect(analyzedFunction(report, 'laundersReturn').ensures).toEqual([])
-    expect(analyzedFunction(report, 'passThrough').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'passThrough').ensures)
+      .toEqual(['return is a possibly non-finite number from -Infinity through Infinity'])
     for (const name of ['directAddition', 'directCompound', 'directComparison', 'directMath', 'directIndex']) {
       const fn = report.functions.find(candidate => candidate.name === name)
       expect(fn?.kind).toBe('partial')
@@ -382,9 +384,11 @@ describe('acceptance and module safety', () => {
     expect(report.functions).toEqual([{
       kind: 'partial',
       name: 'stall',
-      assumptions: ['width is finite and not NaN'],
+      assumptions: ['width is a number'],
       partialReasons: [`the loop at ${file}:5:9 never exits on any analyzed path`],
-      observed: [],
+      observed: [
+        `the numeric input used at ${file}:3:21 is safe only when !Number.isNaN(width)`,
+      ],
     }])
   })
 
@@ -416,8 +420,14 @@ describe('acceptance and module safety', () => {
       }
     `)
     const fn = analyzedFunction(report, 'gap')
-    expect(fn.assumptions).toEqual(['config.pos is finite and not NaN', 'config.dest is finite and not NaN'])
-    expect(fn.ensures).toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${'destructure.ts'}:5:25)`])
+    expect(fn.assumptions).toEqual([
+      'config.pos is a number',
+      'config.dest is a number',
+    ])
+    expect(fn.requires).toHaveLength(2)
+    expect(fn.requires[0]).toContain('!Number.isNaN(config.dest)')
+    expect(fn.requires[1]).toContain('!Number.isNaN(config.pos)')
+    expect(fn.ensures[0]).toContain('possibly NaN')
   })
 
   test('global Infinity remains exact while a local binding can shadow it', () => {
@@ -501,8 +511,12 @@ describe('acceptance and module safety', () => {
       }
     `)
     const fn = analyzedFunction(report, 'perColumn')
-    expect(fn.requires).toEqual([`Math.floor(cols) is nonzero (division at ${'floor-divisor.ts'}:3:16)`])
-    expect(fn.ensures).toEqual(['return is a finite number'])
+    expect(fn.requires).toEqual([
+      '!Number.isNaN(cols) (used at floor-divisor.ts:3:24)',
+      '!Number.isNaN(width) (used at floor-divisor.ts:3:16)',
+      'Math.floor(cols) is nonzero (division at floor-divisor.ts:3:16)',
+    ])
+    expect(fn.ensures[0]).toContain('possibly NaN')
   })
 
   test('platform catalog entries give DOM reads real ranges', () => {
@@ -520,7 +534,7 @@ describe('acceptance and module safety', () => {
     expect(analyzedFunction(report, 'columnsForViewport').ensures)
       .toEqual(['return is a finite integer number from 1 through 7'])
     expect(analyzedFunction(report, 'frameBudgetUsed').ensures)
-      .toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${'platform.ts'}:7:28)`])
+      .toEqual(['return is a possibly non-finite number from 0 through Infinity'])
   })
 
   test('a possibly NaN value keeps the comparison branch NaN takes at runtime', () => {
@@ -545,7 +559,7 @@ describe('acceptance and module safety', () => {
       }
     `)
     expect(analyzedFunction(report, 'differenceAfterOverflow').ensures).toEqual([
-      'return is a possibly NaN integer number from 0 through 0 (NaN possible from the operation at nan-attribution.ts:4:16)',
+      'return is a possibly NaN integer number from 0 through 0 (NaN possible from the operation at nan-attribution.ts:3:25)',
     ])
   })
 
@@ -587,7 +601,7 @@ describe('acceptance and module safety', () => {
       unsupported: `an assignment used as a value (write it as its own statement) at ${file}:4:29`,
     })
     expect(analyzedFunction(report, 'statement').ensures)
-      .toEqual(['return is a finite number at least 10'])
+      .toEqual(['return is a possibly non-finite number from 10 through Infinity'])
   })
 
   test('object spread rejects; explicit-field rebuilding analyzes', () => {
@@ -609,8 +623,8 @@ describe('acceptance and module safety', () => {
     expect(report.functions.find(candidate => candidate.name === 'localSpread')?.kind).toBe('unsupported')
     expect(formatReport(report)).toContain('object spread (list every field explicitly')
     expect(analyzedFunction(report, 'settleExplicit').ensures).toEqual([
-      'return.pos is a finite number',
-      'return.dest is a finite number',
+      'return.pos is a possibly NaN number from -Infinity through Infinity',
+      'return.dest is a possibly NaN number from -Infinity through Infinity',
       'return.v is a finite integer number from 0 through 0',
     ])
   })
@@ -664,14 +678,14 @@ describe('acceptance and module safety', () => {
       // read carries exactly 7 instead of stopping — no assumes line about importedPad.
       kind: 'analyzed',
       name: 'paddedBy',
-      assumptions: ['width is finite and not NaN'],
-      requires: [],
-      ensures: ['return is a finite number at least 7'],
+      assumptions: ['width is a number'],
+      requires: [`!Number.isNaN(width) (used at ${importsReportPath}:5:10)`],
+      ensures: ['return is a possibly non-finite number from 7 through Infinity'],
     }, {
       // importedOffset is a `let` export the other module can reassign; still a stop.
       kind: 'partial',
       name: 'shiftedBy',
-      assumptions: ['width is finite and not NaN'],
+      assumptions: ['width is a number'],
       partialReasons: [`reads importedOffset, which is imported from another module (read at ${importsReportPath}:10:18)`],
       observed: [],
     }])

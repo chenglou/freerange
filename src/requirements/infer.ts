@@ -1,6 +1,7 @@
 import type {SiteID, ValueID} from '../ir/ids.ts'
 import type {InstructionIR} from '../ir/instructions.ts'
 import type {FunctionIR} from '../ir/program.ts'
+import {numericExpressionKey} from './numeric-input.ts'
 import type {InferredPrecondition, NumericExpression} from './model.ts'
 
 export type ExpressionContext = {
@@ -250,11 +251,13 @@ export function staticRequirement(
 
 export function numericParameterPath(
   expression: NumericExpression,
-): {parameter: number; properties: string[]} | null {
-  if (expression.kind === 'parameter') return {parameter: expression.index, properties: []}
-  if (expression.kind !== 'property') return null
+): {parameter: number; segments: string[]} | null {
+  if (expression.kind === 'parameter') return {parameter: expression.index, segments: []}
+  if (expression.kind !== 'property' && expression.kind !== 'tupleElement') return null
   const base = numericParameterPath(expression.base)
-  return base == null ? null : {...base, properties: [...base.properties, expression.name]}
+  if (base == null) return null
+  const segment = expression.kind === 'property' ? expression.name : String(expression.index)
+  return {...base, segments: [...base.segments, segment]}
 }
 
 // A stable name for the runtime value an IR value holds. Forward value facts and exact
@@ -282,7 +285,51 @@ export function sameRuntimeValue(left: ValueID, right: ValueID, context: Express
   return left === right || canonicalValueKey(left, context) === canonicalValueKey(right, context)
 }
 
-export function addPrecondition(preconditions: InferredPrecondition[], candidate: InferredPrecondition): void {
+export type NumericPreconditionIndex = {
+  automatic: Map<string, number>
+  declared: Set<string>
+}
+
+export function createNumericPreconditionIndex(): NumericPreconditionIndex {
+  return {automatic: new Map(), declared: new Set()}
+}
+
+export function addPrecondition(
+  preconditions: InferredPrecondition[],
+  candidate: InferredPrecondition,
+  numeric: NumericPreconditionIndex,
+): void {
+  if (candidate.kind === 'numericInput') {
+    const key = numericExpressionKey(candidate.expression)
+    if (numeric.declared.has(key)) return
+    const existingIndex = numeric.automatic.get(key)
+    if (existingIndex != null) {
+      const existing = preconditions[existingIndex]
+      if (existing?.kind !== 'numericInput') throw new Error('Expected a numeric input requirement')
+      if (existing.condition !== 'finite' && existing.condition !== candidate.condition) {
+        // The later use is where the missing half became necessary. Point the merged
+        // finite condition there instead of implying that the earlier operation alone
+        // demanded both halves.
+        preconditions[existingIndex] = {...candidate, condition: 'finite'}
+      }
+      return
+    }
+    numeric.automatic.set(key, preconditions.length)
+    preconditions.push(candidate)
+    return
+  }
+  if (candidate.kind === 'declaredNumberCheck'
+    && (candidate.predicate === 'finite' || candidate.predicate === 'integer')) {
+    const key = numericExpressionKey(candidate.expression)
+    const automaticIndex = numeric.automatic.get(key)
+    if (automaticIndex != null) {
+      preconditions[automaticIndex] = candidate
+      numeric.automatic.delete(key)
+      numeric.declared.add(key)
+      return
+    }
+    numeric.declared.add(key)
+  }
   if (!preconditions.some(precondition => samePrecondition(precondition, candidate))) preconditions.push(candidate)
 }
 
@@ -321,27 +368,34 @@ export function peelNonzero(expression: NumericExpression, site: SiteID, operati
 // operation's site, so repeated calls with the same substituted expression collapse while
 // separate operations that need the same condition remain separate findings.
 function samePrecondition(left: InferredPrecondition, right: InferredPrecondition): boolean {
+  if (left.kind === 'numericInput' && right.kind === 'numericInput') {
+    return left.condition === right.condition
+      && sameNumericExpression(left.expression, right.expression)
+  }
+  if (left.kind === 'numericInput' || right.kind === 'numericInput') return false
   if (left.site !== right.site) return false
   if (left.kind !== right.kind) return false
   if (left.kind === 'inBounds' && right.kind === 'inBounds') {
-    return sameExpression(left.index, right.index) && sameExpression(left.sequence, right.sequence)
+    return sameNumericExpression(left.index, right.index)
+      && sameNumericExpression(left.sequence, right.sequence)
   }
   if (left.kind === 'inBounds' || right.kind === 'inBounds') return false
   if (left.kind === 'declaredComparison' && right.kind === 'declaredComparison') {
     return left.operator === right.operator
-      && sameExpression(left.left, right.left)
-      && sameExpression(left.right, right.right)
+      && sameNumericExpression(left.left, right.left)
+      && sameNumericExpression(left.right, right.right)
   }
   if (left.kind === 'declaredComparison' || right.kind === 'declaredComparison') return false
   if (left.kind === 'declaredNumberCheck' && right.kind === 'declaredNumberCheck') {
-    return left.predicate === right.predicate && sameExpression(left.expression, right.expression)
+    return left.predicate === right.predicate
+      && sameNumericExpression(left.expression, right.expression)
   }
   if (left.kind === 'declaredNumberCheck' || right.kind === 'declaredNumberCheck') return false
   if (left.kind === 'notEqualConstant' && right.kind === 'notEqualConstant' && left.value !== right.value) return false
-  return sameExpression(left.expression, right.expression)
+  return sameNumericExpression(left.expression, right.expression)
 }
 
-function sameExpression(left: NumericExpression, right: NumericExpression): boolean {
+export function sameNumericExpression(left: NumericExpression, right: NumericExpression): boolean {
   if (left.kind !== right.kind) return false
   switch (left.kind) {
     case 'parameter': return left.index === (right as Extract<NumericExpression, {kind: 'parameter'}>).index
@@ -349,13 +403,20 @@ function sameExpression(left: NumericExpression, right: NumericExpression): bool
     case 'binary': {
       const other = right as Extract<NumericExpression, {kind: 'binary'}>
       return left.operator === other.operator
-        && sameExpression(left.left, other.left)
-        && sameExpression(left.right, other.right)
+        && sameNumericExpression(left.left, other.left)
+        && sameNumericExpression(left.right, other.right)
     }
-    case 'floor': return sameExpression(left.operand, (right as Extract<NumericExpression, {kind: 'floor'}>).operand)
+    case 'floor': return sameNumericExpression(
+      left.operand,
+      (right as Extract<NumericExpression, {kind: 'floor'}>).operand,
+    )
     case 'property': {
       const other = right as Extract<NumericExpression, {kind: 'property'}>
-      return left.name === other.name && sameExpression(left.base, other.base)
+      return left.name === other.name && sameNumericExpression(left.base, other.base)
+    }
+    case 'tupleElement': {
+      const other = right as Extract<NumericExpression, {kind: 'tupleElement'}>
+      return left.index === other.index && sameNumericExpression(left.base, other.base)
     }
   }
 }

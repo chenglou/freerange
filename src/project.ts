@@ -14,6 +14,7 @@ import type {AssertionVerdict, FunctionAnalysis, RequirementFailure} from './eng
 import type {SiteID} from './ir/ids.ts'
 import {reportPath, siteLocation} from './ir/program.ts'
 import {formatUnsupportedReason} from './report/index.ts'
+import {describeFailedNumericInput} from './report/format-requirement.ts'
 import {checkFile} from './typescript/check.ts'
 import {formatDiagnosticLocation, formatDiagnosticPrefix, formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
 import {
@@ -190,6 +191,25 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
           'inferred-requirement',
           `call to ${calleeName} violates its nonzero divisor requirement`,
           {label: `${failure.operation} at`, ...origin},
+        )
+      }
+      return
+    }
+
+    if (failure.kind === 'numericInput') {
+      if (calleeName == null) {
+        addError(
+          stopSite,
+          'inferred-requirement',
+          `a numeric input used by ${functionName} ${describeFailedNumericInput(failure.condition)}`,
+        )
+      } else {
+        const origin = siteLocation(program, failure.site)
+        addError(
+          stopSite,
+          'inferred-requirement',
+          `call to ${calleeName} passes a numeric input that ${describeFailedNumericInput(failure.condition)}`,
+          {label: 'input used at', ...origin},
         )
       }
       return
