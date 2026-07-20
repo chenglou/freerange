@@ -3,7 +3,7 @@ import {formatSite, type ParameterIR, type ProgramIR} from '../ir/program.ts'
 import {numericParameterPath} from '../requirements/infer.ts'
 import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 
-export type PreconditionOperation = 'division' | 'remainder' | 'element read' | 'declared requirement' | 'input'
+export type PreconditionOperation = 'division' | 'remainder' | 'element read' | 'declared requirement'
 
 export function formatPrecondition(precondition: InferredPrecondition, parameters: ParameterIR[], program: ProgramIR): string {
   const description = describePrecondition(precondition, parameters)
@@ -23,11 +23,8 @@ export function describePrecondition(
     condition: conditionWords(precondition, parameters),
     operation: precondition.kind === 'inBounds'
       ? 'element read'
-      : precondition.kind === 'declaredComparison'
-        || (precondition.kind === 'numberCheck' && precondition.origin === 'written')
+      : precondition.kind === 'declaredComparison' || precondition.kind === 'declaredNumberCheck'
         ? 'declared requirement'
-        : precondition.kind === 'numberCheck'
-          ? 'input'
         : precondition.operation,
   }
 }
@@ -35,10 +32,7 @@ export function describePrecondition(
 // The evidence wording for a requirement inferred before a stop — deliberately a different
 // sentence shape from the requires line above, and it names the guarantee it enables.
 export function formatObservedNeed(precondition: InferredPrecondition, parameters: ParameterIR[], program: ProgramIR): string {
-  if (precondition.kind === 'numberCheck' && precondition.origin === 'input') {
-    return `the input declared at ${formatSite(program, precondition.site)} must satisfy ${conditionWords(precondition, parameters)}`
-  }
-  if (precondition.kind === 'declaredComparison' || precondition.kind === 'numberCheck') {
+  if (precondition.kind === 'declaredComparison' || precondition.kind === 'declaredNumberCheck') {
     return `the requirement declared at ${formatSite(program, precondition.site)} is ${conditionWords(precondition, parameters)}`
   }
   if (precondition.kind === 'inBounds') {
@@ -60,7 +54,7 @@ function conditionWords(precondition: InferredPrecondition, parameters: Paramete
       return `${formatExpression(precondition.index, parameters)} is a valid ${formatExpression(precondition.sequence, parameters)} index`
     case 'declaredComparison':
       return `${formatExpression(precondition.left, parameters)} ${comparisonOperatorText(precondition.operator)} ${formatExpression(precondition.right, parameters)}`
-    case 'numberCheck': {
+    case 'declaredNumberCheck': {
       const predicate = precondition.predicate === 'integer'
         ? 'isInteger'
         : precondition.predicate === 'finite' ? 'isFinite' : 'isNaN'
@@ -73,9 +67,7 @@ function formatExpression(expression: NumericExpression, parameters: ParameterIR
   const path = numericParameterPath(expression)
   if (path != null) return formatParameterPath(parameters, path.parameter, path.properties)
   switch (expression.kind) {
-    case 'parameter': {
-      throw new Error(`Missing parameter ${expression.index}`)
-    }
+    case 'parameter': throw new Error(`Missing parameter ${expression.index}`)
     case 'constant': return String(expression.value)
     case 'floor': return `Math.floor(${formatExpression(expression.operand, parameters)})`
     case 'property': return `${formatExpression(expression.base, parameters)}.${expression.name}`
@@ -90,7 +82,7 @@ function formatParameterPath(parameters: ParameterIR[], index: number, propertie
   if (parameter == null) throw new Error(`Missing parameter ${index}`)
   const [first, ...rest] = properties
   if (first == null) return parameter.name
-  const binding = parameter.bindings.find(candidate => candidate.property === first)
+  const binding = parameter.bindings?.find(candidate => candidate.property === first)
   return binding == null
     ? `${parameter.name}.${properties.join('.')}`
     : [binding.local, ...rest].join('.')

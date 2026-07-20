@@ -80,12 +80,18 @@ export type InstructionIR =
   // the value is an integer (and finite, and not NaN), the false branch of isFinite prunes
   // when the value was already provably finite, and the false branch of isNaN launders a
   // possibly-NaN value clean.
-  | (InstructionBase & {kind: 'numberCheck'; predicate: 'integer' | 'finite' | 'nan'; value: ValueID})
+  | (InstructionBase & {
+      kind: 'numberCheck'
+      predicate: 'integer' | 'finite' | 'nan'
+      value: ValueID
+      // Generated entry checks establish function-boundary contracts but are not body reads.
+      purpose?: 'finiteInput'
+    })
   // Boolean negation, from `!x` on a boolean operand.
   | (InstructionBase & {kind: 'not'; value: ValueID})
   // Static requirements narrow the function body and become caller preconditions.
   // Interior assertions are observational; their indexes address FunctionIR.assertions.
-  | (InstructionBase & {kind: 'staticRequire'; value: ValueID})
+  | (InstructionBase & {kind: 'staticRequire'; value: ValueID; purpose?: 'finiteInput'})
   | (InstructionBase & {kind: 'staticAssert'; value: ValueID; assertion: number})
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})
   | (InstructionBase & {kind: 'call'; function: FunctionID; arguments: ValueID[]})

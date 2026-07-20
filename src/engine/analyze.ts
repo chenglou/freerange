@@ -2,14 +2,10 @@ import {constantNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
+import {finiteInputExpression, finiteInputs} from '../ir/finite-inputs.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
-import {finiteInputPaths, type BlockUsage, type ForwardedInputRead} from '../ir/parameter-reads.ts'
 import {declaredKindOf, declaredKindValue, holdsMutableStructure, type FunctionIR, type ProgramIR} from '../ir/program.ts'
-import {
-  addPrecondition,
-  createExpressionContext,
-  type ParameterPathResolver,
-} from '../requirements/infer.ts'
+import {addPrecondition, constantRequirementStatus, createExpressionContext, staticRequirement} from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {
   completedEvaluation,
@@ -115,27 +111,12 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
 }
 
 function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): LoweredFunctionAnalysis {
-  const preconditions: InferredPrecondition[] = []
-  for (const input of evaluation.finiteInputs) {
-    let expression: NumericExpression = {kind: 'parameter', index: input.parameter}
-    for (const property of input.properties) {
-      expression = {kind: 'property', base: expression, name: property}
-    }
-    addPrecondition(preconditions, {
-      kind: 'numberCheck',
-      predicate: 'finite',
-      expression,
-      origin: 'input',
-      site: input.site,
-    })
-  }
-  for (const precondition of evaluation.preconditions) addPrecondition(preconditions, precondition)
   const completed = completedEvaluation(evaluation)
   if (completed != null) {
     return {
       kind: 'analyzed',
       lowering: fn,
-      preconditions,
+      preconditions: publishedPreconditions(fn, completed.preconditions),
       boundsAssumptions: completed.boundsAssumptions,
       returnValue: completed.returnValue,
       assertions: evaluation.assertions,
@@ -148,7 +129,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
     return {
       kind: 'analyzed',
       lowering: fn,
-      preconditions,
+      preconditions: publishedPreconditions(fn, evaluation.preconditions),
       boundsAssumptions: evaluation.boundsAssumptions,
       returnValue: {kind: 'void'},
       assertions: evaluation.assertions,
@@ -160,10 +141,45 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
     lowering: fn,
     stops: [firstStop, ...laterStops],
     observedReturn: evaluation.normal == null ? null : {value: evaluation.normal.returnValue},
-    observedNeeds: preconditions,
+    observedNeeds: evaluation.preconditions,
     observedBoundsAssumptions: evaluation.boundsAssumptions,
     assertions: evaluation.assertions,
   }
+}
+
+function publishedPreconditions(
+  fn: FunctionIR,
+  evaluated: InferredPrecondition[],
+): InferredPrecondition[] {
+  const preconditions: InferredPrecondition[] = []
+  for (const input of finiteInputs(fn)) {
+    addPrecondition(preconditions, {
+      kind: 'declaredNumberCheck',
+      predicate: 'finite',
+      expression: finiteInputExpression(input),
+      site: input.site,
+      purpose: 'finiteInput',
+    })
+  }
+  const expressionContext = createExpressionContext(
+    fn,
+    fn.parameters.map((_, index) => ({kind: 'parameter', index})),
+  )
+  for (const block of fn.blocks) {
+    for (const instruction of block.instructions) {
+      if (instruction.kind !== 'staticRequire' || instruction.purpose === 'finiteInput') continue
+      const requirement = staticRequirement(
+        expressionContext.instructionByValue[instruction.value],
+        instruction.site,
+        expressionContext,
+      )
+      if (requirement != null && constantRequirementStatus(requirement) == null) {
+        addPrecondition(preconditions, requirement)
+      }
+    }
+  }
+  for (const precondition of evaluated) addPrecondition(preconditions, precondition)
+  return preconditions
 }
 
 // What each function's module slots start from. A published value is trusted exactly, and
@@ -256,7 +272,6 @@ type IncomingState = {
 // they share one record per block instead of parallel arrays that could drift apart.
 type BlockRun = {
   incoming: IncomingState | null
-  usage: BlockUsage
   // The instruction index where the block first stopped (instructions.length for a stop
   // terminator); null when no visit stopped. The module publish rule demotes writes from
   // here onward, and the failed-header closure treats the block as cut.
@@ -279,7 +294,6 @@ type AssertionObservation = {
 // Everything one evaluation accumulates; created and discarded together.
 type EvaluationRun = {
   fn: FunctionIR
-  expressionContext: ReturnType<typeof createExpressionContext>
   // Dense, indexed by BlockID.
   blocks: BlockRun[]
   queue: BlockID[]
@@ -295,8 +309,6 @@ type EvaluationSeed = {
   valueFacts?: ValueFact[]
   parameterIdentityKeys?: string[]
   identityNamespace?: string
-  contractFunction?: FunctionIR
-  parameterPathResolver?: ParameterPathResolver
 }
 
 function runEvaluation(
@@ -322,25 +334,15 @@ function runEvaluation(
   const expressionContext = createExpressionContext(
     fn,
     argumentExpressions,
-    seed.parameterPathResolver,
     seed.parameterIdentityKeys,
     seed.identityNamespace ?? fn.name,
   )
   const preconditions: InferredPrecondition[] = []
   const boundsAssumptions: BoundsAssumption[] = [...(seed.boundsAssumptions ?? [])]
-  const contractFunction = seed.contractFunction ?? fn
-  const forwardedInputReads: ForwardedInputRead[] = []
   const successors = blockSuccessors(fn)
   const run: EvaluationRun = {
     fn,
-    expressionContext,
-    blocks: fn.blocks.map(() => ({
-      incoming: null,
-      usage: {instructions: 0, terminator: false, edges: []},
-      stopIndex: null,
-      failedHeader: false,
-      pendingReturn: null,
-    })),
+    blocks: fn.blocks.map(() => ({incoming: null, stopIndex: null, failedHeader: false, pendingReturn: null})),
     queue: [fn.entry],
     stops: [],
     assertionObservations: [],
@@ -353,9 +355,6 @@ function runEvaluation(
   const transferContext = {
     program,
     callStack: functionID == null ? callStack : [...callStack, functionID],
-    contractFunction,
-    contractFiniteInputCandidates: finiteInputPaths(contractFunction),
-    forwardedInputReads,
     expressionContext,
     preconditions,
     boundsAssumptions,
@@ -363,7 +362,6 @@ function runEvaluation(
       callee: FunctionID,
       values: AbstractValue[],
       expressions: Array<NumericExpression | null>,
-      pathResolver: ParameterPathResolver,
       calleeState: SharedState,
       stack: FunctionID[],
       valueFacts: ValueFact[],
@@ -382,13 +380,7 @@ function runEvaluation(
         calleeState,
         program,
         stack,
-        {
-          valueFacts,
-          parameterIdentityKeys,
-          identityNamespace,
-          contractFunction,
-          parameterPathResolver: pathResolver,
-        },
+        {valueFacts, parameterIdentityKeys, identityNamespace},
       ).evaluation
     },
   }
@@ -403,10 +395,6 @@ function runEvaluation(
     instructionLoop:
     for (let index = 0; index < block.instructions.length; index++) {
       const instruction = block.instructions[index]!
-      run.blocks[blockID]!.usage.instructions = Math.max(
-        run.blocks[blockID]!.usage.instructions,
-        index + 1,
-      )
       const result = evaluateInstruction(instruction, state, transferContext)
       switch (result.kind) {
         case 'ends':
@@ -437,7 +425,6 @@ function runEvaluation(
       }
     }
     if (stopped) continue
-    run.blocks[blockID]!.usage.terminator = true
     switch (block.terminator.kind) {
       case 'return': {
         const value = block.terminator.value == null
@@ -596,16 +583,9 @@ function runEvaluation(
     }
   }
 
-  const finiteInputs = finiteInputPaths(
-    fn,
-    run.blocks.map(block => block.incoming == null ? null : block.usage),
-    forwardedInputReads,
-  )
-
   return {
     evaluation: {
       normal,
-      finiteInputs,
       preconditions,
       boundsAssumptions,
       assertions: classifyAssertions(run, run.stops.length === 0 && boundsAssumptions.length === 0),
@@ -691,9 +671,6 @@ function propagate(
   if (edge.arguments.length !== target.parameters.length) {
     throw new Error(`Expected ${target.parameters.length} arguments for block ${edge.block} in ${run.fn.name}`)
   }
-  const usedEdges = run.blocks[sourceBlock]!.usage.edges
-  if (!usedEdges.includes(edge)) usedEdges.push(edge)
-  run.expressionContext.activeEdges.add(edge)
   // Read every edge argument before writing any parameter: on a loop back edge an argument
   // can be one of the target's own parameter IDs (an unchanged carried binding), so the
   // reads and writes share one value array.

@@ -10,15 +10,10 @@ export type ParameterIR = {
   name: string
   type: DeclaredKind
   site: SiteID
-  // A destructured parameter still has one runtime argument, but reports should use the
-  // local binding the author wrote: `{width: availableWidth}` prints `availableWidth`.
-  bindings: Array<{property: string; local: string}>
-}
-
-export type FiniteInputIR = {
-  parameter: number
-  properties: string[]
-  site: SiteID
+  // Destructured parameters still receive one runtime argument. Direct bindings let
+  // reports use the local names the author wrote instead of printing the pattern as an
+  // expression. Null distinguishes an ordinary named parameter.
+  bindings: Array<{property: string; local: string}> | null
 }
 
 // Parameters share the module bindings' declared-kind language: one recursive

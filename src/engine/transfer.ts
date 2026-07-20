@@ -9,12 +9,11 @@ import {
   constantNumber,
   divideNumbers,
   divideNumbersNonzeroDivisor,
-  finiteNumberPart,
   floorNumber,
+  finiteNumberPart,
   includesZero,
   isDefinitelyZero,
   isFiniteNumber,
-  joinNumbers,
   maximumNumbers,
   minimumNumbers,
   multiplyNumbers,
@@ -35,37 +34,21 @@ import {
   type TaggedVariant,
 } from '../domain/value.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
+import {finiteInputs} from '../ir/finite-inputs.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
-import {
-  addForwardedInputRead,
-  finiteInputPaths,
-  samePath,
-  type ForwardedInputRead,
-} from '../ir/parameter-reads.ts'
-import {
-  coveringKindValue,
-  declaredKindOf,
-  type DeclaredKind,
-  type FiniteInputIR,
-  type FunctionIR,
-  type ProgramIR,
-} from '../ir/program.ts'
+import {coveringKindValue, declaredKindOf, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
+  constantRequirementStatus,
   peelNonzero,
   canonicalValueKey,
-  constantNumericExpression,
   numericExpression,
-  numericExpressionsAtPath,
-  numericParameterPath,
   resolveStoredValue,
   sameRuntimeValue,
-  staticRequirements,
+  staticRequirement,
   type ExpressionContext,
-  type ParameterPathResolver,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
-import {finiteInputStatus, refineFiniteInput, type FiniteInputStatus} from './finite-input.ts'
 import {completedEvaluation, type FunctionEvaluation, type RequirementFailure, type Stop} from './outcome.ts'
 import {
   addValueFact,
@@ -81,7 +64,6 @@ type EvaluateFunction = (
   functionID: FunctionID,
   arguments_: AbstractValue[],
   argumentExpressions: Array<NumericExpression | null>,
-  argumentPathResolver: ParameterPathResolver,
   sharedState: SharedState,
   callStack: FunctionID[],
   valueFacts: ValueFact[],
@@ -92,12 +74,6 @@ type EvaluateFunction = (
 export type TransferContext = {
   program: ProgramIR
   callStack: FunctionID[]
-  contractFunction: FunctionIR
-  // Requirement expressions have already been rewritten into the outer contract's
-  // parameters, while forwarded reads still use this function's ValueIDs. Keep the two
-  // coordinate systems explicit.
-  contractFiniteInputCandidates: FiniteInputIR[]
-  forwardedInputReads: ForwardedInputRead[]
   expressionContext: ExpressionContext
   preconditions: InferredPrecondition[]
   // Element reads the engine could not prove in bounds — the peer of preconditions,
@@ -139,13 +115,6 @@ function failedRequirement(failure: RequirementFailure): StepResult {
   return {kind: 'stop', stop: {
     site: failure.site,
     reason: {kind: 'requirementFailure', failure, callee: null},
-  }}
-}
-
-function failedCallRequirement(site: SiteID, callee: FunctionID, failure: RequirementFailure): StepResult {
-  return {kind: 'stop', stop: {
-    site,
-    reason: {kind: 'requirementFailure', failure, callee},
   }}
 }
 
@@ -510,49 +479,41 @@ function evaluateInstructionKinded(
       return {kind: 'assertion', assertion: instruction.assertion, observation, value: {kind: 'void'}}
     }
     case 'staticRequire': {
-      const condition = requiredValue(state, instruction.value)
-      if (condition.kind !== 'boolean') {
-        return failedRequirement({kind: 'declared', site: instruction.site, status: 'unproven'})
-      }
+      const failureKind = instruction.purpose === 'finiteInput' ? 'finiteInput' : 'declared'
       const check = context.expressionContext.instructionByValue[instruction.value]
       if (check?.kind !== 'compare' && check?.kind !== 'numberCheck') {
-        return failedRequirement({kind: 'declared', site: instruction.site, status: 'unproven'})
+        return failedRequirement({kind: failureKind, site: instruction.site, status: 'unproven'})
+      }
+      const condition = requiredValue(state, instruction.value)
+      if (condition.kind !== 'boolean') {
+        return failedRequirement({kind: failureKind, site: instruction.site, status: 'unproven'})
       }
       if (!condition.canBeTrue) {
-        return failedRequirement({kind: 'declared', site: instruction.site, status: 'refuted'})
+        return failedRequirement({kind: failureKind, site: instruction.site, status: 'refuted'})
       }
-      const resolvedRequirements = staticRequirements(check, instruction.site, context.expressionContext)
-      if (resolvedRequirements.some(requirement =>
-        staticRequirementStatus(requirement, context.contractFunction) === false)) {
-        return failedRequirement({kind: 'declared', site: instruction.site, status: 'refuted'})
+      if (!condition.canBeFalse) return value({kind: 'void'})
+      const requirement = staticRequirement(
+        check,
+        instruction.site,
+        context.expressionContext,
+        instruction.purpose,
+      )
+      if (requirement == null) {
+        return failedRequirement({kind: failureKind, site: instruction.site, status: 'unproven'})
       }
-      const requirements = resolvedRequirements.filter(requirement =>
-        staticRequirementStatus(requirement, context.contractFunction) == null)
-      if (!condition.canBeFalse) {
-        // A broad number parameter is finite only because function-entry analysis assumes
-        // it. Preserve an explicitly written finite caller requirement when the checked
-        // path belongs to the contract currently being published. During a nested call,
-        // requirement expressions have already been rewritten into that outer function's
-        // parameters, so the same rule also handles wrappers without a call-only flag.
-        for (const requirement of requirements) {
-          if (requirement.kind === 'numberCheck' && requirement.predicate === 'finite'
-            && parameterPathMayNeedFinite(requirement.expression, context.contractFunction)) {
-            addPrecondition(context.preconditions, requirement)
-          }
-        }
-        return value({kind: 'void'})
+      const constantStatus = constantRequirementStatus(requirement)
+      if (constantStatus === false) {
+        return failedRequirement({kind: failureKind, site: instruction.site, status: 'refuted'})
       }
-      if (resolvedRequirements.length === 0) {
-        return failedRequirement({kind: 'declared', site: instruction.site, status: 'unproven'})
-      }
+      if (constantStatus === true) return value({kind: 'void'})
       const refined = refineCheck(state, check, true, context.expressionContext)
       if (refined == null) {
-        return failedRequirement({kind: 'declared', site: instruction.site, status: 'refuted'})
+        return failedRequirement({kind: failureKind, site: instruction.site, status: 'refuted'})
       }
       state.values = refined.values
       state.shared = refined.shared
       state.valueFacts = refined.valueFacts
-      for (const requirement of requirements) addPrecondition(context.preconditions, requirement)
+      addPrecondition(context.preconditions, requirement)
       return value({kind: 'void'})
     }
     case 'minimum': {
@@ -572,134 +533,23 @@ function evaluateInstructionKinded(
       if (context.callStack.includes(instruction.function)) {
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'recursion', callee: instruction.function}}}
       }
-      const originalArguments = instruction.arguments.map(id => requiredValue(state, id))
-      let arguments_ = originalArguments.slice()
+      const arguments_ = instruction.arguments.map(id => requiredValue(state, id))
       const argumentExpressions = instruction.arguments.map(id => numericExpression(id, context.expressionContext))
-      const argumentPathResolver: ParameterPathResolver = (parameter, properties) => {
-        const argument = instruction.arguments[parameter]
-        return argument == null
-          ? []
-          : numericExpressionsAtPath(argument, properties, context.expressionContext)
-      }
-      const finiteChecks: Array<{
-        input: FiniteInputIR
-        status: FiniteInputStatus
-        expressions: NumericExpression[]
-      }> = []
-      for (const input of finiteInputPaths(callee)) {
-        const argument = instruction.arguments[input.parameter]
-        if (argument == null) throw new Error(`Missing input ${input.parameter} of ${callee.name}`)
-        const status = finiteInputStatus(requiredValue(state, argument), input.properties)
-        const expressions = status === 'proven' || status === 'uncertain'
-          ? numericExpressionsAtPath(argument, input.properties, context.expressionContext)
-          : []
-        finiteChecks.push({input, status, expressions})
-      }
       // Parameters use their caller arguments' identity keys. The same small fact list
       // therefore works inside the callee and comes back after every normal return, so a
       // requirement established by a completed helper call applies below that call.
       const argumentKeys = instruction.arguments.map(id => canonicalValueKey(id, context.expressionContext))
       const calleeNamespace = `${context.expressionContext.identityNamespace}call:${instruction.function}:${instruction.site}/`
-      const evaluateCallee = (): FunctionEvaluation => context.evaluateFunction(
+      const evaluation = context.evaluateFunction(
         instruction.function,
         arguments_,
         argumentExpressions,
-        argumentPathResolver,
         state.shared,
         context.callStack,
         state.valueFacts,
         argumentKeys,
         calleeNamespace,
       )
-      let evaluation = evaluateCallee()
-
-      // Probe with the caller's actual values. Only fields the probe consumes may become
-      // caller requirements; reevaluate with those fields finite so the return reflects
-      // the published conditions. A cleanup evaluation removes a probe-only field whose
-      // branch disappeared after another field became finite.
-      const refinableInputs = (inputs: FiniteInputIR[]): FiniteInputIR[] => inputs.filter(input => {
-        const check = finiteChecks.find(candidate => sameFiniteInput(candidate.input, input))
-        return check?.status === 'uncertain' && check.expressions.length > 0
-      })
-      const refineArguments = (inputs: FiniteInputIR[]): AbstractValue[] => {
-        const refined = originalArguments.slice()
-        for (const input of inputs) {
-          const value = refineFiniteInput(refined[input.parameter]!, input.properties)
-          if (value == null) throw new Error(`Could not refine input ${input.parameter} of ${callee.name}`)
-          refined[input.parameter] = value
-        }
-        return refined
-      }
-      let refinedInputs = refinableInputs(evaluation.finiteInputs)
-      if (refinedInputs.length > 0) {
-        arguments_ = refineArguments(refinedInputs)
-        evaluation = evaluateCallee()
-        const finalInputs = refinableInputs(evaluation.finiteInputs)
-        if (!sameFiniteInputSet(refinedInputs, finalInputs)) {
-          refinedInputs = finalInputs
-          arguments_ = refineArguments(refinedInputs)
-          evaluation = evaluateCallee()
-        }
-      }
-
-      const evaluationRequirementFailure = evaluation.stops.find(
-        stop => stop.reason.kind === 'requirementFailure',
-      )
-      if (evaluationRequirementFailure?.reason.kind === 'requirementFailure') {
-        return {kind: 'stop', stop: {
-          site: instruction.site,
-          reason: {...evaluationRequirementFailure.reason, callee: instruction.function},
-        }}
-      }
-      for (const input of evaluation.finiteInputs) {
-        const check = finiteChecks.find(candidate => sameFiniteInput(candidate.input, input))
-        if (check == null) throw new Error(`Missing finite input check for ${callee.name}`)
-        const argument = instruction.arguments[input.parameter]!
-        addForwardedInputRead(context.forwardedInputReads, {
-          value: argument,
-          properties: input.properties,
-        })
-        if (check.status === 'refuted' || check.status === 'unavailable') {
-          return failedCallRequirement(instruction.site, instruction.function, {
-            kind: 'finiteInput',
-            site: input.site,
-            status: check.status === 'refuted' ? 'refuted' : 'unproven',
-          })
-        }
-        for (const expression of check.expressions) {
-          const constant = constantNumericExpression(expression)
-          if (constant != null) {
-            if (!Number.isFinite(constant)) {
-              return failedCallRequirement(instruction.site, instruction.function, {
-                kind: 'finiteInput',
-                site: input.site,
-                status: 'refuted',
-              })
-            }
-            continue
-          }
-          if (declaredNumberCheckStatus(expression, 'finite', context.contractFunction) === true) continue
-          const callerInput = matchingFiniteInput(expression, context.contractFiniteInputCandidates)
-          if (check.status === 'uncertain' || callerInput != null) {
-            addPrecondition(context.preconditions, {
-              kind: 'numberCheck',
-              predicate: 'finite',
-              expression,
-              origin: 'input',
-              site: callerInput?.site ?? input.site,
-            })
-          }
-        }
-        if (check.status === 'uncertain' && check.expressions.length > 0) {
-          if (!refineFiniteCallArgument(state, argument, input.properties, context.expressionContext)) {
-            return failedCallRequirement(instruction.site, instruction.function, {
-              kind: 'finiteInput',
-              site: input.site,
-              status: 'unproven',
-            })
-          }
-        }
-      }
       // A partial callee's result is discarded wholesale: the callee ran on a clone, and
       // state.shared is assigned only on the complete path below, so a partial callee's
       // module writes cannot become this caller's state.
@@ -714,11 +564,23 @@ function evaluateInstructionKinded(
           for (const assumption of evaluation.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
           return {kind: 'ends'}
         }
+        const requirementFailure = evaluation.stops.find(stop => stop.reason.kind === 'requirementFailure')
+        if (requirementFailure?.reason.kind === 'requirementFailure') {
+          const reason = requirementFailure.reason
+          return {kind: 'stop', stop: {
+            site: instruction.site,
+            reason: {...reason, callee: instruction.function},
+          }}
+        }
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
       state.valueFacts = completed.valueFacts.filter(fact =>
         !valueFactUsesNamespace(fact, calleeNamespace))
+      for (const input of finiteInputs(callee)) {
+        const argument = instruction.arguments[input.parameter]
+        if (argument != null) refineFiniteCallArgument(state, argument, input.properties, context.expressionContext)
+      }
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
       return passthroughValue(completed.returnValue)
@@ -792,196 +654,10 @@ function evaluateInstructionKinded(
   }
 }
 
-function parameterPathMayNeedFinite(expression: NumericExpression, fn: FunctionIR): boolean {
-  const path = numericParameterPath(expression)
-  if (path == null) return false
-  const parameter = fn.parameters[path.parameter]
-  return parameter != null && declaredPathMayNeedFinite(parameter.type, path.properties)
-}
-
-function staticRequirementStatus(
-  requirement: Extract<InferredPrecondition, {kind: 'declaredComparison' | 'numberCheck'}>,
-  fn: FunctionIR,
-): boolean | null {
-  if (requirement.kind === 'numberCheck') {
-    const constant = constantNumericExpression(requirement.expression)
-    if (constant != null) {
-      switch (requirement.predicate) {
-        case 'finite': return Number.isFinite(constant)
-        case 'integer': return Number.isInteger(constant)
-        case 'nan': return Number.isNaN(constant)
-      }
-    }
-    return declaredNumberCheckStatus(requirement.expression, requirement.predicate, fn)
-  }
-  const left = constantNumericExpression(requirement.left)
-  const right = constantNumericExpression(requirement.right)
-  if (left == null || right == null) return null
-  switch (requirement.operator) {
-    case 'lessThan': return left < right
-    case 'lessThanOrEqual': return left <= right
-    case 'greaterThan': return left > right
-    case 'greaterThanOrEqual': return left >= right
-    case 'equal': return left === right
-    case 'notEqual': return left !== right
-  }
-}
-
-function declaredNumberCheckStatus(
-  expression: NumericExpression,
-  predicate: 'integer' | 'finite' | 'nan',
-  fn: FunctionIR,
-): boolean | null {
-  const number = declaredNumericExpression(expression, fn)
-  if (number == null) return null
-  switch (predicate) {
-    case 'finite': return isFiniteNumber(number) && !number.mayBeNaN ? true : null
-    case 'nan': return number.mayBeNaN ? null : false
-    case 'integer': return number.integer && isFiniteNumber(number) && !number.mayBeNaN ? true : null
-  }
-}
-
-// A literal number type is a real numeric bound, not the broad finite assumption used
-// for plain `number`. Evaluate expressions made entirely from those bounds with the same
-// arithmetic rules as ordinary execution, so `value: 1 | 2; value + 0` stays provably
-// finite while an overflowing literal calculation still needs a condition.
-function declaredNumericExpression(
-  expression: NumericExpression,
-  fn: FunctionIR,
-): AbstractNumber | null {
-  switch (expression.kind) {
-    case 'constant': return constantNumber(expression.value)
-    case 'parameter':
-    case 'property': {
-      const path = numericParameterPath(expression)
-      if (path == null) return null
-      const parameter = fn.parameters[path.parameter]
-      if (parameter == null) return null
-      const numbers = declaredNumbersAtPath(parameter.type, path.properties)
-      if (numbers == null || numbers.some(number => number.interval == null)) return null
-      return numbers.reduce<AbstractNumber | null>((joined, number) => {
-        const interval = number.interval
-        if (interval == null) return joined
-        const value: AbstractNumber = {
-          kind: 'number',
-          lower: interval.lower,
-          upper: interval.upper,
-          integer: interval.integer,
-          mayBeNaN: false,
-        }
-        return joined == null ? value : joinNumbers(joined, value)
-      }, null)
-    }
-    case 'floor': {
-      const operand = declaredNumericExpression(expression.operand, fn)
-      return operand == null ? null : floorNumber(operand)
-    }
-    case 'binary': {
-      const left = declaredNumericExpression(expression.left, fn)
-      const right = declaredNumericExpression(expression.right, fn)
-      return left == null || right == null
-        ? null
-        : evaluateBinary(expression.operator, left, right)
-    }
-  }
-}
-
-function declaredNumbersAtPath(
-  declared: DeclaredKind,
-  properties: string[],
-): Array<Extract<DeclaredKind, {kind: 'number'}>> | null {
-  if (properties.length === 0) return declared.kind === 'number' ? [declared] : null
-  const [property, ...rest] = properties
-  if (property == null) return null
-  if (declared.kind === 'record') {
-    const field = declared.properties.find(candidate => candidate.name === property)
-    return field == null ? null : declaredNumbersAtPath(field.declared, rest)
-  }
-  if (declared.kind !== 'taggedUnion') return null
-  const numbers: Array<Extract<DeclaredKind, {kind: 'number'}>> = []
-  for (const variant of declared.variants) {
-    const field = variant.properties.find(candidate => candidate.name === property)
-    if (field == null) return null
-    const variantNumbers = declaredNumbersAtPath(field.declared, rest)
-    if (variantNumbers == null) return null
-    numbers.push(...variantNumbers)
-  }
-  return numbers
-}
-
-function declaredPathMayNeedFinite(declared: DeclaredKind, properties: string[]): boolean {
-  if (properties.length === 0) return declared.kind === 'number' && declared.interval == null
-  const [property, ...rest] = properties
-  if (property == null) return false
-  switch (declared.kind) {
-    case 'record': {
-      const field = declared.properties.find(candidate => candidate.name === property)
-      return field != null && declaredPathMayNeedFinite(field.declared, rest)
-    }
-    case 'taggedUnion': {
-      let needsFinite = false
-      for (const variant of declared.variants) {
-        const field = variant.properties.find(candidate => candidate.name === property)
-        if (field == null) return false
-        needsFinite ||= declaredPathMayNeedFinite(field.declared, rest)
-      }
-      return needsFinite
-    }
-    case 'number':
-    case 'boolean':
-    case 'nullish':
-    case 'tuple':
-    case 'array':
-    case 'opaque': return false
-  }
-}
-
 export function addBoundsAssumption(assumptions: BoundsAssumption[], candidate: BoundsAssumption): void {
   if (!assumptions.some(assumption => assumption.site === candidate.site && assumption.kind === candidate.kind)) {
     assumptions.push(candidate)
   }
-}
-
-function refineFiniteCallArgument(
-  state: ExecutionState,
-  value: ValueID,
-  properties: string[],
-  expressionContext: ExpressionContext,
-): boolean {
-  const refined = refineFiniteInput(requiredValue(state, value), properties)
-  if (refined == null) return false
-  writeThroughProducers(state, value, refined, expressionContext.instructionByValue)
-  if (properties.length === 0) return true
-  const [property, ...rest] = properties
-  const producer = expressionContext.instructionByValue[resolveStoredValue(value, expressionContext)]
-  if (property == null || producer?.kind !== 'object') return true
-  const field = producer.properties.find(candidate => candidate.name === property)
-  return field == null || refineFiniteCallArgument(state, field.value, rest, expressionContext)
-}
-
-function sameFiniteInput(left: FiniteInputIR, right: FiniteInputIR): boolean {
-  return left.parameter === right.parameter && samePath(left.properties, right.properties)
-}
-
-function sameFiniteInputSet(left: FiniteInputIR[], right: FiniteInputIR[]): boolean {
-  return left.length === right.length
-    && left.every(input => right.some(candidate => sameFiniteInput(input, candidate)))
-}
-
-function matchingFiniteInput(
-  expression: NumericExpression,
-  candidates: FiniteInputIR[],
-): FiniteInputIR | null {
-  const path = numericParameterPath(expression)
-  return path == null ? null : matchingFiniteInputPath(path, candidates)
-}
-
-function matchingFiniteInputPath(
-  path: {parameter: number; properties: string[]},
-  candidates: FiniteInputIR[],
-): FiniteInputIR | null {
-  return candidates.find(candidate => candidate.parameter === path.parameter
-    && samePath(candidate.properties, path.properties)) ?? null
 }
 
 function valueFactUsesNamespace(fact: ValueFact, namespace: string): boolean {
@@ -1162,6 +838,47 @@ function writeThroughProducers(
     if (length.kind !== 'number') return
     writeThroughProducers(state, producer.array, {kind: 'array', element: parent.element, length}, producers)
   }
+}
+
+function refineFiniteCallArgument(
+  state: ExecutionState,
+  value: ValueID,
+  properties: string[],
+  expressionContext: ExpressionContext,
+): void {
+  const refined = refineFiniteValue(requiredValue(state, value), properties)
+  if (refined == null) return
+  writeThroughProducers(state, value, refined, expressionContext.instructionByValue)
+  if (properties.length === 0) return
+  const [property, ...rest] = properties
+  const producer = expressionContext.instructionByValue[resolveStoredValue(value, expressionContext)]
+  if (property == null || producer?.kind !== 'object') return
+  const field = producer.properties.find(candidate => candidate.name === property)
+  if (field != null) refineFiniteCallArgument(state, field.value, rest, expressionContext)
+}
+
+function refineFiniteValue(value: AbstractValue, properties: string[]): AbstractValue | null {
+  if (properties.length === 0) return value.kind === 'number' ? finiteNumberPart(value) : null
+  const [property, ...rest] = properties
+  if (property == null) return null
+  if (value.kind === 'record') {
+    const current = recordProperty(value, property)
+    if (current == null) return null
+    const refined = refineFiniteValue(current, rest)
+    if (refined == null) return null
+    return {
+      kind: 'record',
+      properties: value.properties.map(candidate =>
+        candidate.name === property ? {...candidate, value: refined} : candidate),
+    }
+  }
+  if (value.kind !== 'taggedUnion') return null
+  const variants = value.variants.map(variant => {
+    const refined = refineFiniteValue(variant.record, properties)
+    return refined?.kind === 'record' ? {...variant, record: refined} : null
+  })
+  if (variants.some(variant => variant == null)) return null
+  return {...value, variants: variants as typeof value.variants}
 }
 
 // The intersection of two covers of the same runtime value — both are supersets of the

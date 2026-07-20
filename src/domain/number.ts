@@ -47,9 +47,7 @@ export function isFiniteNumber(value: AbstractNumber): boolean {
   return Number.isFinite(value.lower) && Number.isFinite(value.upper)
 }
 
-// The values that pass Number.isFinite. Null means the input has no finite inhabitant.
-// Kept beside the numeric domain so branch narrowing and caller requirements cannot
-// acquire subtly different definitions of "finite".
+// The values that pass Number.isFinite. Null means the input has no finite value.
 export function finiteNumberPart(value: AbstractNumber): AbstractNumber | null {
   const lower = Math.max(value.lower, -Number.MAX_VALUE)
   const upper = Math.min(value.upper, Number.MAX_VALUE)

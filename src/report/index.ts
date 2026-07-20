@@ -1,13 +1,14 @@
 import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {AssertionVerdict, FunctionAnalysis, ProgramAnalysis, RequirementFailure, Stop} from '../engine/outcome.ts'
-import type {FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
+import {finiteInputs, type FiniteInput} from '../ir/finite-inputs.ts'
+import type {FunctionID, ModuleBindingID, SiteID, ValueID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
-import {parameterReadPaths, pathWasRead, samePath} from '../ir/parameter-reads.ts'
+import {forEachOperand} from '../ir/instructions.ts'
 import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {numericParameterPath} from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition} from '../requirements/model.ts'
-import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
+import {describePrecondition, formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
   | {kind: 'analyzed'; name: string; assumptions: string[]; requires: string[]; ensures: string[]; assertions?: AssertionReport[]}
@@ -90,13 +91,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'partial',
           name: lowering.name,
-          assumptions: assumptionLines(
-            lowering,
-            program,
-            assumedBindings[functionID]!,
-            fn.observedBoundsAssumptions,
-            fn.observedNeeds,
-          ),
+          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.observedBoundsAssumptions, []),
           partialReasons: fn.stops.map(stop => formatStop(stop, program, analysis)),
           observed,
           ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
@@ -113,9 +108,9 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
             program,
             assumedBindings[functionID]!,
             fn.boundsAssumptions,
-            fn.preconditions,
+            finiteAssumptionInputs(lowering, fn.preconditions),
           ),
-          requires: fn.preconditions.map(precondition => formatPrecondition(precondition, lowering.parameters, program)),
+          requires: requirementLines(lowering, fn.preconditions, program),
           ensures: returnSummaries('return', declaredReturn(fn.returnValue, lowering), program),
           ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
         })
@@ -124,6 +119,80 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
     }
   }
   return {functions}
+}
+
+function finiteAssumptionInputs(
+  fn: FunctionIR,
+  preconditions: InferredPrecondition[],
+): FiniteInput[] {
+  const inputs = finiteInputs(fn)
+  for (const precondition of preconditions) {
+    if (precondition.kind !== 'declaredNumberCheck'
+      || (precondition.predicate !== 'finite' && precondition.predicate !== 'integer')) continue
+    const path = numericParameterPath(precondition.expression)
+    if (path == null || inputs.some(input =>
+      input.parameter === path.parameter && samePath(input.properties, path.properties))) continue
+    inputs.push({parameter: path.parameter, properties: path.properties, site: precondition.site})
+  }
+  return inputs
+}
+
+function requirementLines(
+  fn: FunctionIR,
+  preconditions: InferredPrecondition[],
+  program: ProgramIR,
+): string[] {
+  const inputs = finiteInputs(fn)
+  const folded = new Set<number>()
+  for (let parameter = 0; parameter < fn.parameters.length; parameter++) {
+    const current = fn.parameters[parameter]!
+    if (current.bindings != null || inputs.filter(input => input.parameter === parameter).length >= 3) {
+      folded.add(parameter)
+    }
+  }
+  const lines: string[] = []
+  const emitted = new Set<number>()
+  for (const precondition of preconditions) {
+    const isFiniteInput = precondition.kind === 'declaredNumberCheck'
+      && precondition.predicate === 'finite'
+      && precondition.purpose === 'finiteInput'
+    const path = isFiniteInput
+      ? numericParameterPath(precondition.expression)
+      : null
+    const automatic = path == null ? null : inputs.find(input =>
+      input.parameter === path.parameter
+      && input.site === precondition.site
+      && samePath(input.properties, path.properties))
+    if (automatic != null && folded.has(automatic.parameter)) {
+      if (!emitted.has(automatic.parameter)) {
+        const parameter = fn.parameters[automatic.parameter]!
+        const parameterInputs = inputs.filter(input => input.parameter === automatic.parameter)
+        const condition = parameter.bindings == null
+          ? `every number field in ${parameter.name} is finite`
+          : finiteBindingList(parameter, parameterInputs)
+        lines.push(`${condition} (input at ${formatSite(program, parameter.site)})`)
+        emitted.add(automatic.parameter)
+      }
+      continue
+    }
+    if (isFiniteInput) {
+      lines.push(`${describePrecondition(precondition, fn.parameters).condition} (input at ${formatSite(program, precondition.site)})`)
+      continue
+    }
+    lines.push(formatPrecondition(precondition, fn.parameters, program))
+  }
+  return lines
+}
+
+function finiteBindingList(parameter: FunctionIR['parameters'][number], inputs: FiniteInput[]): string {
+  const names = inputs.map(input => {
+    const [first, ...rest] = input.properties
+    const binding = parameter.bindings?.find(candidate => candidate.property === first)
+    return binding == null ? input.properties.join('.') : [binding.local, ...rest].join('.')
+  })
+  if (names.length === 1) return `${names[0]} is finite`
+  if (names.length === 2) return `${names[0]} and ${names[1]} are finite`
+  return `${names.slice(0, -1).join(', ')}, and ${names.at(-1)} are finite`
 }
 
 // Within an entry, line kinds print rarest-and-most-actionable first: requires (what the
@@ -184,6 +253,100 @@ function formatTagValue(tagValue: string | boolean): string {
   return typeof tagValue === 'string' ? `'${tagValue}'` : String(tagValue)
 }
 
+// A parameter path the body read, as property-name segments from the parameter root ([]
+// is the root itself). Reads never descend below an array or tuple: an element read marks
+// the container's path, so every line inside the container prints or drops with it.
+type ParameterRead = {parameter: number; segments: string[]}
+
+// Which declared paths of each parameter the body touched, from a walk over the lowered
+// IR. A declared-type assumes line prints only when its path was touched: a path no
+// instruction ever read derived no value, so no printed requires/ensures can rest on its
+// trust, and dropping its line removes no load-bearing condition. The soundness direction
+// is asymmetric — printing an extra line is harmless, dropping a line a claim rests on is
+// the hole the honesty work closed — so every approximation errs toward marking MORE
+// paths as read:
+// - Escapes keep everything at and below the escaping path: a value passed as a call
+//   argument (the callee may read anything under it), returned (the ensures describe
+//   it), written into module state, or consumed by any instruction the walk does not
+//   treat specially, marks its whole path as read.
+// - Property reads are projections: `box.xs` extends the tracked path without marking
+//   `box` itself read, which is what lets an unread sibling property drop.
+// - Values the walk loses sight of are marked at the point of loss: a tracked value
+//   passed as a block argument (a ternary or loop join) marks its path, because the
+//   block parameter it feeds is not tracked and anything read through it later sits at
+//   or below that path.
+// - A tag check consumes the union directly and marks nothing: the tag property prints
+//   no line (a string tag is opaque, a boolean tag would restate the qualifier), so
+//   there is no line for the check to keep — this is what makes a function that only
+//   switches on a union tag print an empty assumes block.
+// Any future instruction kind lands in the default arm, which marks every tracked
+// operand read — over-printing, never under.
+function parameterReadPaths(fn: FunctionIR): string[][][] {
+  const tracked = new Map<ValueID, ParameterRead>()
+  for (let index = 0; index < fn.parameters.length; index++) {
+    tracked.set(fn.parameters[index]!.value, {parameter: index, segments: []})
+  }
+  // Property chains (box.inner.w) can span blocks; repeat until no projection is new so
+  // block order cannot hide a chain link. Chains are finite (declared types are trees),
+  // so this converges.
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const block of fn.blocks) {
+      for (const instruction of block.instructions) {
+        if (instruction.kind !== 'property' || tracked.has(instruction.result)) continue
+        const base = tracked.get(instruction.object)
+        if (base == null) continue
+        tracked.set(instruction.result, {parameter: base.parameter, segments: [...base.segments, instruction.property]})
+        changed = true
+      }
+    }
+  }
+  const reads: string[][][] = fn.parameters.map(() => [])
+  const markOperand = (operand: ValueID): void => {
+    const path = tracked.get(operand)
+    if (path != null) reads[path.parameter]!.push(path.segments)
+  }
+  for (const block of fn.blocks) {
+    for (const instruction of block.instructions) {
+      switch (instruction.kind) {
+        // A projection, not a consumption: the derived value is tracked above, and
+        // whichever instruction consumes it marks the extended path then.
+        case 'property': break
+        // The tag read keeps nothing — see the rationale above.
+        case 'tagCheck': break
+        // Generated boundary checks are contracts, not evidence that the body used a value.
+        case 'numberCheck': {
+          if (instruction.purpose !== 'finiteInput') forEachOperand(instruction, markOperand)
+          break
+        }
+        default: forEachOperand(instruction, markOperand)
+      }
+    }
+    const terminator = block.terminator
+    switch (terminator.kind) {
+      case 'return': {
+        if (terminator.value != null) markOperand(terminator.value)
+        break
+      }
+      case 'jump': {
+        for (const argument of terminator.target.arguments) markOperand(argument)
+        break
+      }
+      case 'branch': {
+        markOperand(terminator.condition)
+        for (const argument of terminator.whenTrue.arguments) markOperand(argument)
+        for (const argument of terminator.whenFalse.arguments) markOperand(argument)
+        break
+      }
+      case 'stop':
+      case 'thrown':
+        break
+    }
+  }
+  return reads
+}
+
 // Whether a line about the declared path `segments` prints, given the paths the body
 // read: yes when some read sits at, below, or above the line's path (one is a prefix of
 // the other). A read below keeps the lines above it that its trust chains through
@@ -192,7 +355,13 @@ function formatTagValue(tagValue: string | boolean): string {
 type KeepPath = (segments: string[]) => boolean
 
 function keepFromReads(reads: string[][]): KeepPath {
-  return segments => pathWasRead(reads, segments)
+  return segments => reads.some(read => {
+    const shared = Math.min(read.length, segments.length)
+    for (let index = 0; index < shared; index++) {
+      if (read[index] !== segments[index]) return false
+    }
+    return true
+  })
 }
 
 const keepEverything: KeepPath = () => true
@@ -202,28 +371,44 @@ function assumptionLines(
   program: ProgramIR,
   assumedBindings: ReadonlySet<ModuleBindingID>,
   boundsAssumptions: BoundsAssumption[],
-  preconditions: InferredPrecondition[],
+  finiteRequirements: FiniteInput[],
 ): string[] {
   const assumptions: string[] = []
   const reads = parameterReadPaths(fn)
-  const finiteRequirements = fn.parameters.map((): string[][] => [])
-  for (const precondition of preconditions) {
-    if (precondition.kind !== 'numberCheck' || precondition.predicate === 'nan') continue
-    const path = numericParameterPath(precondition.expression)
-    if (path != null) finiteRequirements[path.parameter]?.push(path.properties)
-  }
+  const finitePaths = fn.parameters.map((): string[][] => [])
+  for (const input of finiteRequirements) finitePaths[input.parameter]!.push(input.properties)
   for (let index = 0; index < fn.parameters.length; index++) {
     const parameter = fn.parameters[index]!
     const wasRead = keepFromReads(reads[index]!)
-    const isFiniteRequirement = (properties: string[]): boolean =>
-      finiteRequirements[index]!.some(requirement => samePath(requirement, properties))
-    pushRootAssumptions(
-      parameter.name,
-      parameter.type,
-      assumptions,
-      properties => wasRead(properties) && !isFiniteRequirement(properties),
-      parameter.bindings,
-    )
+    const keep = (path: string[]): boolean =>
+      wasRead(path) && !finitePaths[index]!.some(required => samePath(required, path))
+    if (parameter.bindings == null) {
+      pushRootAssumptions(parameter.name, parameter.type, assumptions, keep)
+      continue
+    }
+    if (parameter.type.kind !== 'record') {
+      const start = assumptions.length
+      pushRootAssumptions(parameter.name, parameter.type, assumptions, keep)
+      for (let line = start; line < assumptions.length; line++) {
+        for (const binding of parameter.bindings) {
+          assumptions[line] = assumptions[line]!.replaceAll(
+            `${parameter.name}.${binding.property}`,
+            binding.local,
+          )
+        }
+      }
+      continue
+    }
+    for (const binding of parameter.bindings) {
+      const property = parameter.type.properties.find(candidate => candidate.name === binding.property)
+      if (property == null) continue
+      pushRootAssumptions(
+        binding.local,
+        property.declared,
+        assumptions,
+        path => keep([binding.property, ...path]),
+      )
+    }
   }
   // Module bindings filter at whole-binding granularity: assumedBindings already contains
   // only the bindings this function (or a callee) reads, and a callee's reads arrive as a
@@ -232,7 +417,7 @@ function assumptionLines(
     const binding = program.moduleBindings[bindingID]!
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) throw new Error(`Module binding ${binding.name} has no declared kind to assume`)
-    pushRootAssumptions(binding.name, declaredKind, assumptions, keepEverything, [])
+    pushRootAssumptions(binding.name, declaredKind, assumptions, keepEverything)
   }
   for (const assumption of boundsAssumptions) {
     // The engine could not prove the asserted element read in bounds; the entry's
@@ -241,6 +426,10 @@ function assumptionLines(
     assumptions.push(formatBoundsAssumption(assumption, program))
   }
   return assumptions
+}
+
+function samePath(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((part, index) => part === right[index])
 }
 
 function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR): string {
@@ -302,13 +491,7 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // trust nothing rests on — and re-restrict legal callers at the unread position, the
 // exact over-restriction the read filter removes. When any covered position is unread,
 // the kept positions print per-property and the unread ones stay silent.
-function pushRootAssumptions(
-  path: string,
-  declared: DeclaredKind,
-  assumptions: string[],
-  keep: KeepPath,
-  bindings: FunctionIR['parameters'][number]['bindings'],
-): void {
+function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[], keep: KeepPath): void {
   const numberLeaves = numberLeafCount(declared, [], keep)
   const folds = !hasLiteralNumberInterval(declared)
     && numberLeaves.total >= 3
@@ -321,36 +504,15 @@ function pushRootAssumptions(
     if (arrayProperties.length >= 3 && keptArrayProperties.length === arrayProperties.length) {
       assumptions.push(`every property declared as an array in ${path} holds a plain array — its length counts its elements, and every index below the length holds an element`)
       for (const property of declared.properties) {
-        pushDeclaredAssumptions(rootPropertyName(path, property.name, bindings), [property.name], property.declared, assumptions, keep, {
+        pushDeclaredAssumptions(`${path}.${property.name}`, [property.name], property.declared, assumptions, keep, {
           skipNumberLeaves: folds,
           skipOwnArrayLine: property.declared.kind === 'array',
         })
       }
       return
     }
-    if (bindings.length > 0) {
-      for (const property of declared.properties) {
-        pushDeclaredAssumptions(
-          rootPropertyName(path, property.name, bindings),
-          [property.name],
-          property.declared,
-          assumptions,
-          keep,
-          {skipNumberLeaves: folds, skipOwnArrayLine: false},
-        )
-      }
-      return
-    }
   }
   pushDeclaredAssumptions(path, [], declared, assumptions, keep, {skipNumberLeaves: folds, skipOwnArrayLine: false})
-}
-
-function rootPropertyName(
-  root: string,
-  property: string,
-  bindings: FunctionIR['parameters'][number]['bindings'],
-): string {
-  return bindings.find(binding => binding.property === property)?.local ?? `${root}.${property}`
 }
 
 // Counts the number leaves the fold may cover, and how many of them the read filter
@@ -741,7 +903,7 @@ export function formatUnsupportedReason(reason: UnsupportedReason): string {
         case 'directCheck': return 'console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check'
         case 'bindValueFirst': return 'calculate or read the value before console.assert, then check the variable'
         case 'functionCall': return 'console.assert cannot call a function inside its condition except Number.isInteger, Number.isFinite, or Number.isNaN'
-        case 'callerRequirement': return 'a leading console.assert describes what callers must provide. It can compare one parameter with a fixed finite number, require one parameter to be an integer, or require a number parameter or one of its fields to be finite'
+        case 'callerRequirement': return 'a leading console.assert describes what callers must provide. It can compare one parameter with a fixed finite number, require one parameter to be an integer, or require a parameter or fixed-record property to be finite'
       }
     }
     case 'varDeclaration': return 'var declarations (use let or const)'

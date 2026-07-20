@@ -23,13 +23,15 @@ function analyzed(report: AnalysisReport, name: string) {
 }
 
 function nonInputRequirements(report: AnalysisReport, name: string): string[] {
-  return analyzed(report, name).requires.filter(requirement => !requirement.includes('(input at '))
+  return analyzed(report, name).requires.filter(requirement =>
+    !requirement.startsWith('Number.isFinite(')
+    && !requirement.startsWith('every number field in '))
 }
 
 function isNonInputRequirement(reference: ReturnType<typeof auditSource>['references'][number]): boolean {
   if (reference.reason.kind !== 'requires') return false
   const {precondition} = reference.reason
-  return precondition.kind !== 'numberCheck' || precondition.origin !== 'input'
+  return precondition.kind !== 'declaredNumberCheck' || precondition.predicate !== 'finite'
 }
 
 function guide(id: RefactorGuideID) {
@@ -74,10 +76,10 @@ test('every suggested rewrite changes the analyzer result as claimed', () => {
 
   const direct = guide('use-direct-operands')
   const directBefore = analyzed(analyzeSource('direct-before.ts', direct.before), 'fittedHeight')
-  expect(directBefore.requires.filter(requirement => !requirement.includes('(input at '))).toHaveLength(2)
+  expect(nonInputRequirements(analyzeSource('direct-before.ts', direct.before), 'fittedHeight')).toHaveLength(2)
   expect(directBefore.ensures.join('\n')).toContain('possibly NaN')
   const directAfter = analyzed(analyzeSource('direct-after.ts', direct.after), 'fittedHeight')
-  expect(directAfter.requires.filter(requirement => !requirement.includes('(input at '))).toEqual([])
+  expect(nonInputRequirements(analyzeSource('direct-after.ts', direct.after), 'fittedHeight')).toEqual([])
   expect(directAfter.ensures.join('\n')).toContain('possibly non-finite')
   expect(directAfter.ensures.join('\n')).not.toContain('possibly NaN')
 
@@ -315,6 +317,7 @@ test('guide routing requires the exact supported operation and value kind', () =
   `)
   const outerRequirement = (functionName: string) => audit.references.find(reference =>
     reference.functionName === functionName
+    && isNonInputRequirement(reference)
     && reference.reason.kind === 'requires'
     && 'expression' in reference.reason.precondition
     && reference.reason.precondition.expression.kind !== 'parameter')

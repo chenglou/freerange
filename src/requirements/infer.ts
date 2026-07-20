@@ -1,30 +1,23 @@
 import type {SiteID, ValueID} from '../ir/ids.ts'
-import type {EdgeIR, InstructionIR} from '../ir/instructions.ts'
+import type {InstructionIR} from '../ir/instructions.ts'
 import type {FunctionIR} from '../ir/program.ts'
 import type {InferredPrecondition, NumericExpression} from './model.ts'
 
-export type ParameterPathResolver = (parameter: number, properties: string[]) => NumericExpression[]
-
 export type ExpressionContext = {
   parameterExpressions: Array<NumericExpression | null>
-  parameterPathResolver?: ParameterPathResolver
   // Calls pass the caller's value keys directly, so duplicate arguments and facts created
   // in a callee refer to the same identity as the caller. Local keys use a nested namespace
   // to avoid colliding with the caller's ValueIDs.
   parameterIdentityKeys: string[]
   identityNamespace: string
   parameterIndexByValue: Array<number | undefined>
-  blockParameterSources: Array<Array<{edge: EdgeIR; value: ValueID}> | undefined>
-  activeEdges: Set<EdgeIR>
   instructionByValue: Array<InstructionIR | undefined>
   instructionCount: number
-  maximumPropertyPathLength: number
 }
 
 export function createExpressionContext(
   fn: FunctionIR,
   parameterExpressions: Array<NumericExpression | null>,
-  parameterPathResolver?: ParameterPathResolver,
   parameterIdentityKeys?: string[],
   identityNamespace = `${fn.name}/`,
 ): ExpressionContext {
@@ -34,15 +27,11 @@ export function createExpressionContext(
   }
   const context: ExpressionContext = {
     parameterExpressions,
-    ...(parameterPathResolver == null ? {} : {parameterPathResolver}),
     parameterIdentityKeys: identityKeys,
     identityNamespace,
     parameterIndexByValue: [],
-    blockParameterSources: [],
-    activeEdges: new Set(),
     instructionByValue: [],
     instructionCount: 0,
-    maximumPropertyPathLength: 0,
   }
   for (let index = 0; index < fn.parameters.length; index++) {
     context.parameterIndexByValue[fn.parameters[index]!.value] = index
@@ -51,39 +40,6 @@ export function createExpressionContext(
     for (const instruction of block.instructions) {
       context.instructionByValue[instruction.result] = instruction
       context.instructionCount += 1
-    }
-    const addEdge = (edge: {block: number; arguments: ValueID[]}): void => {
-      const target = fn.blocks[edge.block]
-      if (target == null || target.parameters.length !== edge.arguments.length) return
-      for (let index = 0; index < edge.arguments.length; index++) {
-        const parameter = target.parameters[index]!
-        context.blockParameterSources[parameter] = [
-          ...(context.blockParameterSources[parameter] ?? []),
-          {edge, value: edge.arguments[index]!},
-        ]
-      }
-    }
-    if (block.terminator.kind === 'jump') addEdge(block.terminator.target)
-    if (block.terminator.kind === 'branch') {
-      addEdge(block.terminator.whenTrue)
-      addEdge(block.terminator.whenFalse)
-    }
-  }
-  const depthByValue: Array<number | undefined> = []
-  const propertyDepth = (value: ValueID): number => {
-    const known = depthByValue[value]
-    if (known != null) return known
-    const instruction = context.instructionByValue[value]
-    const depth = instruction?.kind === 'property' ? 1 + propertyDepth(instruction.object) : 0
-    depthByValue[value] = depth
-    return depth
-  }
-  for (const block of fn.blocks) {
-    for (const instruction of block.instructions) {
-      context.maximumPropertyPathLength = Math.max(
-        context.maximumPropertyPathLength,
-        propertyDepth(instruction.result),
-      )
     }
   }
   return context
@@ -119,16 +75,8 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
   const walk = (current: ValueID): NumericExpression | null => {
     const stored = resolveStoredValue(current, context)
     if (stored !== current) return walk(stored)
-    const parameterPath = parameterPathForValue(current, context)
-    if (parameterPath != null) {
-      if (context.parameterPathResolver != null) {
-        return oneExpression(context.parameterPathResolver(parameterPath.parameter, parameterPath.properties))
-      }
-      return appendProperties(
-        context.parameterExpressions[parameterPath.parameter] ?? null,
-        parameterPath.properties,
-      )
-    }
+    const parameterIndex = context.parameterIndexByValue[current]
+    if (parameterIndex != null) return context.parameterExpressions[parameterIndex] ?? null
     const instruction = context.instructionByValue[current]
     if (instruction == null) return null
     // Only an instruction expansion is charged — re-expanding the same instruction is
@@ -189,157 +137,26 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
   return walk(value)
 }
 
-export function numericExpressionsAtPath(
-  value: ValueID,
-  properties: string[],
-  context: ExpressionContext,
-): NumericExpression[] {
-  const maximumPathLength = Math.max(context.maximumPropertyPathLength, properties.length)
-  type PathExpressions = {expressions: NumericExpression[]; complete: boolean}
-  const memo = new Map<string, PathExpressions>()
-  const visiting = new Set<string>()
-  const walk = (current: ValueID, path: string[]): PathExpressions => {
-    if (path.length > maximumPathLength) return {expressions: [], complete: false}
-    const key = `${current}:${JSON.stringify(path)}`
-    const known = memo.get(key)
-    if (known != null) return known
-    // A loop back to the same value/path contributes no new source. Other incoming
-    // edges still decide whether the path is completely expressible.
-    if (visiting.has(key)) return {expressions: [], complete: true}
-    visiting.add(key)
-    const producer = context.instructionByValue[current]
-    let result: PathExpressions
-    if (producer?.kind === 'property') {
-      result = walk(producer.object, [producer.property, ...path])
-    } else {
-      const stored = resolveStoredValue(current, context)
-      if (stored !== current) {
-        result = walk(stored, path)
-      } else {
-        const [property, ...rest] = path
-        if (property != null && producer?.kind === 'object') {
-          const field = producer.properties.find(candidate => candidate.name === property)
-          result = field == null ? {expressions: [], complete: false} : walk(field.value, rest)
-        } else if (context.blockParameterSources[current] != null) {
-          const sources = context.blockParameterSources[current]
-            .filter(source => context.activeEdges.has(source.edge))
-            .map(source => walk(source.value, path))
-          result = {
-            expressions: distinctExpressions(sources.flatMap(source => source.expressions)),
-            complete: sources.length > 0 && sources.every(source => source.complete),
-          }
-        } else {
-          const expression = appendProperties(numericExpression(current, context), path)
-          result = expression == null
-            ? {expressions: [], complete: false}
-            : {expressions: [expression], complete: true}
-        }
-      }
-    }
-    visiting.delete(key)
-    memo.set(key, result)
-    return result
-  }
-  const result = walk(value, properties)
-  return result.complete ? result.expressions : []
-}
-
-function numericExpressions(value: ValueID, context: ExpressionContext): NumericExpression[] {
-  const stored = resolveStoredValue(value, context)
-  const parameterPath = parameterPathForValue(stored, context)
-  if (parameterPath != null && context.parameterPathResolver != null) {
-    return context.parameterPathResolver(parameterPath.parameter, parameterPath.properties)
-  }
-  const expression = numericExpression(stored, context)
-  return expression == null ? [] : [expression]
-}
-
-function parameterPathForValue(
-  value: ValueID,
-  context: ExpressionContext,
-): {parameter: number; properties: string[]} | null {
-  const parameter = context.parameterIndexByValue[value]
-  if (parameter != null) return {parameter, properties: []}
-  const producer = context.instructionByValue[value]
-  if (producer?.kind !== 'property') return null
-  const base = parameterPathForValue(producer.object, context)
-  return base == null ? null : {...base, properties: [...base.properties, producer.property]}
-}
-
-function appendProperties(
-  base: NumericExpression | null,
-  properties: string[],
-): NumericExpression | null {
-  if (base == null) return null
-  let expression = base
-  for (const name of properties) expression = {kind: 'property', base: expression, name}
-  return expression
-}
-
-export function staticRequirements(
+export function staticRequirement(
   instruction: InstructionIR | undefined,
   site: SiteID,
   context: ExpressionContext,
-): Array<Extract<InferredPrecondition, {kind: 'declaredComparison' | 'numberCheck'}>> {
+  purpose?: 'finiteInput',
+): Extract<InferredPrecondition, {kind: 'declaredComparison' | 'declaredNumberCheck'}> | null {
   if (instruction?.kind === 'compare') {
     const left = numericExpression(instruction.left, context)
     const right = numericExpression(instruction.right, context)
     return left == null || right == null
-      ? []
-      : [{kind: 'declaredComparison', operator: instruction.operator, left, right, site}]
+      ? null
+      : {kind: 'declaredComparison', operator: instruction.operator, left, right, site}
   }
   if (instruction?.kind === 'numberCheck') {
-    const expressions = instruction.predicate === 'finite'
-      ? numericExpressions(instruction.value, context)
-      : [numericExpression(instruction.value, context)].filter(
-        (expression): expression is NumericExpression => expression != null,
-      )
-    return expressions.map(expression => ({
-      kind: 'numberCheck',
-      predicate: instruction.predicate,
-      expression,
-      origin: 'written',
-      site,
-    }))
+    const expression = numericExpression(instruction.value, context)
+    return expression == null
+      ? null
+      : {kind: 'declaredNumberCheck', predicate: instruction.predicate, expression, site, ...(purpose == null ? {} : {purpose})}
   }
-  return []
-}
-
-export function constantNumericExpression(expression: NumericExpression): number | null {
-  switch (expression.kind) {
-    case 'constant': return expression.value
-    case 'parameter':
-    case 'property': return null
-    case 'floor': {
-      const operand = constantNumericExpression(expression.operand)
-      return operand == null ? null : Math.floor(operand)
-    }
-    case 'binary': {
-      const left = constantNumericExpression(expression.left)
-      const right = constantNumericExpression(expression.right)
-      if (left == null || right == null) return null
-      switch (expression.operator) {
-        case 'add': return left + right
-        case 'subtract': return left - right
-        case 'multiply': return left * right
-        case 'divide': return left / right
-        case 'remainder': return left % right
-      }
-    }
-  }
-}
-
-function oneExpression(expressions: NumericExpression[]): NumericExpression | null {
-  const [first, ...rest] = expressions
-  return first != null && rest.every(expression => sameExpression(first, expression)) ? first : null
-}
-
-function distinctExpressions(expressions: NumericExpression[]): NumericExpression[] {
-  const distinct: NumericExpression[] = []
-  for (const expression of expressions) {
-    if (!distinct.some(candidate => sameExpression(candidate, expression))) distinct.push(expression)
-  }
-  return distinct
+  return null
 }
 
 // A stable name for the runtime value an IR value holds. Forward value facts and exact
@@ -368,20 +185,17 @@ export function sameRuntimeValue(left: ValueID, right: ValueID, context: Express
 }
 
 export function addPrecondition(preconditions: InferredPrecondition[], candidate: InferredPrecondition): void {
-  if (candidate.kind === 'numberCheck' && candidate.predicate !== 'nan') {
-    const strength = candidate.predicate === 'integer' ? 2 : 1
-    for (let index = preconditions.length - 1; index >= 0; index--) {
-      const existing = preconditions[index]!
-      if (existing.kind !== 'numberCheck' || existing.predicate === 'nan'
-        || !sameExpression(existing.expression, candidate.expression)) continue
-      const existingStrength = existing.predicate === 'integer' ? 2 : 1
-      if (existingStrength > strength) return
-      if (existingStrength === strength) {
-        // A written condition is the clearest origin when the automatic input rule says
-        // the same thing. Equal automatic conditions keep the first, nearest origin.
-        if (existing.origin === 'written' || candidate.origin === 'input') return
-      }
-      preconditions.splice(index, 1)
+  if (candidate.kind === 'declaredNumberCheck') {
+    if (candidate.predicate === 'finite' && preconditions.some(precondition =>
+      precondition.kind === 'declaredNumberCheck'
+      && (precondition.predicate === 'integer' || precondition.predicate === 'finite')
+      && sameExpression(precondition.expression, candidate.expression))) return
+    if (candidate.predicate === 'integer') {
+      const redundantFinite = preconditions.findIndex(precondition =>
+        precondition.kind === 'declaredNumberCheck'
+        && precondition.predicate === 'finite'
+        && sameExpression(precondition.expression, candidate.expression))
+      if (redundantFinite >= 0) preconditions.splice(redundantFinite, 1)
     }
   }
   if (!preconditions.some(precondition => samePrecondition(precondition, candidate))) preconditions.push(candidate)
@@ -394,6 +208,55 @@ export function numericParameterPath(
   if (expression.kind !== 'property') return null
   const base = numericParameterPath(expression.base)
   return base == null ? null : {...base, properties: [...base.properties, expression.name]}
+}
+
+export function constantRequirementStatus(
+  requirement: Extract<InferredPrecondition, {kind: 'declaredComparison' | 'declaredNumberCheck'}>,
+): boolean | null {
+  if (requirement.kind === 'declaredNumberCheck') {
+    const value = constantNumericExpression(requirement.expression)
+    if (value == null) return null
+    switch (requirement.predicate) {
+      case 'finite': return Number.isFinite(value)
+      case 'integer': return Number.isInteger(value)
+      case 'nan': return Number.isNaN(value)
+    }
+  }
+  const left = constantNumericExpression(requirement.left)
+  const right = constantNumericExpression(requirement.right)
+  if (left == null || right == null) return null
+  switch (requirement.operator) {
+    case 'lessThan': return left < right
+    case 'lessThanOrEqual': return left <= right
+    case 'greaterThan': return left > right
+    case 'greaterThanOrEqual': return left >= right
+    case 'equal': return left === right
+    case 'notEqual': return left !== right
+  }
+}
+
+function constantNumericExpression(expression: NumericExpression): number | null {
+  switch (expression.kind) {
+    case 'constant': return expression.value
+    case 'parameter':
+    case 'property': return null
+    case 'floor': {
+      const operand = constantNumericExpression(expression.operand)
+      return operand == null ? null : Math.floor(operand)
+    }
+    case 'binary': {
+      const left = constantNumericExpression(expression.left)
+      const right = constantNumericExpression(expression.right)
+      if (left == null || right == null) return null
+      switch (expression.operator) {
+        case 'add': return left + right
+        case 'subtract': return left - right
+        case 'multiply': return left * right
+        case 'divide': return left / right
+        case 'remainder': return left % right
+      }
+    }
+  }
 }
 
 // Rewrites a nonzero obligation into the simplest condition the caller can read, peeling
@@ -443,10 +306,10 @@ function samePrecondition(left: InferredPrecondition, right: InferredPreconditio
       && sameExpression(left.right, right.right)
   }
   if (left.kind === 'declaredComparison' || right.kind === 'declaredComparison') return false
-  if (left.kind === 'numberCheck' && right.kind === 'numberCheck') {
+  if (left.kind === 'declaredNumberCheck' && right.kind === 'declaredNumberCheck') {
     return left.predicate === right.predicate && sameExpression(left.expression, right.expression)
   }
-  if (left.kind === 'numberCheck' || right.kind === 'numberCheck') return false
+  if (left.kind === 'declaredNumberCheck' || right.kind === 'declaredNumberCheck') return false
   if (left.kind === 'notEqualConstant' && right.kind === 'notEqualConstant' && left.value !== right.value) return false
   return sameExpression(left.expression, right.expression)
 }

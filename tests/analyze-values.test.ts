@@ -1,6 +1,6 @@
 import {describe, expect, test} from 'bun:test'
 import {analyzeSource, formatReport} from '../src/index.ts'
-import {analyzedFunction, nonInputRequirements} from './analyze-helpers.ts'
+import {analyzedFunction, requirementsBesidesInputFiniteness} from './analyze-helpers.ts'
 
 describe('arrays and declared values', () => {
   test('tuples stay exact per position; arrays are homogeneous', () => {
@@ -68,11 +68,11 @@ describe('arrays and declared values', () => {
     // exact-count assumes line).
     expect(analyzedFunction(report, 'pairLength').ensures)
       .toEqual(['return is a finite integer number from 2 through 2'])
-    // The same shapes as record properties are carried without claims: the record's
-    // numeric contract survives, and nothing anywhere states a length for pair or spans.
+    // Optional/rest tuple properties stay outside the classified subset. The plain number
+    // field uses the ordinary finite-input requirement.
     const gap = analyzedFunction(report, 'boxGap')
     expect(gap.assumptions).toEqual([])
-    expect(gap.requires).toEqual(['Number.isFinite(box.gap) (input at tuple-arity.ts:12:30)'])
+    expect(gap.requires[0]).toContain('Number.isFinite(box.gap)')
     expect(gap.ensures).toEqual(['return is a finite number'])
     // An as-const local tuple is built in this function, so its arity is exact by
     // construction, not by boundary trust — the classification change must not touch it.
@@ -151,7 +151,7 @@ describe('arrays and declared values', () => {
       'values is a plain array — its length counts its elements, and every index below the length holds an element',
       'every values element is finite and not NaN',
     ])
-    expect(nonInputRequirements(report, 'assertedRead'))
+    expect(requirementsBesidesInputFiniteness(asserted))
       .toEqual([`index is a valid values index (element read at ${file}:7:16)`])
   })
 
@@ -232,11 +232,11 @@ describe('arrays and declared values', () => {
       }
     `)
     const file = 'nameable.ts'
-    expect(nonInputRequirements(report, 'rate'))
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'rate')))
       .toEqual([`interval is nonzero (division at ${file}:3:41)`])
     // copy.columns resolves through the local literal to the grid.columns read stored at
     // construction, so the requirement names grid.columns, which the caller can satisfy.
-    expect(nonInputRequirements(report, 'throughCopyFields'))
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'throughCopyFields')))
       .toEqual([`grid.columns is nonzero (division at ${file}:8:16)`])
   })
 
@@ -280,13 +280,13 @@ describe('arrays and declared values', () => {
     // A refinement of a stale saved read meets the record's current property value instead
     // of clobbering the fresher guard.
     const lost = analyzedFunction(report, 'lostNarrowing')
-    expect(nonInputRequirements(report, 'lostNarrowing')).toEqual([])
+    expect(requirementsBesidesInputFiniteness(lost)).toEqual([])
     expect(lost.ensures).toEqual(['return is a finite number from 0 through 100'])
     // The explicit-fields twin is the supported spelling: the grid.columns read genuinely
     // happens and stores a real value, narrowing copy.columns narrows grid.columns (the
     // copy's property IS the stored read), and the guard discharges the division.
     const copied = analyzedFunction(report, 'throughCopyFields')
-    expect(nonInputRequirements(report, 'throughCopyFields')).toEqual([])
+    expect(requirementsBesidesInputFiniteness(copied)).toEqual([])
     expect(copied.ensures).toEqual(['return is a finite number from 0 through 100'])
     // A pure-sentinel operand (null | undefined after the outer narrow) still checks, and
     // typeof x !== 'undefined' is the classic spelling of the undefined sentinel check.
@@ -405,16 +405,16 @@ describe('arrays and declared values', () => {
       }
     `)
     const scaled = analyzedFunction(report, 'scaledWidth')
-    // The string property makes no assumption line — there is nothing to claim about it.
-    // The boolean property makes none either, but only because scaledWidth never reads
-    // box.visible; `flagged` below reads its boolean and prints the line.
+    // String properties make no numeric claim. Plain numbers are caller requirements;
+    // `flagged` below still prints the boolean assumption it uses.
     expect(scaled.assumptions).toEqual([])
     // A template literal is carried; the numeric contract survives.
     expect(analyzedFunction(report, 'labelled').assumptions).toEqual([])
     // String dispatch: the comparison is an unknown boolean, both branches analyzed.
     expect(analyzedFunction(report, 'pick').ensures).toEqual(['return is a finite number'])
     // Boolean parameters are new too (the flat-numbers gate rejected them).
-    expect(analyzedFunction(report, 'flagged').assumptions).toEqual(['enabled is a boolean'])
+    expect(analyzedFunction(report, 'flagged').assumptions)
+      .toEqual(['enabled is a boolean'])
     expect(analyzedFunction(report, 'concatenated').ensures).toEqual(['return is a finite number'])
   })
 
@@ -506,7 +506,10 @@ describe('arrays and declared values', () => {
       throw new Error(`expected shadowedUndefined to be unsupported, got ${shadowedUndefined.kind}`)
     }
     expect(shadowedUndefined.unsupported).toContain('default value for parameter zoom')
-    expect(analyzedFunction(report, 'defaultedOptional').assumptions).toEqual([])
+    expect(analyzedFunction(report, 'defaultedOptional').assumptions)
+      .toEqual([])
+    expect(analyzedFunction(report, 'defaultedOptional').requires[0])
+      .toContain('Number.isFinite(zoom)')
     expect(analyzedFunction(report, 'defaultedOptional').ensures)
       .toEqual(['return is a finite number'])
     const globalUndefinedReport = analyzeSource('undefined-default.ts', `

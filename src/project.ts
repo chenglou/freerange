@@ -326,7 +326,7 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
 function firstStaticRequirementSite(fn: Exclude<FunctionAnalysis, {kind: 'notLowered'}>['lowering']): SiteID | null {
   for (const block of fn.blocks) {
     for (const instruction of block.instructions) {
-      if (instruction.kind === 'staticRequire') return instruction.site
+      if (instruction.kind === 'staticRequire' && instruction.purpose !== 'finiteInput') return instruction.site
     }
   }
   return null

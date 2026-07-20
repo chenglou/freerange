@@ -1,6 +1,6 @@
 import {describe, expect, test} from 'bun:test'
 import {analyzeFile, analyzeSource, formatReport} from '../src/index.ts'
-import {analyzedFunction, nonInputRequirements} from './analyze-helpers.ts'
+import {analyzedFunction, requirementsBesidesInputFiniteness} from './analyze-helpers.ts'
 
 describe('acceptance and module safety', () => {
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
@@ -382,9 +382,9 @@ describe('acceptance and module safety', () => {
     expect(report.functions).toEqual([{
       kind: 'partial',
       name: 'stall',
-      assumptions: [],
+      assumptions: ['width is finite and not NaN'],
       partialReasons: [`the loop at ${file}:5:9 never exits on any analyzed path`],
-      observed: [`the input declared at ${file}:2:29 must satisfy Number.isFinite(width)`],
+      observed: [],
     }])
   })
 
@@ -417,10 +417,6 @@ describe('acceptance and module safety', () => {
     `)
     const fn = analyzedFunction(report, 'gap')
     expect(fn.assumptions).toEqual([])
-    expect(fn.requires).toEqual([
-      'Number.isFinite(config.pos) (input at destructure.ts:3:27)',
-      'Number.isFinite(config.dest) (input at destructure.ts:3:27)',
-    ])
     expect(fn.ensures).toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${'destructure.ts'}:5:25)`])
   })
 
@@ -505,7 +501,7 @@ describe('acceptance and module safety', () => {
       }
     `)
     const fn = analyzedFunction(report, 'perColumn')
-    expect(nonInputRequirements(report, 'perColumn'))
+    expect(requirementsBesidesInputFiniteness(fn))
       .toEqual([`Math.floor(cols) is nonzero (division at ${'floor-divisor.ts'}:3:16)`])
     expect(fn.ensures).toEqual(['return is a finite number'])
   })

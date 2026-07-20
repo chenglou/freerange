@@ -637,9 +637,7 @@ function writtenRequirement(condition: ts.Expression, context: FunctionContext):
     && isStandardNumberObject(current.expression.expression, context.checker)
     && (current.expression.name.text === 'isInteger' || current.expression.name.text === 'isFinite')) {
     const argument = current.arguments[0]!
-    const value = current.expression.name.text === 'isFinite'
-      ? staticRequirementParameterPathValue(argument, context)
-      : staticRequirementParameterValue(argument, context)
+    const value = staticRequirementParameterPathValue(argument, context)
     return value == null ? null : {
       kind: 'numberCheck',
       predicate: current.expression.name.text === 'isInteger' ? 'integer' : 'finite',
@@ -647,8 +645,8 @@ function writtenRequirement(condition: ts.Expression, context: FunctionContext):
     }
   }
   if (!ts.isBinaryExpression(current) || !staticAssertionComparison(current.operatorToken.kind)) return null
-  const leftParameter = staticRequirementParameterValue(current.left, context)
-  const rightParameter = staticRequirementParameterValue(current.right, context)
+  const leftParameter = staticRequirementParameterPathValue(current.left, context)
+  const rightParameter = staticRequirementParameterPathValue(current.right, context)
   const leftConstant = leftParameter == null ? staticFiniteValue(current.left, context) : null
   const rightConstant = rightParameter == null ? staticFiniteValue(current.right, context) : null
   const left = leftParameter != null
@@ -661,15 +659,6 @@ function writtenRequirement(condition: ts.Expression, context: FunctionContext):
   if (left == null || right == null || operator == null
     || (leftParameter != null && rightParameter != null)) return null
   return {kind: 'comparison', left, right, operator}
-}
-
-function staticRequirementParameterValue(expression: ts.Expression, context: FunctionContext): ValueID | null {
-  const current = unwrapParentheses(expression)
-  if (!ts.isIdentifier(current)) return null
-  const symbol = context.checker.getSymbolAtLocation(current)
-  if (symbol == null) return null
-  const value = context.bindings.get(symbol)
-  return value != null && context.parameters.some(parameter => parameter.value === value) ? value : null
 }
 
 function staticRequirementParameterPathValue(expression: ts.Expression, context: FunctionContext): ValueID | null {

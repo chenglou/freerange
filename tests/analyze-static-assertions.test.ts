@@ -3,7 +3,7 @@ import * as ts from 'typescript'
 import {analyzeCheckedSource} from '../src/analyze.ts'
 import {analyzeFile, analyzeSource} from '../src/index.ts'
 import {createReport} from '../src/report/index.ts'
-import {analyzedFunction, nonInputRequirements} from './analyze-helpers.ts'
+import {analyzedFunction, requirementsBesidesInputFiniteness} from './analyze-helpers.ts'
 
 const fixture = new URL('./fixtures/console-assertions.ts', import.meta.url).pathname
 const importedFixture = new URL('./fixtures/console-assertions-imported.ts', import.meta.url).pathname
@@ -14,20 +14,21 @@ describe('static console.assert contracts', () => {
     const report = fixtureReport
 
     const declared = analyzedFunction(report, 'requiredNonnegative')
-    expect(nonInputRequirements(report, 'requiredNonnegative')).toHaveLength(1)
-    expect(nonInputRequirements(report, 'requiredNonnegative')[0]).toContain('value >= 0')
+    expect(requirementsBesidesInputFiniteness(declared)).toHaveLength(1)
+    expect(requirementsBesidesInputFiniteness(declared)[0]).toContain('value >= 0')
     expect(declared.assertions?.map(assertion => assertion.verdict)).toEqual(['proven'])
     expect(declared.ensures).toEqual(['return is a finite number at least 0'])
 
-    expect(nonInputRequirements(report, 'requiredPositiveInteger').map(requirement => requirement.split(' (declared')[0])).toEqual([
+    const consecutive = analyzedFunction(report, 'requiredPositiveInteger')
+    expect(requirementsBesidesInputFiniteness(consecutive).map(requirement => requirement.split(' (declared')[0])).toEqual([
       'Number.isInteger(value)',
       'value >= 1',
     ])
-    expect(nonInputRequirements(report, 'requiredPositiveInteger').some(requirement => requirement.includes('division'))).toBe(false)
+    expect(requirementsBesidesInputFiniteness(consecutive).some(requirement => requirement.includes('division'))).toBe(false)
 
-    expect(nonInputRequirements(report, 'propagatedRequirement')[0])
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'propagatedRequirement'))[0])
       .toContain('(width - 1) >= 0')
-    expect(nonInputRequirements(report, 'safeCaller')).toEqual([])
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'safeCaller'))).toEqual([])
 
     for (const name of ['unsafeCaller', 'unsafeWrapper']) {
       const fn = report.functions.find(candidate => candidate.name === name)
@@ -47,7 +48,7 @@ describe('static console.assert contracts', () => {
     expect(unnameable.partialReasons[0]).toContain('could not express or prove')
     expect(unnameable.partialReasons[0]).toContain('requiredNonnegative')
 
-    expect(nonInputRequirements(report, 'callsRequiredThrow')[0]).toContain('value >= 0')
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'callsRequiredThrow'))[0]).toContain('value >= 0')
   })
 
   test('leading requirements accept literal const names and see parameter defaults', () => {
@@ -87,7 +88,7 @@ describe('static console.assert contracts', () => {
       }
     `)
 
-    expect(nonInputRequirements(report, 'bounded')[0]).toContain('width >= 0')
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'bounded'))[0]).toContain('width >= 0')
     expect(analyzedFunction(report, 'omittedSafe').ensures).toEqual([
       'return is a finite integer number from 5 through 5',
     ])
@@ -107,7 +108,7 @@ describe('static console.assert contracts', () => {
 
   test('leading requirements accept imported numeric literal constants', () => {
     const report = analyzeFile(importedFixture)
-    expect(nonInputRequirements(report, 'importedMinimum')[0]).toContain('value >= 2')
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'importedMinimum'))[0]).toContain('value >= 2')
     expect(analyzedFunction(report, 'callsImportedMinimum').ensures).toEqual([
       'return is a finite integer number from 2 through 2',
     ])
@@ -129,7 +130,7 @@ describe('static console.assert contracts', () => {
     if (sourceFile == null) throw new Error('TypeScript did not load the assertion fixture')
     const detailed = analyzeCheckedSource({sourceFile, checker: program.getTypeChecker()})
     const report = createReport(detailed.program, detailed.analysis)
-    expect(nonInputRequirements(report, 'requiredNonnegative')[0]).toContain('value >= 0')
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'requiredNonnegative'))[0]).toContain('value >= 0')
   })
 
   test('assertions report every verdict without narrowing later code', () => {
@@ -164,7 +165,7 @@ describe('static console.assert contracts', () => {
     `)
 
     const proven = analyzedFunction(report, 'proven')
-    expect(nonInputRequirements(report, 'proven')).toEqual([])
+    expect(requirementsBesidesInputFiniteness(proven)).toEqual([])
     expect(proven.assertions).toBeUndefined()
 
     const refuted = report.functions.find(fn => fn.name === 'refuted')
@@ -172,7 +173,7 @@ describe('static console.assert contracts', () => {
     expect(refuted.partialReasons[0]).toContain('declared requirement is false')
 
     const stillRequires = analyzedFunction(report, 'stillRequires')
-    expect(nonInputRequirements(report, 'stillRequires')[0]).toContain('value >= 0')
+    expect(requirementsBesidesInputFiniteness(stillRequires)[0]).toContain('value >= 0')
     expect(stillRequires.assertions).toBeUndefined()
   })
 

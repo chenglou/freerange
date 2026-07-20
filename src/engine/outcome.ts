@@ -1,6 +1,6 @@
 import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
-import type {FiniteInputIR, FunctionIR, UnsupportedFunctionIR, UnsupportedReason} from '../ir/program.ts'
+import type {FunctionIR, UnsupportedFunctionIR, UnsupportedReason} from '../ir/program.ts'
 import type {BoundsAssumption, InferredPrecondition} from '../requirements/model.ts'
 import type {SharedState, ValueFact} from './state.ts'
 
@@ -67,7 +67,6 @@ export type AssertionVerdict = {
 // path stops. Empty `stops` means every path completed.
 export type FunctionEvaluation = {
   normal: {returnValue: AbstractValue; sharedState: SharedState; valueFacts: ValueFact[]} | null
-  finiteInputs: FiniteInputIR[]
   preconditions: InferredPrecondition[]
   boundsAssumptions: BoundsAssumption[]
   assertions: AssertionVerdict[]

@@ -1,6 +1,6 @@
 import {describe, expect, test} from 'bun:test'
 import {analyzeSource} from '../src/index.ts'
-import {analyzedFunction, nonInputRequirements} from './analyze-helpers.ts'
+import {analyzedFunction, requirementsBesidesInputFiniteness} from './analyze-helpers.ts'
 
 describe('tagged unions and narrowing', () => {
   test('tagged unions: checks narrow, else-if chains prune, switch dispatches, literals build variants', () => {
@@ -343,7 +343,7 @@ describe('tagged unions and narrowing', () => {
         return x
       }
     `)
-    expect(nonInputRequirements(report, 'divideWidth')).toEqual([])
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'divideWidth'))).toEqual([])
     expect(analyzedFunction(report, 'fail').ensures).toEqual([])
     // A guarded call to an always-throwing helper behaves exactly like an inline throw:
     // the path ends silently and the returning path carries the full contract.
@@ -432,24 +432,42 @@ describe('tagged unions and narrowing', () => {
       export function ratioReq({width, height}: Size): number {
         return width / height
       }
+      export function destructuredOther(
+        {enabled, fallback}: {enabled: boolean; fallback: number | null},
+      ): number {
+        return enabled ? fallback ?? 0 : 0
+      }
+      type DestructuredChoice =
+        | {kind: 'small'; value: number}
+        | {kind: 'large'; value: number}
+      export function destructuredChoice({kind, value}: DestructuredChoice): number {
+        return kind === 'small' ? value : 0
+      }
     `)
     const file = 'sweep-group4.ts'
     expect(analyzedFunction(report, 'nullishAssign').ensures).toEqual(['return is a finite number'])
     // The === 0 guard discharges the remainder's obligation like division's.
-    expect(nonInputRequirements(report, 'modulo')).toEqual([])
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'modulo'))).toEqual([])
     expect(analyzedFunction(report, 'modulo').ensures).toEqual(['return is a finite number'])
-    expect(nonInputRequirements(report, 'moduloRequires'))
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'moduloRequires')))
       .toEqual([`length is nonzero (remainder at ${file}:12:16)`])
     expect(analyzedFunction(report, 'chainRead').assumptions)
       .toEqual(['config is null or config.volume is finite and not NaN'])
     expect(analyzedFunction(report, 'chainRead').ensures).toEqual(['return is a finite number'])
     expect(analyzedFunction(report, 'area').assumptions).toEqual([])
-    expect(analyzedFunction(report, 'area').requires.map(line => line.split(' (input')[0])).toEqual([
-      'Number.isFinite(width)',
-      'Number.isFinite(height)',
-    ])
-    expect(nonInputRequirements(report, 'ratioReq'))
+    expect(analyzedFunction(report, 'area').requires[0])
+      .toContain('width and height are finite')
+    // Requirements use the local names written by the destructuring pattern.
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'ratioReq')))
       .toEqual([`height is nonzero (division at ${file}:22:16)`])
+    expect(analyzedFunction(report, 'destructuredOther').assumptions).toEqual([
+      'enabled is a boolean',
+      'fallback is null or a finite non-NaN number',
+    ])
+    expect(analyzedFunction(report, 'destructuredChoice').assumptions).toEqual([
+      "value is finite and not NaN (when kind is 'small')",
+      "value is finite and not NaN (when kind is 'large')",
+    ])
   })
 
   test('module refinements require a local snapshot', () => {

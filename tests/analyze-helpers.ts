@@ -6,9 +6,8 @@ export function analyzedFunction(report: AnalysisReport, name: string) {
   return fn
 }
 
-// Most analyzer tests pin one particular requirement rule. Automatic finite-input
-// contracts have their own focused suite, so those tests can keep asking only about the
-// division, bounds, or written requirements they were built to exercise.
-export function nonInputRequirements(report: AnalysisReport, name: string): string[] {
-  return analyzedFunction(report, name).requires.filter(requirement => !requirement.includes('(input at '))
+export function requirementsBesidesInputFiniteness(
+  fn: ReturnType<typeof analyzedFunction>,
+): string[] {
+  return fn.requires.filter(requirement => !requirement.includes(' (input at '))
 }

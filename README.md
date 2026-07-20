@@ -113,7 +113,7 @@ There are infinitely many assertable things. Here are some good, non-noisy ones:
   console.assert(frame.inputTray.bottom === frame.input.bottom)
   ```
 
-Freerange already checks whether relevant numbers may be `NaN` or `Infinity`, whether a divisor may be `0`, and other conditions shown by `fr --audit`. You don't need to assert the same information explicitly.
+Every plain `number` parameter, including a number field in a fixed-shape object parameter, already requires a finite, non-`NaN` value. Freerange also checks whether a divisor may be `0` and the other conditions shown by `fr --audit`. You don't need to assert the same information explicitly.
 
 ## Writing Analyzable TypeScript
 
@@ -151,7 +151,7 @@ Freerange could theoretically support a much larger subset of TS, and did before
 
 - **Write object copies explicitly.** Use `{width: layout.width, height: layout.height}` instead of `{...layout}`. Use dense arrays and fixed-length tuples, and do not modify objects or arrays after creating them. Rebuilding an object is not equivalent to mutation when other code observes its identity or the mutation.
 
-- **Give each nion case a tag and switch on it.** Use a tagged union when different cases carry different fields. Make the `switch` exhaustive and do not use fallthrough.
+- **Give each union case a tag and switch on it.** Use a tagged union when different cases carry different fields. Make the `switch` exhaustive and do not use fallthrough.
 
 - **Check and use the same local value.** When a value comes from module, class, or reactive state, store it in a local first. For example, write `const currentScale = scale; if (currentScale !== null) return currentScale` instead of checking one read of `scale` and returning another.
 
@@ -180,7 +180,7 @@ Freerange uses a few terms consistently:
 
 - `requires`: a condition the caller must satisfy. The function's guarantees assume the condition is true.
 - `ensures`: a guarantee about the returned value whenever the function returns.
-- `assumes`: an input condition Freerange accepts without proving, such as every element of an input array being finite and not `NaN`.
+- `assumes`: an input condition Freerange accepts without proving, such as an array being dense or every element of a `number[]` being finite.
 - `proves`: a successful static `console.assert` check.
 - `unsupported`: Freerange cannot analyze the function because it uses code outside the analyzed subset. Freerange shows the first blocker you can potentially refactor.
 - `partially supported`: Freerange can analyze some, but not all, of the function.
@@ -226,11 +226,11 @@ Property reads are assumed to be stable and side-effect-free during one analyzed
 
 ### Caller requirements
 
-When a calculation, comparison, return value, or supported function call needs a plain `number` parameter to be finite, the audit includes `requires: Number.isFinite(value)`. A numeric field of a fixed plain-object parameter gets the same requirement only when the function needs that exact field. Numeric literal types such as `1 | 2` are already finite. Numbers inside arrays, tuples, nullable values, and tagged unions remain under `assumes` because one unconditional caller requirement cannot describe those shapes accurately.
+Every plain `number` parameter must be finite and not `NaN`. The same rule applies to number fields in fixed-shape object parameters, even when the function does not read them. Numeric literal types such as `1 | 2` already satisfy the rule. Nullable numbers, arrays, tuples, and tagged unions keep their more specific `assumes` lines instead. A supported literal default is used when an argument is omitted, so the default can satisfy the requirement automatically.
 
-Supported calls in the same file reject a definitely non-finite argument. When an uncertain argument can be written as a caller condition, Freerange propagates `Number.isFinite(...)` to the caller. Otherwise Freerange analyzes the called function with the wider value, so the caller's guarantees still include the non-finite case. Functions in other files are not checked.
+Calls to supported functions in the same file either prove these requirements, pass them outward to their own callers, or report a definitely invalid argument. A successful call also proves that the same stored argument is finite afterward. Writing `console.assert(Number.isFinite(value))` at the start of the function is allowed but normally redundant; `Number.isInteger(value)` is stronger and replaces the finite requirement.
 
-When a division or array read creates a requirement inside a function, Freerange tries to express the requirement using the function's parameters so callers can be checked. A later operation on the same stored value and path may rely on that requirement; assigning a new value or repeating the calculation starts over. Freerange follows each intermediate calculation at most once. If one pass cannot reach the parameters, Freerange prints a local `assumes` condition instead.
+Division and array reads can create additional requirements. Freerange tries to express each one using the function's parameters so callers can be checked. A later operation on the same stored value and path may rely on that requirement; assigning a new value or repeating the calculation starts over. Freerange follows each intermediate calculation at most once. If one pass cannot reach the parameters, Freerange prints a local `assumes` condition instead.
 
 These limits may make a result less precise or stop analysis, but they cannot make a guarantee stronger than the code supports.
 

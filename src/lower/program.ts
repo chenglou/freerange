@@ -1,8 +1,9 @@
 import * as ts from 'typescript'
+import {finiteInputPaths} from '../ir/finite-inputs.ts'
 import {moduleInitializerName, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type ProgramIR, type SourceSpan, type UnsupportedReason} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
-import {addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type MutableBlock, type TopLevelFunction} from './context.ts'
+import {addInstructionAtSite, addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {valueKind} from './expression.ts'
 import {parameterDefaultFits, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
 import {declaredKind, lowerModuleInitializer, scanModuleBindings, tupleHasOptionalOrRestPositions, type ModuleScan} from './module.ts'
@@ -158,9 +159,9 @@ function lowerFunction(
   for (const parameter of declaration.parameters) {
     // `function area({width, height}: Size)` lowers as a synthetic record parameter plus
     // one property read per name — the same classification named parameters use, the
-    // same reads body destructuring uses. Assumes lines name the parameter by its
-    // pattern text ({width, height}.width is finite...). Defaults and rest inside the
-    // pattern stay out, like the body form.
+    // same reads body destructuring uses. The report metadata below keeps the local
+    // names, so a condition says `width` rather than `{width, height}.width`. Defaults
+    // and rest inside the pattern stay out, like the body form.
     if (ts.isObjectBindingPattern(parameter.name)) {
       const type = lowerParameterType(parameter, checker)
       // The pattern text becomes the parameter's report name; a pattern the author wrapped
@@ -214,14 +215,9 @@ function lowerFunction(
     }
     const value = context.nextValue++
     context.bindings.set(requiredSymbol(parameter.name, checker), value)
-    context.parameters.push({
-      value,
-      name: parameter.name.text,
-      type,
-      site: addSite(context, parameter),
-      bindings: [],
-    })
+    context.parameters.push({value, name: parameter.name.text, type, site: addSite(context, parameter), bindings: null})
   }
+  lowerFiniteInputRequirements(context)
   lowerStatements(declaration.body.statements, context)
   if (context.currentBlock.terminator == null) {
     if (!returnsVoid) {
@@ -244,6 +240,24 @@ function lowerFunction(
     returnPropertyNames: declaredRecordReturnNames(returnType, checker),
     entry: 0,
     blocks: sealBlocks(context.blocks, declaration.name!.text),
+  }
+}
+
+function lowerFiniteInputRequirements(context: ReturnType<typeof createFunctionContext>): void {
+  for (const parameter of context.parameters) {
+    for (const properties of finiteInputPaths(parameter.type)) {
+      let value = parameter.value
+      for (const property of properties) {
+        value = addInstructionAtSite(context, parameter.site, {kind: 'property', object: value, property})
+      }
+      const check = addInstructionAtSite(context, parameter.site, {
+        kind: 'numberCheck',
+        predicate: 'finite',
+        value,
+        purpose: 'finiteInput',
+      })
+      addInstructionAtSite(context, parameter.site, {kind: 'staticRequire', value: check, purpose: 'finiteInput'})
+    }
   }
 }
 

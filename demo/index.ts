@@ -188,7 +188,11 @@ function stepSpring(
   steps: number, // @fit int 0..Infinity
 ): Spring {
   let stepped = s
-  for (let i = 0; i < steps; i++) stepped = springStep(stepped)
+  for (let i = 0; i < steps; i++) {
+    const next = springStep(stepped)
+    if (!Number.isFinite(next.pos) || !Number.isFinite(next.v)) return springGoToEnd(s)
+    stepped = next
+  }
   return springStillAnimating(stepped) ? stepped : springGoToEnd(stepped) // close enough? Snap to done
 }
 
