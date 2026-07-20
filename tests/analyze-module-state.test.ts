@@ -18,8 +18,8 @@ describe('module state and nullability', () => {
     // "at least 24" proves the exact 24 flowed in: a declared-kind-only read would have
     // contributed an arbitrary finite number and destroyed the lower bound.
     const padded = analyzedFunction(report, 'paddedWidth')
-    expect(padded.assumptions).toEqual(['width is a number'])
-    expect(padded.ensures).toEqual(['return is a possibly non-finite number from 24 through Infinity'])
+    expect(padded.assumptions).toEqual(['width is finite and not NaN'])
+    expect(padded.ensures).toEqual(['return is a finite number at least 24'])
     // The exact `false` prunes the true branch entirely.
     expect(analyzedFunction(report, 'debugOffset').ensures)
       .toEqual(['return is a finite integer number from 0 through 0'])
@@ -80,128 +80,10 @@ describe('module state and nullability', () => {
     `)
     const reader = analyzedFunction(report, 'scaledBy')
     expect(reader.assumptions).toEqual([
-      'width is a number',
+      'width is finite and not NaN',
       'scale.factor is finite and not NaN',
     ])
-    expect(reader.ensures).toEqual(['return is a possibly non-finite number at least -Infinity'])
-  })
-
-  test('a skipped statement resets scalars only when it can invoke code', () => {
-    const propertyWrite = analyzeSource('module-property-write.ts', `
-      let value = 1
-      function changeValue(): void {
-        value = Infinity
-      }
-      document.title = 'Gallery'
-      const doubled = value * 2
-      export function readDoubled(): number {
-        return doubled
-      }
-    `)
-    expect(analyzedFunction(propertyWrite, 'readDoubled').ensures)
-      .toEqual(['return is a finite integer number from 2 through 2'])
-
-    const unknownCall = analyzeSource('module-unknown-call.ts', `
-      let value = 1
-      function changeValue(): void {
-        value = Infinity
-      }
-      console.log('ready')
-      const doubled = value * 2
-      export function readDoubled(): number {
-        return doubled
-      }
-    `)
-    expect(analyzedFunction(unknownCall, 'readDoubled').ensures)
-      .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
-
-    const dormantCallback = analyzeSource('module-dormant-callback.ts', `
-      let value = 1
-      const callback = (): void => { value = Infinity }
-      const doubled = value * 2
-      export function readDoubled(): number {
-        return doubled
-      }
-    `)
-    expect(analyzedFunction(dormantCallback, 'readDoubled').ensures)
-      .toEqual(['return is a finite integer number from 2 through 2'])
-
-    const directWrite = analyzeSource('module-direct-write.ts', `
-      let value = 2
-      value **= 3
-      const doubled = value * 2
-      export function readDoubled(): number { return doubled }
-    `)
-    expect(analyzedFunction(directWrite, 'readDoubled').ensures[0]).toContain('possibly NaN')
-
-    const literalWrite = analyzeSource('module-literal-write.ts', `
-      let mode: 1 | 2 = 1
-      mode = JSON.parse('100')
-      const result = mode * 10
-      export function readResult(): number { return result }
-    `)
-    expect(analyzedFunction(literalWrite, 'readResult').ensures[0]).toContain('possibly NaN')
-  })
-
-  test('skipped iterators run now, while using cleanup runs after later statements', () => {
-    const destructuring = analyzeSource('module-array-assignment.ts', `
-      let value = 1
-      function changeValue(): void { value = Infinity }
-      let first: number | undefined
-      const source = {*[Symbol.iterator]() { changeValue(); yield 1 }}
-      const before = value * 2
-      ;({nested: [first]} = {nested: source})
-      const after = value * 2
-      export function readBefore(): number { return before }
-      export function readAfter(): number { return after }
-    `)
-    expect(analyzedFunction(destructuring, 'readBefore').ensures)
-      .toEqual(['return is a finite integer number from 2 through 2'])
-    expect(analyzedFunction(destructuring, 'readAfter').ensures[0]).toContain('possibly NaN')
-
-    const disposal = analyzeSource('module-using.ts', `
-      let value = 1
-      function changeValue(): void { value = Infinity }
-      const disposable = {[Symbol.dispose]() { changeValue() }}
-      const before = value * 2
-      using resource = disposable
-      const after = value * 2
-      export function readBefore(): number { return before }
-      export function readAfter(): number { return after }
-      export function readValue(): number { return value }
-    `)
-    expect(analyzedFunction(disposal, 'readBefore').ensures)
-      .toEqual(['return is a finite integer number from 2 through 2'])
-    expect(analyzedFunction(disposal, 'readAfter').ensures)
-      .toEqual(['return is a finite integer number from 2 through 2'])
-    const disposedValue = analyzedFunction(disposal, 'readValue')
-    expect(disposedValue.assumptions).toEqual(['value is finite and not NaN'])
-    expect(disposedValue.ensures).toEqual(['return is a finite number'])
-
-    const disposalFactory = analyzeSource('module-using-call.ts', `
-      let value = 1
-      function changeValue(): void { value = Infinity }
-      function makeDisposable(): Disposable {
-        changeValue()
-        return {[Symbol.dispose]() {}}
-      }
-      using resource = makeDisposable()
-      const after = value * 2
-      export function readAfter(): number { return after }
-    `)
-    expect(analyzedFunction(disposalFactory, 'readAfter').ensures[0]).toContain('possibly NaN')
-
-    const blockDisposal = analyzeSource('module-block-using.ts', `
-      let value = 1
-      function changeValue(): void { value = Infinity }
-      const disposable = {[Symbol.dispose]() { changeValue() }}
-      if (true) {
-        using resource = disposable
-      }
-      const after = value * 2
-      export function readAfter(): number { return after }
-    `)
-    expect(analyzedFunction(blockDisposal, 'readAfter').ensures[0]).toContain('possibly NaN')
+    expect(reader.ensures).toEqual(['return is a finite number'])
   })
 
   test('module arrays publish exactly in fully analyzed files, hedge otherwise', () => {
@@ -499,9 +381,7 @@ describe('module state and nullability', () => {
         return board.base
       }
     `)
-    const mode = analyzedFunction(report, 'modeOf')
-    expect(mode.assumptions).toEqual(['zoom.mode is a finite integer number from 1 through 2'])
-    expect(mode.ensures).toEqual(['return is a finite integer number from 1 through 2'])
+    expect(analyzedFunction(report, 'modeOf').ensures).toEqual(['return is a finite number'])
     const gauge = report.functions.find(candidate => candidate.name === 'readGauge')
     expect(gauge?.kind).toBe('unsupported')
   })
@@ -518,8 +398,7 @@ describe('module state and nullability', () => {
         return pointerX
       }
     `)
-    expect(analyzedFunction(report, 'follow').ensures)
-      .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
+    expect(analyzedFunction(report, 'follow').ensures).toEqual(['return is a finite number'])
   })
 
   test('null checks narrow, and compound guards narrow through the short-circuit', () => {
@@ -627,8 +506,7 @@ describe('module state and nullability', () => {
       // paths stop there — no completed return remains to report as evidence.
       observed: [],
     })
-    expect(analyzedFunction(report, 'healthy').ensures)
-      .toEqual(['return is a possibly non-finite number from -Infinity through Infinity'])
+    expect(analyzedFunction(report, 'healthy').ensures).toEqual(['return is a finite number'])
     // The ternary's compound guard short-circuits like the statement spelling, so both
     // conjuncts refine the true arm: the null check discharges and maybe > 3 bounds the
     // multiplication (which can still overflow at the finite extremes).
@@ -669,11 +547,11 @@ describe('module state and nullability', () => {
       }
     `)
     expect(analyzedFunction(report, 'ratioOnly').assumptions).toEqual([
-      'x is a number',
+      'x is finite and not NaN',
       'viewport.width is finite and not NaN',
       'viewport.ratio is finite and not NaN',
     ])
-    expect(analyzedFunction(report, 'ignoresViewport').assumptions).toEqual(['x is a number'])
+    expect(analyzedFunction(report, 'ignoresViewport').assumptions).toEqual(['x is finite and not NaN'])
   })
 
 })

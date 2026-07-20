@@ -46,6 +46,7 @@ export const refactorGuides = [
     summary: 'Turn a domain rule such as "column count is a positive integer" into code once, before downstream calculations use it.',
     caveat: 'A positive integer is the real API rule. This changes fractional and nonpositive values, and external NaN still needs validation.',
     before: `export function perColumn(total: number, columnCount: number): number {
+  if (columnCount === 0) return 0
   return total / columnCount
 }`,
     after: `export function perColumn(total: number, columnCount: number): number {
@@ -373,7 +374,6 @@ function guidesForReason(reason: AuditReason): RefactorGuideID[] {
 function guidesForPrecondition(precondition: InferredPrecondition): RefactorGuideID[] {
   switch (precondition.kind) {
     case 'inBounds': return ['guard-array-index']
-    case 'numericInput': return []
     case 'declaredComparison':
     case 'declaredNumberCheck': return []
     case 'nonzero':
@@ -461,7 +461,6 @@ function isCallerInput(expression: NumericExpression): boolean {
   switch (expression.kind) {
     case 'parameter': return true
     case 'property': return isCallerInput(expression.base)
-    case 'tupleElement': return isCallerInput(expression.base)
     case 'floor': return isCallerInput(expression.operand)
     case 'constant':
     case 'binary': return false

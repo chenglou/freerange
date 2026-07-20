@@ -12,12 +12,6 @@ const preconditionsFixture = new URL('./fixtures/preconditions.ts', import.meta.
 const preconditionsReportPath = 'tests/fixtures/preconditions.ts'
 
 describe('control flow and contracts', () => {
-  const nonInputRequirements = (
-    report: ReturnType<typeof analyzeSource>,
-    functionName: string,
-  ): string[] => analyzedFunction(report, functionName).requires.filter(requirement =>
-    !requirement.includes('(used at '))
-
   test('number refinements keep existing facts consistent', () => {
     const report = analyzeSource('refinement-consistency.ts', `
       export function exactIndex(values: [number, number], index: number): number {
@@ -55,12 +49,12 @@ describe('control flow and contracts', () => {
     `)
 
     for (const name of ['exactIndex', 'clampedIndex', 'zeroProductIndex']) {
-      expect(nonInputRequirements(report, name)).toEqual([])
+      expect(analyzedFunction(report, name).requires).toEqual([])
     }
     expect(analyzedFunction(report, 'excludedEquality').ensures)
       .toEqual(['return is a finite integer number from 1 through 1'])
-    expect(nonInputRequirements(report, 'excludedPointSurvivesLaterBounds')).toEqual([])
-    expect(nonInputRequirements(report, 'equalitySharesIntegrality')).toEqual([])
+    expect(analyzedFunction(report, 'excludedPointSurvivesLaterBounds').requires).toEqual([])
+    expect(analyzedFunction(report, 'equalitySharesIntegrality').requires).toEqual([])
     expect(analyzedFunction(report, 'integerOverflowCanEqualInfinity').ensures)
       .toEqual(['return is a finite integer number from 0 through 1'])
   })
@@ -85,10 +79,12 @@ describe('control flow and contracts', () => {
       'headOr:analyzed',
       'widthPerColumn:analyzed',
     ])
-    // Frame timing keeps the exact clamped interval. Proving that its two infinity cases
-    // are harmless needs branch-sensitive arithmetic, so NaN remains possible for now.
+    // The flagship contracts: frame timing proves its exact clamp through the nullish
+    // default and a division whose dividend can overflow (division by a finite nonzero
+    // constant never makes NaN); the tuple config table reads exactly; array totals stay
+    // finite; the record-property division carries its full conditional contract.
     expect(analyzedFunction(report, 'frameSteps').ensures)
-      .toEqual([`return is a possibly NaN integer number from 0 through 100 (NaN possible from the operation at ${showcaseReportPath}:33:29)`])
+      .toEqual(['return is a finite integer number from 0 through 100'])
     expect(analyzedFunction(report, 'middleGap').ensures)
       .toEqual(['return is a finite integer number from 24 through 24'])
     expect(analyzedFunction(report, 'totalClamped').ensures)
@@ -96,9 +92,9 @@ describe('control flow and contracts', () => {
     expect(analyzedFunction(report, 'headOr').assumptions).toEqual([
       'values is a plain array — its length counts its elements, and every index below the length holds an element',
       'every values element is finite and not NaN',
-      'fallback is a number',
+      'fallback is finite and not NaN',
     ])
-    expect(nonInputRequirements(report, 'widthPerColumn'))
+    expect(analyzedFunction(report, 'widthPerColumn').requires)
       .toEqual([`grid.columnCount is nonzero (division at ${showcaseReportPath}:78:10)`])
   })
 
@@ -118,27 +114,27 @@ describe('control flow and contracts', () => {
     // is Infinity - Infinity, so pos and v honestly carry possible NaN with the blame
     // site at the Fspring multiplication; dest, k, and b pass through untouched.
     expect(analyzedFunction(report, 'springStep').ensures).toEqual([
-      'return.pos is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:25)',
-      'return.dest is a possibly non-finite number from -Infinity through Infinity',
-      'return.v is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:25)',
-      'return.k is a possibly non-finite number from -Infinity through Infinity',
-      'return.b is a possibly non-finite number from -Infinity through Infinity',
+      'return.pos is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:19)',
+      'return.dest is a finite number',
+      'return.v is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:19)',
+      'return.k is a finite number',
+      'return.b is a finite number',
     ])
     // springGoToEnd snaps to rest: v is exactly 0, pos becomes dest.
     expect(analyzedFunction(report, 'springGoToEnd').ensures).toEqual([
-      'return.pos is a possibly NaN number from -Infinity through Infinity',
-      'return.dest is a possibly NaN number from -Infinity through Infinity',
+      'return.pos is a finite number',
+      'return.dest is a finite number',
       'return.v is a finite integer number from 0 through 0',
-      'return.k is a possibly NaN number from -Infinity through Infinity',
-      'return.b is a possibly NaN number from -Infinity through Infinity',
+      'return.k is a finite number',
+      'return.b is a finite number',
     ])
     // stepSpring loops springStep `steps` times and inherits its possibly-NaN story.
     expect(analyzedFunction(report, 'stepSpring').ensures).toEqual([
-      'return.pos is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:25)',
-      'return.dest is a possibly NaN number from -Infinity through Infinity',
-      'return.v is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:25)',
-      'return.k is a possibly NaN number from -Infinity through Infinity',
-      'return.b is a possibly NaN number from -Infinity through Infinity',
+      'return.pos is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:19)',
+      'return.dest is a finite number',
+      'return.v is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:19)',
+      'return.k is a finite number',
+      'return.b is a finite number',
     ])
     // hitTest2DMode takes the BoxData array: the number fold covers its numeric leaves,
     // and the plain-array boundary line states the trust its length and element reads
@@ -146,36 +142,35 @@ describe('control flow and contracts', () => {
     expect(analyzedFunction(report, 'hitTest2DMode').assumptions).toEqual([
       'every property declared as a number in data holds a finite non-NaN number',
       'data is a plain array — its length counts its elements, and every index below the length holds an element',
-      'pointerX is a number',
-      'pointerY is a number',
+      'pointerX is finite and not NaN',
+      'pointerY is finite and not NaN',
     ])
   })
 
   test('reports inferred properties of a returned object', () => {
     const report = analyzeFile(fixture)
     const fn = analyzedFunction(report, 'calculateGridMetrics')
-    expect(fn.assumptions).toEqual(['containerWidth is a number'])
+    expect(fn.assumptions).toEqual(['containerWidth is finite and not NaN'])
     expect(fn.ensures).toEqual([
       'return.columnCount is a finite integer number from 1 through 7',
-      'return.maximumBoxWidth is a possibly non-finite number from 1 through Infinity',
+      'return.maximumBoxWidth is a finite number at least 1',
     ])
-    expect(formatReport(report)).toContain('ensures: return.maximumBoxWidth is a possibly non-finite number from 1 through Infinity')
+    expect(formatReport(report)).toContain('ensures: return.maximumBoxWidth is a finite number at least 1')
 
     const consumer = analyzedFunction(report, 'maximumBoxWidthForContainer')
-    expect(consumer.ensures).toEqual(['return is a possibly non-finite number from 1 through Infinity'])
+    expect(consumer.ensures).toEqual(['return is a finite number at least 1'])
   })
 
   test('degrades the inferred result when a divisor may be zero', () => {
     const source = readFileSync(fixture, 'utf8').replace('/ columnCount', '/ containerWidth')
     const report = analyzeSource('unsafe-grid-metrics.ts', source)
     const fn = analyzedFunction(report, 'calculateGridMetrics')
-    expect(nonInputRequirements(report, 'calculateGridMetrics'))
-      .toEqual([`containerWidth is nonzero (division at ${'unsafe-grid-metrics.ts'}:18:5)`])
-    // Math.max(1, ...) keeps its lower bound. The input can still make both operands
-    // infinite, so the quotient may be NaN even after the nonzero requirement.
-    expect(fn.ensures).toContain(
-      `return.maximumBoxWidth is a possibly NaN number from 1 through Infinity (NaN possible from the operation at unsafe-grid-metrics.ts:18:5)`,
-    )
+    expect(fn.requires).toEqual([`containerWidth is nonzero (division at ${'unsafe-grid-metrics.ts'}:18:5)`])
+    // Math.max(1, ...) keeps its lower bound through the possibly overflowed quotient —
+    // min/max are exact on infinities — and the quotient under the nonzero requirement is
+    // never NaN, so only overflow remains possible.
+    // The blame suffix points at the division that introduced the overflow possibility.
+    expect(fn.ensures).toContain(`return.maximumBoxWidth is a possibly non-finite number from 1 through Infinity (can overflow at ${'unsafe-grid-metrics.ts'}:18:5)`)
   })
 
   test('rejects TypeScript type errors before lowering', () => {
@@ -236,14 +231,14 @@ describe('control flow and contracts', () => {
       {
         kind: 'partial',
         name: 'outerWidth',
-        assumptions: ['width is a number'],
+        assumptions: ['width is finite and not NaN'],
         partialReasons: [`calls scaledRemainder, which is only partially supported (call at ${file}:3:16)`],
         observed: [],
       },
       {
         kind: 'partial',
         name: 'scaledRemainder',
-        assumptions: ['width is a number'],
+        assumptions: ['width is finite and not NaN'],
         partialReasons: [`calls remainderWidth, which hit unsupported code (call at ${file}:6:16)`],
         observed: [],
       },
@@ -255,9 +250,9 @@ describe('control flow and contracts', () => {
       {
         kind: 'analyzed',
         name: 'nonnegativeWidth',
-        assumptions: ['width is a number'],
+        assumptions: ['width is finite and not NaN'],
         requires: [],
-        ensures: ['return is a possibly NaN number from -Infinity through Infinity'],
+        ensures: ['return is a finite number at least 0'],
       },
     ])
   })
@@ -353,12 +348,9 @@ describe('control flow and contracts', () => {
     expect(report.functions).toEqual([{
       kind: 'partial',
       name: 'countdown',
-      assumptions: ['steps is a number'],
+      assumptions: ['steps is finite and not NaN'],
       partialReasons: [`recursive call to countdown (call at ${file}:4:16)`],
-      observed: [
-        'return is a finite integer number from 0 through 0',
-        `the numeric input used at ${file}:4:26 is safe only when !Number.isNaN(steps)`,
-      ],
+      observed: ['return is a finite integer number from 0 through 0'],
     }])
   })
 
@@ -379,7 +371,7 @@ describe('control flow and contracts', () => {
     expect(report.functions).toEqual([{
       kind: 'analyzed',
       name: 'totalHeight',
-      assumptions: ['rowCount is a number'],
+      assumptions: ['rowCount is finite and not NaN'],
       requires: [],
       ensures: ['return is a finite integer number at least 0'],
     }])
@@ -403,7 +395,7 @@ describe('control flow and contracts', () => {
     expect(report.functions).toEqual([{
       kind: 'partial',
       name: 'slowChain',
-      assumptions: ['count is a number'],
+      assumptions: ['count is finite and not NaN'],
       partialReasons: [`the loop at ${file}:6:9 did not converge after 16 updates`],
       observed: [],
     }])
@@ -549,7 +541,7 @@ describe('control flow and contracts', () => {
     const file = 'revisited-division.ts'
     const drain = analyzedFunction(report, 'drain')
     expect(drain.assumptions).toEqual([
-      'count is a number',
+      'count is finite and not NaN',
       `the divisor at ${file}:6:19 is nonzero`,
     ])
     expect(drain.ensures).toEqual(['return is a finite integer number from 100 through 100'])
@@ -654,7 +646,7 @@ describe('control flow and contracts', () => {
     expect(report.functions[0]).toEqual({
       kind: 'partial',
       name: 'example',
-      assumptions: ['flag is a number'],
+      assumptions: ['flag is finite and not NaN'],
       partialReasons: [`calls unsupportedThing, which hit unsupported code (call at ${file}:4:16)`],
       observed: ['return is a finite integer number from 10 through 10'],
     })
@@ -669,8 +661,8 @@ describe('control flow and contracts', () => {
   test('carries a record through rebinding and a local function call', () => {
     const report = analyzeFile(mutationFixture)
     const fn = analyzedFunction(report, 'destinationAfterUpdate')
-    expect(fn.assumptions).toEqual(['containerWidth is a number'])
-    expect(fn.ensures).toEqual(['return is a possibly non-finite number from 1 through Infinity'])
+    expect(fn.assumptions).toEqual(['containerWidth is finite and not NaN'])
+    expect(fn.ensures).toEqual(['return is a finite number at least 1'])
 
     const unrelated = analyzedFunction(report, 'unrelatedDestinationStaysUnchanged')
     // The clamp is exactly zero, so its result is an integer even though one input was not.
@@ -682,18 +674,18 @@ describe('control flow and contracts', () => {
     // The division lives inside divideWidth at 6:10. Callers that inherit the requirement
     // keep that site, so their reports point at the actual division, not at their call.
     const divisionLocation = `(division at ${preconditionsReportPath}:6:10)`
-    expect(nonInputRequirements(report, 'divideWidth'))
+    expect(analyzedFunction(report, 'divideWidth').requires)
       .toEqual([`columnCount is nonzero ${divisionLocation}`])
-    expect(nonInputRequirements(report, 'divideThroughCaller'))
+    expect(analyzedFunction(report, 'divideThroughCaller').requires)
       .toEqual([`columnCount is nonzero ${divisionLocation}`])
-    expect(nonInputRequirements(report, 'divideThroughTwoCallers'))
+    expect(analyzedFunction(report, 'divideThroughTwoCallers').requires)
       .toEqual([`columnCount is nonzero ${divisionLocation}`])
-    expect(nonInputRequirements(report, 'divideAfterGap'))
+    expect(analyzedFunction(report, 'divideAfterGap').requires)
       .toEqual([`(width - gap) is nonzero ${divisionLocation}`])
 
     const provedCall = analyzedFunction(report, 'divideByClampedColumnCount')
-    expect(nonInputRequirements(report, 'divideByClampedColumnCount')).toEqual([])
-    expect(provedCall.ensures).toEqual(['return is a possibly non-finite number from -Infinity through Infinity'])
+    expect(provedCall.requires).toEqual([])
+    expect(provedCall.ensures).toEqual(['return is a finite number'])
   })
 
 })

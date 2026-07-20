@@ -16,7 +16,6 @@ import {
   maximumNumbers,
   minimumNumbers,
   multiplyNumbers,
-  numericInputSourceIDs,
   pointExcluded,
   subtractNumbers,
   type AbstractNumber,
@@ -34,17 +33,8 @@ import {
   type TaggedVariant,
 } from '../domain/value.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
-import type {ArithmeticOperator, ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
+import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import {coveringKindValue, declaredKindOf, type ProgramIR} from '../ir/program.ts'
-import {
-  carryNumericInputSources,
-  applyNumericInputCondition,
-  numericInputCondition,
-  withoutInputExceptions,
-  stripNumericInputSources,
-  type NumericInputNeeds,
-  type NumericInputSources,
-} from '../requirements/numeric-input.ts'
 import {
   addPrecondition,
   peelNonzero,
@@ -53,8 +43,8 @@ import {
   resolveStoredValue,
   sameRuntimeValue,
   staticRequirement,
+  numericParameterPath,
   type ExpressionContext,
-  type NumericPreconditionIndex,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {completedEvaluation, type FunctionEvaluation, type RequirementFailure, type Stop} from './outcome.ts'
@@ -63,15 +53,10 @@ import {
   cloneState,
   hasFiniteFact,
   hasIndexFact,
-  hasNaNFact,
-  hasNotNaNFact,
-  hasNotInfiniteFact,
   hasNonzeroFact,
-  hasValidArrayIndexFact,
   type ExecutionState,
   type SharedState,
   type ValueFact,
-  type ValueFacts,
 } from './state.ts'
 
 type EvaluateFunction = (
@@ -80,7 +65,7 @@ type EvaluateFunction = (
   argumentExpressions: Array<NumericExpression | null>,
   sharedState: SharedState,
   callStack: FunctionID[],
-  valueFacts: ValueFacts,
+  valueFacts: ValueFact[],
   parameterIdentityKeys: string[],
   identityNamespace: string,
 ) => FunctionEvaluation
@@ -90,11 +75,9 @@ export type TransferContext = {
   callStack: FunctionID[]
   expressionContext: ExpressionContext
   preconditions: InferredPrecondition[]
-  numericPreconditions: NumericPreconditionIndex
   // Element reads the engine could not prove in bounds — the peer of preconditions,
   // accumulated per evaluation and adopted from completed callees the same way.
   boundsAssumptions: BoundsAssumption[]
-  numericInputSources: NumericInputSources
   evaluateFunction: EvaluateFunction
 }
 
@@ -134,191 +117,6 @@ function failedRequirement(failure: RequirementFailure): StepResult {
   }}
 }
 
-function consumeNumericInputRequirement(
-  valueID: ValueID,
-  needs: NumericInputNeeds,
-  state: ExecutionState,
-  context: TransferContext,
-  site: SiteID,
-): Extract<RequirementFailure, {kind: 'numericInput'}> | null {
-  const value = requiredNumberWithFacts(state, valueID, context.expressionContext)
-  const markers = value.inputSources
-  if (markers == null) return null
-  const key = canonicalValueKey(valueID, context.expressionContext)
-  if (hasFiniteFact(state.valueFacts, key)) {
-    writeThroughProducers(
-      state,
-      valueID,
-      stripNumericInputSources(value),
-      context.expressionContext.instructionByValue,
-    )
-    return null
-  }
-  if (needs.nan && markers.coverNaN && hasNaNFact(state.valueFacts, key)) {
-    return {kind: 'numericInput', condition: 'notNaN', site}
-  }
-  const condition = numericInputCondition(value, {
-    nan: needs.nan && !hasNotNaNFact(state.valueFacts, key),
-    infinity: needs.infinity && !hasNotInfiniteFact(state.valueFacts, key),
-  })
-  if (condition == null) return null
-  const refined = applyNumericInputCondition(value, condition)
-  if (refined == null) return {kind: 'numericInput', condition, site}
-  for (const id of numericInputSourceIDs(markers.sources)) {
-    const source = context.numericInputSources.entries[id]?.expression
-    if (source == null) throw new Error(`Unknown numeric input source ${id}`)
-    addPrecondition(context.preconditions, {
-      kind: 'numericInput',
-      expression: source,
-      condition,
-      site,
-    }, context.numericPreconditions)
-  }
-  addValueFact(state.valueFacts, {kind: 'numericCondition', value: key, condition})
-  const exhausted = !refined.mayBeNaN && isFiniteNumber(refined)
-  writeThroughProducers(
-    state,
-    valueID,
-    exhausted ? stripNumericInputSources(refined) : refined,
-    context.expressionContext.instructionByValue,
-  )
-  return null
-}
-
-function operandInfinityNeed(
-  operator: ArithmeticOperator,
-  own: AbstractNumber,
-  other: AbstractNumber,
-  dividend: boolean,
-  sameOperand: boolean,
-): boolean {
-  if (sameOperand) {
-    switch (operator) {
-      case 'add':
-      case 'multiply': return false
-      case 'subtract':
-      case 'divide':
-      case 'remainder': return !isFiniteNumber(own)
-    }
-  }
-  switch (operator) {
-    // With two independent broad values these operations need a relationship, not an
-    // arbitrary requirement on whichever operand is visited first. The small requirement
-    // language handles only cases where this one operand's condition is exact.
-    case 'add':
-    case 'subtract': return false
-    case 'multiply': return isDefinitelyZero(other)
-    case 'divide': return isDefinitelyInfinite(other)
-    case 'remainder': return dividend
-  }
-}
-
-function isDefinitelyInfinite(value: AbstractNumber): boolean {
-  return !value.mayBeNaN
-    && value.lower === value.upper
-    && !Number.isFinite(value.lower)
-}
-
-function consumeInstructionNumericRequirements(
-  instruction: InstructionIR,
-  state: ExecutionState,
-  context: TransferContext,
-): Extract<RequirementFailure, {kind: 'numericInput'}> | null {
-  switch (instruction.kind) {
-    case 'binary': {
-      const sameOperand = sameRuntimeValue(
-        instruction.left,
-        instruction.right,
-        context.expressionContext,
-      )
-      const left = requiredNumberWithFacts(state, instruction.left, context.expressionContext)
-      const right = requiredNumberWithFacts(state, instruction.right, context.expressionContext)
-      const leftNeeds: NumericInputNeeds = {
-        nan: true,
-        infinity: operandInfinityNeed(
-          instruction.operator,
-          left,
-          right,
-          true,
-          sameOperand,
-        ),
-      }
-      const rightNeeds: NumericInputNeeds = {
-        nan: true,
-        infinity: operandInfinityNeed(
-          instruction.operator,
-          right,
-          left,
-          false,
-          sameOperand,
-        ),
-      }
-      const leftFailure = consumeNumericInputRequirement(
-        instruction.left,
-        leftNeeds,
-        state,
-        context,
-        instruction.site,
-      )
-      if (leftFailure != null) return leftFailure
-      return consumeNumericInputRequirement(
-        instruction.right,
-        rightNeeds,
-        state,
-        context,
-        instruction.site,
-      )
-    }
-    case 'floor':
-    case 'absolute':
-    case 'mathUnary': return consumeNumericInputRequirement(
-      instruction.value,
-      {nan: true, infinity: false},
-      state,
-      context,
-      instruction.site,
-    )
-    case 'minimum':
-    case 'maximum': {
-      for (const operand of instruction.values) {
-        const failure = consumeNumericInputRequirement(
-          operand,
-          {nan: true, infinity: false},
-          state,
-          context,
-          instruction.site,
-        )
-        if (failure != null) return failure
-      }
-      return null
-    }
-    case 'constant':
-    case 'nullishConstant':
-    case 'opaqueConstant':
-    case 'unknownBoolean':
-    case 'arrayLiteral':
-    case 'arrayLength':
-    case 'arrayIndex':
-    case 'compare':
-    case 'tagCheck':
-    case 'nullishCheck':
-    case 'booleanConstant':
-    case 'moduleRead':
-    case 'moduleWrite':
-    case 'moduleHavoc':
-    case 'platformValue':
-    case 'stringLength':
-    case 'parsedNumber':
-    case 'numberCheck':
-    case 'not':
-    case 'staticRequire':
-    case 'staticAssert':
-    case 'call':
-    case 'object':
-    case 'property': return null
-  }
-}
-
 // The three ways an instruction arm produces its value, typed so a freshly computed number
 // cannot leave evaluateInstruction without the blame stamp: value() rejects numbers at the
 // type level, computedNumber() stamps, and passthroughValue() is the one named escape hatch
@@ -336,21 +134,8 @@ function passthroughValue(result: AbstractValue): ValueStep {
 // every operand still had the property, records this operation. Finiteness and NaN use
 // separate sites because an overflow can enable a later operation to produce NaN without
 // being the operation that produced it.
-function computedNumber(
-  raw: AbstractNumber,
-  operands: AbstractNumber[],
-  site: SiteID,
-  withoutInputExceptionsResult?: AbstractNumber | null,
-): ValueStep {
-  const normalized = normalizeRefinedNumber(raw)
-  if (withoutInputExceptionsResult === undefined) {
-    return {kind: 'value', value: withLossBlame(normalized, operands, site)}
-  }
-  const alternateResult = withoutInputExceptionsResult == null
-    ? null
-    : normalizeRefinedNumber(withoutInputExceptionsResult)
-  const carried = carryNumericInputSources(normalized, operands, alternateResult)
-  return {kind: 'value', value: withLossBlame(carried, operands, site)}
+function computedNumber(raw: AbstractNumber, operands: AbstractNumber[], site: SiteID): ValueStep {
+  return {kind: 'value', value: withLossBlame(normalizeRefinedNumber(raw), operands, site)}
 }
 
 function withLossBlame(result: AbstractNumber, operands: AbstractNumber[], site: SiteID): AbstractNumber {
@@ -377,8 +162,6 @@ export function evaluateInstruction(
   context: TransferContext,
 ): StepResult {
   try {
-    const numericInputFailure = consumeInstructionNumericRequirements(instruction, state, context)
-    if (numericInputFailure != null) return failedRequirement(numericInputFailure)
     return evaluateInstructionKinded(instruction, state, context)
   } catch (error) {
     if (error instanceof KindMismatch) {
@@ -469,7 +252,7 @@ function evaluateInstructionKinded(
             index: indexExpression,
             sequence: sequenceExpression,
             site: instruction.site,
-          }, context.numericPreconditions)
+          })
         } else {
           addBoundsAssumption(context.boundsAssumptions, {site: instruction.site, kind: 'elementInBounds'})
         }
@@ -480,18 +263,11 @@ function evaluateInstructionKinded(
           context.expressionContext.instructionByValue,
         )
         addValueFact(state.valueFacts, {kind: 'validIndex', index: indexKey, array: arrayKey})
-        addValueFact(state.valueFacts, {kind: 'validArrayIndex', value: indexKey})
       }
       return passthroughValue(element)
     }
     case 'numberCheck': {
       const operand = requiredNumberWithFacts(state, instruction.value, context.expressionContext)
-      if (hasNaNFact(
-        state.valueFacts,
-        canonicalValueKey(instruction.value, context.expressionContext),
-      )) {
-        return value(exactBoolean(instruction.predicate === 'nan'))
-      }
       return value(evaluateNumberCheck(instruction.predicate, operand))
     }
     case 'tagCheck': {
@@ -642,12 +418,6 @@ function evaluateInstructionKinded(
       // two-point lattice, numbers from their intervals.
       const left = requiredValue(state, instruction.left)
       const right = requiredValue(state, instruction.right)
-      if (
-        hasNaNFact(state.valueFacts, canonicalValueKey(instruction.left, context.expressionContext))
-        || hasNaNFact(state.valueFacts, canonicalValueKey(instruction.right, context.expressionContext))
-      ) {
-        return value(exactBoolean(instruction.operator === 'notEqual'))
-      }
       const same = sameRuntimeValue(instruction.left, instruction.right, context.expressionContext)
       if (left.kind === 'boolean' && right.kind === 'boolean'
         && (instruction.operator === 'equal' || instruction.operator === 'notEqual')) {
@@ -678,26 +448,15 @@ function evaluateInstructionKinded(
     }, [], instruction.site)
     case 'mathUnary': {
       const operand = requiredNumberWithFacts(state, instruction.value, context.expressionContext)
-      const apply = (value: AbstractNumber): AbstractNumber => instruction.operator === 'sqrt'
-        ? squareRootNumber(value)
-        : roundedNumber(instruction.operator, value)
       return computedNumber(
-        apply(operand),
+        instruction.operator === 'sqrt' ? squareRootNumber(operand) : roundedNumber(instruction.operator, operand),
         [operand],
         instruction.site,
-        instruction.operator === 'sqrt'
-          ? undefined
-          : evaluateWithoutInputExceptions([operand], ([constrained]) => apply(constrained!)),
       )
     }
     case 'floor': {
       const operand = requiredNumberWithFacts(state, instruction.value, context.expressionContext)
-      return computedNumber(
-        floorNumber(operand),
-        [operand],
-        instruction.site,
-        evaluateWithoutInputExceptions([operand], ([constrained]) => floorNumber(constrained!)),
-      )
+      return computedNumber(floorNumber(operand), [operand], instruction.site)
     }
     case 'platformValue': return passthroughValue({
       kind: 'number',
@@ -708,12 +467,7 @@ function evaluateInstructionKinded(
     })
     case 'absolute': {
       const operand = requiredNumberWithFacts(state, instruction.value, context.expressionContext)
-      return computedNumber(
-        absoluteNumber(operand),
-        [operand],
-        instruction.site,
-        evaluateWithoutInputExceptions([operand], ([constrained]) => absoluteNumber(constrained!)),
-      )
+      return computedNumber(absoluteNumber(operand), [operand], instruction.site)
     }
     case 'not': {
       const operand = requiredBoolean(state, instruction.value)
@@ -737,8 +491,21 @@ function evaluateInstructionKinded(
       }
       const requirement = staticRequirement(check, instruction.site, context.expressionContext)
       if (!condition.canBeFalse) {
-        // The current value proves the check. Broad number inputs reach the unknown arm
-        // below and become requirements; exact literal unions discharge here instead.
+        // A bare number parameter is finite only because function entry assumes it. Keep
+        // an explicitly written finite check as a caller requirement; a known finite
+        // literal or calculation has proved the check and can discharge it normally.
+        const recordsFiniteRequirement = check.kind === 'numberCheck'
+          && requirement?.kind === 'declaredNumberCheck'
+          && requirement.predicate === 'finite'
+          && numericParameterPath(requirement.expression) != null
+          && !hasFiniteFact(
+            state.valueFacts,
+            canonicalValueKey(check.value, context.expressionContext),
+          )
+        if (recordsFiniteRequirement) {
+          addPrecondition(context.preconditions, requirement)
+          recordFiniteValueFact(state, check.value, context.expressionContext)
+        }
         return value({kind: 'void'})
       }
       if (requirement == null) {
@@ -751,7 +518,7 @@ function evaluateInstructionKinded(
       state.values = refined.values
       state.shared = refined.shared
       state.valueFacts = refined.valueFacts
-      addPrecondition(context.preconditions, requirement, context.numericPreconditions)
+      addPrecondition(context.preconditions, requirement)
       if (check.kind === 'numberCheck') {
         recordFiniteValueFact(state, check.value, context.expressionContext)
       }
@@ -759,21 +526,11 @@ function evaluateInstructionKinded(
     }
     case 'minimum': {
       const operands = instruction.values.map(id => requiredNumberWithFacts(state, id, context.expressionContext))
-      return computedNumber(
-        minimumNumbers(operands),
-        operands,
-        instruction.site,
-        evaluateWithoutInputExceptions(operands, minimumNumbers),
-      )
+      return computedNumber(minimumNumbers(operands), operands, instruction.site)
     }
     case 'maximum': {
       const operands = instruction.values.map(id => requiredNumberWithFacts(state, id, context.expressionContext))
-      return computedNumber(
-        maximumNumbers(operands),
-        operands,
-        instruction.site,
-        evaluateWithoutInputExceptions(operands, maximumNumbers),
-      )
+      return computedNumber(maximumNumbers(operands), operands, instruction.site)
     }
     case 'call': {
       const callee = context.program.functions[instruction.function]
@@ -811,9 +568,7 @@ function evaluateInstructionKinded(
         // `if (bad) return fail(x)` then reports the same full contract the throw
         // spelling gets.
         if (evaluation.stops.length === 0 && evaluation.normal == null) {
-          for (const precondition of evaluation.preconditions) {
-            addPrecondition(context.preconditions, precondition, context.numericPreconditions)
-          }
+          for (const precondition of evaluation.preconditions) addPrecondition(context.preconditions, precondition)
           for (const assumption of evaluation.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
           return {kind: 'ends'}
         }
@@ -828,24 +583,9 @@ function evaluateInstructionKinded(
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
-      const callerFacts: ValueFacts = new Map()
-      for (const fact of completed.valueFacts.values()) {
-        if (fact.kind === 'guardFinite' && fact.scope.includes(calleeNamespace)) {
-          if (!fact.value.includes(`v:${calleeNamespace}`)) {
-            addValueFact(callerFacts, {
-              kind: 'numericCondition',
-              value: fact.value,
-              condition: 'finite',
-            })
-          }
-          continue
-        }
-        if (!valueFactUsesNamespace(fact, calleeNamespace)) addValueFact(callerFacts, fact)
-      }
-      state.valueFacts = callerFacts
-      for (const precondition of completed.preconditions) {
-        addPrecondition(context.preconditions, precondition, context.numericPreconditions)
-      }
+      state.valueFacts = completed.valueFacts.filter(fact =>
+        !valueFactUsesNamespace(fact, calleeNamespace))
+      for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
       return passthroughValue(completed.returnValue)
     }
@@ -882,11 +622,7 @@ function evaluateInstructionKinded(
           // the downstream claims vacuous, exactly like every other assumes line.
           addBoundsAssumption(context.boundsAssumptions, {site: instruction.site, kind: 'nonzeroDivisor'})
         } else {
-          addPrecondition(
-            context.preconditions,
-            peelNonzero(expression, instruction.site, operation),
-            context.numericPreconditions,
-          )
+          addPrecondition(context.preconditions, peelNonzero(expression, instruction.site, operation))
         }
         // Preconditions and assumptions are promises made by the caller. Later uses of
         // this same stored divisor on this path may rely on the promise just recorded.
@@ -902,13 +638,19 @@ function evaluateInstructionKinded(
         // a genuinely finite result; a non-integer one can still sit arbitrarily close to
         // zero and stays possibly non-finite. The remainder is bounded by both operands.
         return computedNumber(
-          evaluateBinaryResult(instruction.operator, left, right, sameOperand, true),
+          sameOperand == null
+            ? instruction.operator === 'divide'
+              ? divideNumbersNonzeroDivisor(left, right)
+              : remainderNumbers(left, right, true)
+            : evaluateSameOperandBinary(instruction.operator, sameOperand),
           [left, right],
           instruction.site,
         )
       }
       return computedNumber(
-        evaluateBinaryResult(instruction.operator, left, right, sameOperand, false),
+        sameOperand == null
+          ? evaluateBinary(instruction.operator, left, right)
+          : evaluateSameOperandBinary(instruction.operator, sameOperand),
         [left, right],
         instruction.site,
       )
@@ -924,10 +666,7 @@ export function addBoundsAssumption(assumptions: BoundsAssumption[], candidate: 
 
 function valueFactUsesNamespace(fact: ValueFact, namespace: string): boolean {
   const marker = `v:${namespace}`
-  if (fact.kind === 'nonzero' || fact.kind === 'numericCondition' || fact.kind === 'nan'
-    || fact.kind === 'validArrayIndex') {
-    return fact.value.includes(marker)
-  }
+  if (fact.kind === 'nonzero' || fact.kind === 'finite') return fact.value.includes(marker)
   if (fact.kind === 'guardFinite') {
     return fact.value.includes(marker) || fact.scope.includes(namespace)
   }
@@ -1138,8 +877,6 @@ function meetValues(current: AbstractValue, refined: AbstractValue): AbstractVal
         const nanSite = refined.nanSite ?? current.nanSite
         if (nanSite != null) met.nanSite = nanSite
       }
-      const inputSources = refined.inputSources ?? current.inputSources
-      if (inputSources != null) met.inputSources = inputSources
       return met
     }
     case 'record': {
@@ -1208,22 +945,15 @@ function refineNumberCheck(
 ): ExecutionState | null {
   const result = cloneState(state)
   const operand = requiredNumber(result, check.value)
-  const valueKey = canonicalValueKey(check.value, expressionContext)
-  const knownNaN = hasNaNFact(result.valueFacts, valueKey)
   if (check.predicate === 'nan') {
-    // The interval record has no NaN-only form, so the passing branch records the exact
-    // condition as a small value fact. The failing branch clears the possibility.
-    if (truth) {
-      if (!operand.mayBeNaN) return null
-      addValueFact(result.valueFacts, {kind: 'nan', value: valueKey})
-      return result
-    }
-    if (knownNaN) return null
+    // The passing branch holds exactly NaN — not representable as a refinement, so the
+    // unrefined operand stays as its sound cover, and the branch prunes outright when the
+    // value provably cannot be NaN. The failing branch launders: mayBeNaN clears.
+    if (truth) return operand.mayBeNaN ? result : null
     const laundered: AbstractNumber = {...operand, mayBeNaN: false}
     writeThroughProducers(result, check.value, laundered, expressionContext.instructionByValue)
     return result
   }
-  if (truth && knownNaN) return null
   if (truth) {
     // The passing branch proves finiteness for both predicates (isInteger rejects the
     // infinities too), and integrality snaps the bounds inward.
@@ -1286,8 +1016,7 @@ function refineComparison(
   // with any x at all whenever clamped is NaN. The not-equal refinement is exempt: it only
   // cuts interval points, which never rules out a NaN inhabitant, and NaN lands on the
   // not-equal side anyway (NaN !== c is true).
-  const orderedComparison = operator !== 'equal' && operator !== 'notEqual'
-  if (!truth && orderedComparison && (left.mayBeNaN || right.mayBeNaN)) return result
+  if (!truth && operator !== 'equal' && (left.mayBeNaN || right.mayBeNaN)) return result
   let refinedLeft = left
   let refinedRight = right
   switch (operator) {
@@ -1359,12 +1088,7 @@ function refineComparison(
     if ((!truth || holdsForNaN) && (left.mayBeNaN || right.mayBeNaN)) return cloneState(state)
     return null
   }
-  // The branch proves both operands are not NaN when equality holds, including the
-  // false branch of !==. A true ordered comparison proves the same. The failed branch
-  // of an ordered comparison and either side of != where inequality holds still admit
-  // NaN, because every ordered comparison with NaN is false and NaN !== anything.
-  const provesNotNaN = operator === 'equal' || (truth && operator !== 'notEqual')
-  if (provesNotNaN) {
+  if (truth && !holdsForNaN) {
     refinedLeft = {...refinedLeft, mayBeNaN: false}
     refinedRight = {...refinedRight, mayBeNaN: false}
   }
@@ -1433,20 +1157,9 @@ function numberWithFacts(
   if (held?.kind !== 'number') return null
   let result = held
   const key = canonicalValueKey(id, expressionContext)
-  if (hasFiniteFact(state.valueFacts, key)) {
-    const finite = applyNumericInputCondition(result, 'finite')
-    if (finite != null) result = finite
-  } else {
-    if (hasNotNaNFact(state.valueFacts, key)) {
-      const notNaN = applyNumericInputCondition(result, 'notNaN')
-      if (notNaN != null) result = notNaN
-    }
-    if (hasNotInfiniteFact(state.valueFacts, key)) {
-      const notInfinite = applyNumericInputCondition(result, 'notInfinite')
-      if (notInfinite != null) result = notInfinite
-    }
+  if (state.valueFacts.some(fact => fact.kind === 'validIndex' && fact.index === key)) {
+    result = validIndexNumber(result)
   }
-  if (hasValidArrayIndexFact(state.valueFacts, key)) result = validIndexNumber(result)
   if (hasNonzeroFact(state.valueFacts, key)) result = excludePointFrom(result, constantNumber(0))
   return result
 }
@@ -1455,8 +1168,7 @@ function validIndexNumber(value: AbstractNumber): AbstractNumber {
   return {
     ...value, integer: true, mayBeNaN: false,
     lower: Math.ceil(Math.max(value.lower, 0)),
-    // Arrays have at most 2^32 - 1 elements, so their greatest valid index is 2^32 - 2.
-    upper: Math.floor(Math.min(value.upper, 4294967294)),
+    upper: Math.floor(value.upper),
   }
 }
 
@@ -1485,11 +1197,7 @@ function recordFiniteValueFact(
   value: ValueID,
   expressionContext: ExpressionContext,
 ): void {
-  addValueFact(state.valueFacts, {
-    kind: 'numericCondition',
-    value: canonicalValueKey(value, expressionContext),
-    condition: 'finite',
-  })
+  addValueFact(state.valueFacts, {kind: 'finite', value: canonicalValueKey(value, expressionContext)})
 }
 
 export function requiredBoolean(state: ExecutionState, id: ValueID): AbstractBoolean {
@@ -1583,34 +1291,6 @@ function evaluateBinary(
     case 'divide': return divideNumbers(left, right)
     case 'remainder': return remainderNumbers(left, right, false)
   }
-}
-
-function evaluateBinaryResult(
-  operator: ArithmeticOperator,
-  left: AbstractNumber,
-  right: AbstractNumber,
-  sameOperand: AbstractNumber | null,
-  divisorNonzero: boolean,
-): AbstractNumber {
-  if (sameOperand != null) return evaluateSameOperandBinary(operator, sameOperand)
-  if (divisorNonzero) {
-    if (operator === 'divide') return divideNumbersNonzeroDivisor(left, right)
-    if (operator === 'remainder') return remainderNumbers(left, right, true)
-  }
-  return evaluateBinary(operator, left, right)
-}
-
-function evaluateWithoutInputExceptions(
-  operands: AbstractNumber[],
-  evaluate: (constrainedOperands: AbstractNumber[]) => AbstractNumber,
-): AbstractNumber | null {
-  const constrainedOperands: AbstractNumber[] = []
-  for (const operand of operands) {
-    const constrained = withoutInputExceptions(operand)
-    if (constrained == null) return null
-    constrainedOperands.push(constrained)
-  }
-  return evaluate(constrainedOperands)
 }
 
 function intersectSameNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {

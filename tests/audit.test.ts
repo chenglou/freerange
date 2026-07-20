@@ -22,10 +22,6 @@ function analyzed(report: AnalysisReport, name: string) {
   return result
 }
 
-function nonInputRequirements(report: AnalysisReport, name: string): string[] {
-  return analyzed(report, name).requires.filter(requirement => !requirement.includes('(used at '))
-}
-
 function guide(id: RefactorGuideID) {
   return refactorGuide(id)
 }
@@ -57,30 +53,29 @@ test('the README documents every audit suggestion code', () => {
 
 test('every suggested rewrite changes the analyzer result as claimed', () => {
   const guarded = guide('guard-derived-value')
-  expect(nonInputRequirements(analyzeSource('guard-before.ts', guarded.before), 'remap')).toHaveLength(1)
-  expect(nonInputRequirements(analyzeSource('guard-after.ts', guarded.after), 'remap')).toEqual([])
+  expect(analyzed(analyzeSource('guard-before.ts', guarded.before), 'remap').requires).toHaveLength(1)
+  expect(analyzed(analyzeSource('guard-after.ts', guarded.after), 'remap').requires).toEqual([])
 
   const normalized = guide('encode-input-rule')
-  expect(nonInputRequirements(analyzeSource('normalize-before.ts', normalized.before), 'perColumn'))
-    .toHaveLength(1)
-  expect(nonInputRequirements(analyzeSource('normalize-after.ts', normalized.after), 'perColumn'))
-    .toEqual([])
+  expect(analyzed(analyzeSource('normalize-before.ts', normalized.before), 'perColumn').ensures.join('\n'))
+    .toContain('possibly non-finite')
+  expect(analyzed(analyzeSource('normalize-after.ts', normalized.after), 'perColumn').ensures)
+    .toEqual(['return is a finite number'])
 
   const direct = guide('use-direct-operands')
-  const directBeforeReport = analyzeSource('direct-before.ts', direct.before)
-  const directBefore = analyzed(directBeforeReport, 'fittedHeight')
-  expect(nonInputRequirements(directBeforeReport, 'fittedHeight')).toHaveLength(2)
+  const directBefore = analyzed(analyzeSource('direct-before.ts', direct.before), 'fittedHeight')
+  expect(directBefore.requires).toHaveLength(2)
   expect(directBefore.ensures.join('\n')).toContain('possibly NaN')
-  const directAfterReport = analyzeSource('direct-after.ts', direct.after)
-  const directAfter = analyzed(directAfterReport, 'fittedHeight')
-  expect(nonInputRequirements(directAfterReport, 'fittedHeight')).toEqual([])
-  expect(directAfter.ensures.join('\n')).toContain('possibly NaN')
+  const directAfter = analyzed(analyzeSource('direct-after.ts', direct.after), 'fittedHeight')
+  expect(directAfter.requires).toEqual([])
+  expect(directAfter.ensures.join('\n')).toContain('possibly non-finite')
+  expect(directAfter.ensures.join('\n')).not.toContain('possibly NaN')
 
   const explicit = guide('write-explicit-condition')
   expect(functionReport(analyzeSource('condition-before.ts', explicit.before), 'safeWidth').kind)
     .toBe('unsupported')
   expect(analyzed(analyzeSource('condition-after.ts', explicit.after), 'safeWidth').ensures)
-    .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
+    .toEqual(['return is a finite number'])
 
   const loop = guide('use-loop-for-aggregation')
   expect(functionReport(analyzeSource('loop-before.ts', loop.before), 'total').kind).toBe('unsupported')
@@ -275,9 +270,7 @@ test('audit references preserve each propagated requirement payload', () => {
       return divide(width, width - gap)
     }
   `)
-  const requirements = audit.references.filter(reference =>
-    reference.reason.kind === 'requires'
-      && reference.reason.precondition.kind !== 'numericInput')
+  const requirements = audit.references.filter(reference => reference.reason.kind === 'requires')
   expect(requirements).toHaveLength(3)
   expect(requirements.map(reference => [
     reference.functionName,
@@ -370,9 +363,7 @@ test('partial audits retain requirements found before a path became unsupported'
   `)
   expect(audit.coverage).toMatchObject({functions: 2, analyzed: 0, partial: 1, unsupported: 1})
   const observedRequirement = audit.references.find(reference =>
-    reference.functionName === 'partial'
-      && reference.reason.kind === 'requires'
-      && reference.reason.precondition.kind === 'nonzero')
+    reference.functionName === 'partial' && reference.reason.kind === 'requires')
   expect(observedRequirement?.guideIDs).toEqual(['guard-derived-value', 'encode-input-rule'])
   expect(formatFileAuditUnit(audit)).toContain('suggestion [guard-derived-value]: Check the exact divisor.')
 })

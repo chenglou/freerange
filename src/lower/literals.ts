@@ -59,14 +59,7 @@ export function parameterDefaultFits(default_: ParameterDefaultLiteral, declared
     return parameterDefaultFits(default_, declared.inner)
   }
   switch (declared.kind) {
-    case 'number': {
-      if (default_.kind !== 'number') return false
-      const interval = declared.interval
-      return interval == null
-        || (default_.value >= interval.lower
-          && default_.value <= interval.upper
-          && (!interval.integer || Number.isInteger(default_.value)))
-    }
+    case 'number': return default_.kind === 'number'
     case 'boolean': return default_.kind === 'boolean'
     case 'opaque': return default_.kind === 'opaque'
     case 'record':

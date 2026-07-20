@@ -1,14 +1,4 @@
 import type {SiteID} from '../ir/ids.ts'
-
-export type NumericInputSourceSet =
-  | {kind: 'source'; source: number; order: number}
-  | {
-      kind: 'union'
-      left: NumericInputSourceSet
-      right: NumericInputSourceSet
-      order: number
-    }
-
 export type AbstractNumber = {
   kind: 'number'
   // The bounds carry finiteness by construction: a value that can be ±Infinity has that
@@ -34,82 +24,6 @@ export type AbstractNumber = {
   // overflow. Deliberately excluded from sameNumbers and never branched on by the engine.
   nonFiniteSite?: SiteID
   nanSite?: SiteID
-  // Numeric inputs carry stable IDs while their possible NaN or infinities still come
-  // entirely from those inputs. Operations consume the relevant condition into a caller
-  // requirement; joins retain a condition only when it covers every incoming path.
-  inputSources?: {
-    sources: NumericInputSourceSet
-    coverNaN: boolean
-    coverInfinity: boolean
-  }
-}
-
-let nextSourceSetOrder = 0
-const sourceSetUnions = new WeakMap<
-NumericInputSourceSet,
-WeakMap<NumericInputSourceSet, NumericInputSourceSet>
->()
-
-export function numericInputSource(source: number): NumericInputSourceSet {
-  return {kind: 'source', source, order: nextSourceSetOrder++}
-}
-
-// Input provenance is an immutable union graph rather than a copied list. Interning each
-// pair makes repeated fixed-point visits reuse the same node; the WeakMaps do not retain
-// completed analyses. A nested conditional therefore creates one node per written join,
-// while the source IDs are visited only when an operation needs a caller requirement.
-export function unionNumericInputSources(
-  left: NumericInputSourceSet | null,
-  right: NumericInputSourceSet | null,
-): NumericInputSourceSet | null {
-  if (left == null) return right
-  if (right == null || left === right) return left
-  const [first, second] = left.order < right.order ? [left, right] : [right, left]
-  let bySecond = sourceSetUnions.get(first)
-  if (bySecond == null) {
-    bySecond = new WeakMap()
-    sourceSetUnions.set(first, bySecond)
-  }
-  const existing = bySecond.get(second)
-  if (existing != null) return existing
-  const joined: NumericInputSourceSet = {
-    kind: 'union',
-    left: first,
-    right: second,
-    order: nextSourceSetOrder++,
-  }
-  bySecond.set(second, joined)
-  return joined
-}
-
-export function numericInputSourceIDs(root: NumericInputSourceSet): number[] {
-  const ids: number[] = []
-  const seenNodes = new Set<NumericInputSourceSet>()
-  const seenSources = new Set<number>()
-  const pending = [root]
-  while (pending.length > 0) {
-    const node = pending.pop()!
-    if (seenNodes.has(node)) continue
-    seenNodes.add(node)
-    if (node.kind === 'source') {
-      if (!seenSources.has(node.source)) {
-        seenSources.add(node.source)
-        ids.push(node.source)
-      }
-      continue
-    }
-    pending.push(node.right, node.left)
-  }
-  return ids
-}
-
-export function singleNumericInputSource(root: NumericInputSourceSet): number | null {
-  let only: number | null = null
-  for (const source of numericInputSourceIDs(root)) {
-    if (only == null) only = source
-    else if (source !== only) return null
-  }
-  return only
 }
 
 const float64Scratch = new Float64Array(1)
@@ -459,8 +373,6 @@ export function joinNumbers(left: AbstractNumber, right: AbstractNumber): Abstra
   const nanSite = (left.mayBeNaN ? left.nanSite : undefined)
     ?? (right.mayBeNaN ? right.nanSite : undefined)
   if (joined.mayBeNaN && nanSite != null) joined.nanSite = nanSite
-  const inputSources = joinInputSources(left, right)
-  if (inputSources != null) joined.inputSources = inputSources
   return joined
 }
 
@@ -470,7 +382,6 @@ export function sameNumbers(left: AbstractNumber, right: AbstractNumber): boolea
     && left.integer === right.integer
     && left.mayBeNaN === right.mayBeNaN
     && left.excludesPoint === right.excludesPoint
-    && sameInputSources(left.inputSources, right.inputSources)
 }
 
 export function widenNumber(previous: AbstractNumber, next: AbstractNumber): AbstractNumber {
@@ -488,54 +399,12 @@ export function widenNumber(previous: AbstractNumber, next: AbstractNumber): Abs
   }
   if (!isFiniteNumber(widened) && next.nonFiniteSite != null) widened.nonFiniteSite = next.nonFiniteSite
   if (widened.mayBeNaN && next.nanSite != null) widened.nanSite = next.nanSite
-  // Loop-carried provenance must already be invariant. Unioning a different source on
-  // every update can keep an otherwise settled loop changing forever; dropping the
-  // provenance only loses a possible caller requirement and cannot strengthen a claim.
-  if (sameInputSources(previous.inputSources, next.inputSources)
-    && previous.inputSources != null) {
-    widened.inputSources = previous.inputSources
-  }
   // The widened interval is a fresh, wider cover — a point stays excluded only when both
   // rounds excluded it, same rule as joins. The cut can disappear across rounds and never
   // reappear, so the fixed point still converges.
   const excludesPoint = sharedExcludedPoint(previous, next, widened.lower, widened.upper)
   if (excludesPoint != null) widened.excludesPoint = excludesPoint
   return widened
-}
-
-function joinInputSources(
-  left: AbstractNumber,
-  right: AbstractNumber,
-): AbstractNumber['inputSources'] {
-  const leftSources = left.inputSources
-  const rightSources = right.inputSources
-  if (leftSources != null && sameInputSources(leftSources, rightSources)) return leftSources
-  const sources = unionNumericInputSources(
-    leftSources?.sources ?? null,
-    rightSources?.sources ?? null,
-  )
-  if (sources == null) return undefined
-  const joined = {
-    sources,
-    coverNaN: (!left.mayBeNaN || leftSources?.coverNaN === true)
-      && (!right.mayBeNaN || rightSources?.coverNaN === true),
-    coverInfinity: (isFiniteNumber(left) || leftSources?.coverInfinity === true)
-      && (isFiniteNumber(right) || rightSources?.coverInfinity === true),
-  }
-  if (!joined.coverNaN && !joined.coverInfinity) return undefined
-  if (leftSources != null && sameInputSources(leftSources, joined)) return leftSources
-  if (rightSources != null && sameInputSources(rightSources, joined)) return rightSources
-  return joined
-}
-
-function sameInputSources(
-  left: AbstractNumber['inputSources'],
-  right: AbstractNumber['inputSources'],
-): boolean {
-  if (left == null || right == null) return left === right
-  return left.coverNaN === right.coverNaN
-    && left.coverInfinity === right.coverInfinity
-    && left.sources === right.sources
 }
 
 function boundedResult(

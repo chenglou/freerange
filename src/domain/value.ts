@@ -145,7 +145,6 @@ export function joinValues(left: AbstractValue, right: AbstractValue): AbstractV
 // mismatch deep inside a structure degrades (the property is dropped, unreadable anyway)
 // rather than killing the run.
 export function tryJoinValues(left: AbstractValue, right: AbstractValue): AbstractValue | null {
-  if (left === right) return left
   // Missing values meet other kinds legitimately: a `number | null` binding joins a number
   // branch with a null branch.
   if (left.kind === 'nullish' && right.kind === 'nullish') {

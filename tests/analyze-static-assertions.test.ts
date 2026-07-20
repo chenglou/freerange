@@ -17,8 +17,7 @@ describe('static console.assert contracts', () => {
     expect(declared.requires).toHaveLength(1)
     expect(declared.requires[0]).toContain('value >= 0')
     expect(declared.assertions?.map(assertion => assertion.verdict)).toEqual(['proven'])
-    expect(declared.ensures)
-      .toEqual(['return is a possibly non-finite number from 0 through Infinity'])
+    expect(declared.ensures).toEqual(['return is a finite number at least 0'])
 
     const consecutive = analyzedFunction(report, 'requiredPositiveInteger')
     expect(consecutive.requires.map(requirement => requirement.split(' (declared')[0])).toEqual([
@@ -28,8 +27,8 @@ describe('static console.assert contracts', () => {
     expect(consecutive.requires.some(requirement => requirement.includes('division'))).toBe(false)
     expect(consecutive.assumptions).toEqual([])
 
-    expect(analyzedFunction(report, 'propagatedRequirement').requires.some(requirement =>
-      requirement.includes('(width - 1) >= 0'))).toBe(true)
+    expect(analyzedFunction(report, 'propagatedRequirement').requires[0])
+      .toContain('(width - 1) >= 0')
     expect(analyzedFunction(report, 'safeCaller').requires).toEqual([])
 
     for (const name of ['unsafeCaller', 'unsafeWrapper']) {
@@ -219,21 +218,16 @@ describe('static console.assert contracts', () => {
 
     const oneExplicit = analyzedFunction(report, 'oneExplicit')
     expect(oneExplicit.requires[0]).toContain('Number.isFinite(first)')
-    expect(oneExplicit.requires[1]).toContain('!Number.isNaN(second)')
-    expect(oneExplicit.assumptions).toEqual(['second is a number'])
+    expect(oneExplicit.assumptions).toEqual(['second is finite and not NaN'])
 
     const finiteWidth = analyzedFunction(report, 'finiteWidth')
     expect(finiteWidth.requires[0]).toContain('Number.isFinite(config.width)')
-    expect(finiteWidth.requires[1]).toContain('!Number.isNaN(config.height)')
-    expect(finiteWidth.assumptions).toEqual(['config.height is a number'])
+    expect(finiteWidth.assumptions).toEqual(['config.height is finite and not NaN'])
     for (const name of ['forwardedWidth', 'passedProperty']) {
       const fn = analyzedFunction(report, name)
       expect(fn.requires[0]).toContain('Number.isFinite(config.width)')
-      if (name === 'forwardedWidth') {
-        expect(fn.requires[1]).toContain('!Number.isNaN(config.height)')
-      }
       expect(fn.assumptions).toEqual(name === 'forwardedWidth'
-        ? ['config.height is a number']
+        ? ['config.height is finite and not NaN']
         : [])
     }
     expect(analyzedFunction(report, 'knownWidth').requires).toEqual([])
@@ -248,11 +242,10 @@ describe('static console.assert contracts', () => {
       'guardedParsed',
       'guardedParameter',
       'integerGuardedParameter',
+      'guardedProperty',
     ]) {
       expect(analyzedFunction(report, name).requires).toEqual([])
     }
-    expect(analyzedFunction(report, 'guardedProperty').requires[0])
-      .toContain('!Number.isNaN(config.height)')
     for (const name of [
       'guardedOnOnePath',
       'onlyRejectsNaN',
@@ -266,10 +259,10 @@ describe('static console.assert contracts', () => {
     expect(destructured.requires[0]).toContain('Number.isFinite({width}.width)')
     expect(destructured.assumptions).toEqual([])
     expect(analyzedFunction(report, 'finiteBranchUsesInputAssumption').ensures).toEqual([
-      'return is a finite integer number from 1 through 2',
+      'return is a finite integer number from 1 through 1',
     ])
-    expect(analyzedFunction(report, 'possiblyOverflowing').requires.some(requirement =>
-      requirement.includes('Number.isFinite((value * 2))'))).toBe(true)
+    expect(analyzedFunction(report, 'possiblyOverflowing').requires[0])
+      .toContain('Number.isFinite((value * 2))')
 
     for (const name of ['infiniteLiteral', 'parsed']) {
       const fn = report.functions.find(candidate => candidate.name === name)
@@ -513,8 +506,7 @@ describe('static console.assert contracts', () => {
     expect(shadowed.unsupported).toContain('function parameter with type')
     expect(shadowed.unsupported).not.toContain('console.assert')
     expect(analyzedFunction(report, 'writtenNumberCheck').assertions?.map(assertion => assertion.verdict))
-      .toEqual(['unproven'])
-    expect(analyzedFunction(report, 'writtenNumberCheck').requires).toEqual([])
+      .toEqual(['proven'])
     expect(analyzedFunction(report, 'finiteRequirement').requires[0]).toContain('Number.isFinite(value)')
     expect(analyzedFunction(report, 'finiteRequirement').assumptions).toEqual([])
     expect(analyzedFunction(report, 'positiveLiteral').assertions?.map(assertion => assertion.verdict))
@@ -634,11 +626,7 @@ describe('static console.assert contracts', () => {
     `)
 
     expect(analyzedFunction(report, 'producerProofs').assertions?.map(assertion => assertion.verdict))
-      .toEqual([
-        ...Array.from({length: 9}, () => 'proven' as const),
-        'unproven',
-        'unproven',
-      ])
+      .toEqual(Array.from({length: 11}, () => 'proven'))
     expect(analyzedFunction(report, 'negativeControls').assertions?.map(assertion => assertion.verdict))
       .toEqual([
         'unproven',

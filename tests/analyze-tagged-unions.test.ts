@@ -79,12 +79,11 @@ describe('tagged unions and narrowing', () => {
     // the null caveat the folded assertion cannot), so only box.index counts toward the
     // fold threshold and every line stays exact.
     expect(analyzedFunction(report, 'ownerPage').assumptions).toEqual([
-      'box.index is a number',
+      'box.index is finite and not NaN',
       "box.owner is null or box.owner.page is finite and not NaN (when box.owner.type is 'explore')",
       "box.owner is null or box.owner.count is finite and not NaN (when box.owner.type is 'imagine')",
     ])
-    expect(analyzedFunction(report, 'ownerPage').ensures)
-      .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
+    expect(analyzedFunction(report, 'ownerPage').ensures).toEqual(['return is a finite number'])
   })
 
   test('tagged unions: boolean tags and literal-union tags dispatch like string tags', () => {
@@ -123,12 +122,12 @@ describe('tagged unions and narrowing', () => {
     // the tag property contributes no line of its own either way.
     expect(analyzedFunction(report, 'unwrapOr').assumptions).toEqual([
       'result.value is finite and not NaN (when result.ok is true)',
-      'fallback is a number',
+      'fallback is finite and not NaN',
     ])
     expect(analyzedFunction(report, 'negated').ensures).toEqual(['return is a finite number'])
     expect(analyzedFunction(report, 'makeBoth').ensures).toEqual([
       'return.ok is true or false',
-      'return.value is a possibly non-finite number more than 0 and at most Infinity (when return.ok is true)',
+      'return.value is a finite number more than 0 (when return.ok is true)',
       'return.code is a finite integer number from 400 through 400 (when return.ok is false)',
     ])
     // Tagged unions never fold: the qualified lines scope each assumption to its
@@ -346,15 +345,11 @@ describe('tagged unions and narrowing', () => {
         return x
       }
     `)
-    expect(analyzedFunction(report, 'divideWidth').requires).toEqual([
-      '!Number.isNaN(width) (used at throw-guards.ts:4:16)',
-      '!Number.isNaN(columns) (used at throw-guards.ts:4:16)',
-    ])
+    expect(analyzedFunction(report, 'divideWidth').requires).toEqual([])
     expect(analyzedFunction(report, 'fail').ensures).toEqual([])
     // A guarded call to an always-throwing helper behaves exactly like an inline throw:
     // the path ends silently and the returning path carries the full contract.
-    expect(analyzedFunction(report, 'caller').ensures)
-      .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
+    expect(analyzedFunction(report, 'caller').ensures).toEqual(['return is a finite number at least 0'])
   })
 
   test('boolean equality, string length, typeof strings, and nullable switches analyze', () => {
@@ -377,14 +372,11 @@ describe('tagged unions and narrowing', () => {
         }
       }
     `)
-    expect(analyzedFunction(report, 'boolEq').ensures)
-      .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
+    expect(analyzedFunction(report, 'boolEq').ensures).toEqual(['return is a finite number'])
     // .length is a fresh nonnegative integer; the clamp gives the exact range.
     expect(analyzedFunction(report, 'nameLength').ensures).toEqual(['return is a finite integer number from 0 through 40'])
-    expect(analyzedFunction(report, 'typeofString').ensures)
-      .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
-    expect(analyzedFunction(report, 'switchNullable').ensures)
-      .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
+    expect(analyzedFunction(report, 'typeofString').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'switchNullable').ensures).toEqual(['return is a finite number'])
   })
 
   test('parse functions, callback and unknown parameters, and instanceof analyze', () => {
@@ -413,11 +405,9 @@ describe('tagged unions and narrowing', () => {
       }
     `)
     expect(analyzedFunction(report, 'parsed').ensures).toEqual(['return is a finite number at most 100'])
-    expect(analyzedFunction(report, 'withCallback').ensures)
-      .toEqual(['return is a possibly non-finite number from -Infinity through Infinity'])
-    expect(analyzedFunction(report, 'carries').ensures[0]).toContain('possibly NaN')
-    expect(analyzedFunction(report, 'domCheck').ensures)
-      .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
+    expect(analyzedFunction(report, 'withCallback').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'carries').ensures[0]).toContain('possibly non-finite')
+    expect(analyzedFunction(report, 'domCheck').ensures).toEqual(['return is a finite number'])
   })
 
   test('logical assignments, remainder, optional chaining, and destructured parameters are classified', () => {
@@ -448,32 +438,20 @@ describe('tagged unions and narrowing', () => {
     const file = 'sweep-group4.ts'
     expect(analyzedFunction(report, 'nullishAssign').ensures).toEqual(['return is a finite number'])
     // The === 0 guard discharges the remainder's obligation like division's.
-    expect(analyzedFunction(report, 'modulo').requires).toEqual([
-      `Number.isFinite(index) (used at ${file}:9:16)`,
-      `!Number.isNaN(length) (used at ${file}:9:16)`,
-    ])
+    expect(analyzedFunction(report, 'modulo').requires).toEqual([])
     expect(analyzedFunction(report, 'modulo').ensures).toEqual(['return is a finite number'])
     expect(analyzedFunction(report, 'moduloRequires').requires)
-      .toEqual([
-        `Number.isFinite(index) (used at ${file}:12:16)`,
-        `!Number.isNaN(length) (used at ${file}:12:16)`,
-        `length is nonzero (remainder at ${file}:12:16)`,
-      ])
+      .toEqual([`length is nonzero (remainder at ${file}:12:16)`])
     expect(analyzedFunction(report, 'chainRead').assumptions)
       .toEqual(['config is null or config.volume is finite and not NaN'])
     expect(analyzedFunction(report, 'chainRead').ensures).toEqual(['return is a finite number'])
     expect(analyzedFunction(report, 'area').assumptions).toEqual([
-      '{width, height}.width is a number',
-      '{width, height}.height is a number',
+      '{width, height}.width is finite and not NaN',
+      '{width, height}.height is finite and not NaN',
     ])
-    expect(analyzedFunction(report, 'area').requires).toHaveLength(2)
     // Requirements name destructured properties through the synthetic record parameter.
     expect(analyzedFunction(report, 'ratioReq').requires)
-      .toEqual([
-        `!Number.isNaN({width, height}.width) (used at ${file}:22:16)`,
-        `!Number.isNaN({width, height}.height) (used at ${file}:22:16)`,
-        `{width, height}.height is nonzero (division at ${file}:22:16)`,
-      ])
+      .toEqual([`{width, height}.height is nonzero (division at ${file}:22:16)`])
   })
 
   test('module refinements require a local snapshot', () => {

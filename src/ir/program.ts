@@ -184,14 +184,8 @@ export type FunctionLowering = FunctionIR | UnsupportedFunctionIR
 // any write position, so the report prints a condition for every read that rests on one.
 export type DeclaredVariant = {tagValue: string | boolean; properties: Array<{name: string; declared: DeclaredKind}>}
 
-export type DeclaredNumberInterval = {
-  lower: number
-  upper: number
-  integer: boolean
-}
-
 export type DeclaredKind =
-  | {kind: 'number'; interval: DeclaredNumberInterval | null}
+  | {kind: 'number'}
   | {kind: 'boolean'}
   | {kind: 'record'; properties: Array<{name: string; declared: DeclaredKind}>}
   | {kind: 'nullish'; inner: DeclaredKind; sentinels: 'null' | 'undefined' | 'both'}
@@ -256,16 +250,7 @@ export function declaredKindOf(category: ModuleBindingCategory): DeclaredKind | 
 // prints an assumes line, and that machinery is what makes this value honest. Code without
 // the assumes plumbing must use coveringKindValue below instead.
 export function declaredKindValue(declared: DeclaredKind): AbstractValue {
-  return valueFromDeclaredKind(declared, () => finiteInputNumber())
-}
-
-// Plain numeric function inputs start with the complete JavaScript number range. The
-// analysis records only the NaN or infinity conditions demanded by operations that use
-// them; the report separately retains the declared runtime kind because `any` can still
-// pass a non-number. Arrays and conditional shapes retain their printed finite-number
-// assumptions because one unconditional requirement cannot describe those positions.
-export function requirementInputValue(declared: DeclaredKind): AbstractValue {
-  return valueFromDeclaredKind(declared, eligible => eligible ? unknownNumber() : finiteInputNumber())
+  return valueFromDeclaredKind(declared, finiteInputNumber)
 }
 
 // Inside a declared variant, the tag property holds exactly its tag value — the string
@@ -308,57 +293,33 @@ export function holdsMutableStructure(declared: DeclaredKind): boolean {
 // published values from the slot with no assumes line to carry a finiteness condition, so
 // the reset value must cover everything the skipped code could have produced.
 export function coveringKindValue(declared: DeclaredKind): AbstractValue {
-  return valueFromDeclaredKind(declared, () => unknownNumber(), true, false)
+  return valueFromDeclaredKind(declared, unknownNumber)
 }
 
-// Declared-kind values share one recursive walk and differ only at number leaves: module
-// assumptions use finite values, direct function inputs may use every JavaScript number,
-// and havoc must cover every number. Keeping the walk here makes a new DeclaredKind arm
-// impossible to add to one conversion but not the others.
-function valueFromDeclaredKind(
-  declared: DeclaredKind,
-  numberValue: (eligibleForRequirement: boolean) => AbstractNumber,
-  eligibleForRequirement = true,
-  preserveLiteralIntervals = true,
-): AbstractValue {
+// The two declared-kind values have identical recursive structure and differ only at
+// number leaves: function inputs assume finite numbers, while havoc must cover every
+// number. Keeping the walk here makes a new DeclaredKind arm impossible to add to one
+// conversion but not the other.
+function valueFromDeclaredKind(declared: DeclaredKind, numberValue: () => AbstractNumber): AbstractValue {
   switch (declared.kind) {
-    case 'number': return !preserveLiteralIntervals || declared.interval == null
-      ? numberValue(eligibleForRequirement)
-      : {
-          kind: 'number',
-          lower: declared.interval.lower,
-          upper: declared.interval.upper,
-          integer: declared.interval.integer,
-          mayBeNaN: false,
-        }
+    case 'number': return numberValue()
     case 'boolean': return unknownBoolean()
     case 'record': return recordValue(declared.properties.map(property => ({
       name: property.name,
-      value: valueFromDeclaredKind(
-        property.declared,
-        numberValue,
-        eligibleForRequirement,
-        preserveLiteralIntervals,
-      ),
+      value: valueFromDeclaredKind(property.declared, numberValue),
     })))
     case 'nullish': return {
       kind: 'maybeNullish',
-      inner: valueFromDeclaredKind(declared.inner, numberValue, false, preserveLiteralIntervals),
+      inner: valueFromDeclaredKind(declared.inner, numberValue),
       sentinels: declared.sentinels,
     }
     case 'tuple': return {
       kind: 'tuple',
-      elements: declared.elements.map(element =>
-        valueFromDeclaredKind(
-          element,
-          numberValue,
-          eligibleForRequirement,
-          preserveLiteralIntervals,
-        )),
+      elements: declared.elements.map(element => valueFromDeclaredKind(element, numberValue)),
     }
     case 'array': return {
       kind: 'array',
-      element: valueFromDeclaredKind(declared.element, numberValue, false, preserveLiteralIntervals),
+      element: valueFromDeclaredKind(declared.element, numberValue),
       length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
     }
     case 'taggedUnion': {
@@ -368,12 +329,7 @@ function valueFromDeclaredKind(
           name: property.name,
           value: property.name === declared.tagProperty
             ? exactTagValue(variant.tagValue)
-            : valueFromDeclaredKind(
-                property.declared,
-                numberValue,
-                false,
-                preserveLiteralIntervals,
-              ),
+            : valueFromDeclaredKind(property.declared, numberValue),
         }))),
       })
       const [firstVariant, ...restVariants] = declared.variants

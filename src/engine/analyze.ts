@@ -3,9 +3,8 @@ import {joinValues, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
-import {declaredKindOf, declaredKindValue, holdsMutableStructure, requirementInputValue, type FunctionIR, type ProgramIR} from '../ir/program.ts'
-import {createNumericInputSources, seedNumericInputSources, stripNumericInputSources, type NumericInputSources} from '../requirements/numeric-input.ts'
-import {createExpressionContext, createNumericPreconditionIndex} from '../requirements/infer.ts'
+import {declaredKindOf, declaredKindValue, holdsMutableStructure, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import {createExpressionContext} from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {
   completedEvaluation,
@@ -26,7 +25,7 @@ import {
   mergeStates,
   type ExecutionState,
   type SharedState,
-  type ValueFacts,
+  type ValueFact,
 } from './state.ts'
 import {
   asRefinableCheck,
@@ -82,7 +81,11 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     const sharedState = cloneSharedState(functionEntrySharedState)
     for (let index = 0; index < fn.parameters.length; index++) {
       const parameter = fn.parameters[index]!
-      arguments_.push(requirementInputValue(parameter.type))
+      // Seeded from the declared kind — the same assumed-finite constructor module hedges
+      // use, with the assumes lines carrying the conditionality. Every parameter is
+      // nameable in requirement expressions; only numeric operations ever surface one, so
+      // a non-numeric parameter's expression is simply never printed.
+      arguments_.push(declaredKindValue(parameter.type))
       argumentExpressions.push({kind: 'parameter', index})
     }
     const {evaluation} = runEvaluation(
@@ -115,9 +118,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
       lowering: fn,
       preconditions: completed.preconditions,
       boundsAssumptions: completed.boundsAssumptions,
-      // Input-source IDs belong to this one evaluation. Reports need only the abstract
-      // result, and must not retain IDs whose source table has gone out of scope.
-      returnValue: stripNumericInputSources(completed.returnValue),
+      returnValue: completed.returnValue,
       assertions: evaluation.assertions,
     }
   }
@@ -139,9 +140,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
     kind: 'partial',
     lowering: fn,
     stops: [firstStop, ...laterStops],
-    observedReturn: evaluation.normal == null
-      ? null
-      : {value: stripNumericInputSources(evaluation.normal.returnValue)},
+    observedReturn: evaluation.normal == null ? null : {value: evaluation.normal.returnValue},
     observedNeeds: evaluation.preconditions,
     observedBoundsAssumptions: evaluation.boundsAssumptions,
     assertions: evaluation.assertions,
@@ -223,7 +222,7 @@ function publishedModuleValues(
     // nullish at the top level yet the array inside is exactly as alias-mutable.
     if (holdsMutableStructure(binding.category.declaredKind) && !fullyAnalyzed) return null
     const slot = end?.[index]
-    return slot == null ? null : stripNumericInputSources(slot)
+    return slot ?? null
   })
 }
 
@@ -248,7 +247,7 @@ type BlockRun = {
   // The latest return recorded from the block; overwritten on re-visits (incoming states
   // grow monotonically, so the last visit supersedes earlier ones) and joined only after
   // the worklist drains.
-  pendingReturn: {value: AbstractValue; shared: SharedState; valueFacts: ValueFacts} | null
+  pendingReturn: {value: AbstractValue; shared: SharedState; valueFacts: ValueFact[]} | null
 }
 
 type AssertionObservation = {
@@ -272,10 +271,9 @@ type EvaluationRun = {
 
 type EvaluationSeed = {
   boundsAssumptions?: BoundsAssumption[]
-  valueFacts?: ValueFacts
+  valueFacts?: ValueFact[]
   parameterIdentityKeys?: string[]
   identityNamespace?: string
-  numericInputSources?: NumericInputSources
 }
 
 function runEvaluation(
@@ -290,6 +288,14 @@ function runEvaluation(
 ): {evaluation: FunctionEvaluation; run: EvaluationRun} {
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
+  const initial: ExecutionState = {
+    values: [],
+    shared: cloneSharedState(sharedState),
+    valueFacts: seed.valueFacts?.slice() ?? [],
+  }
+  for (let index = 0; index < fn.parameters.length; index++) {
+    initial.values[fn.parameters[index]!.value] = arguments_[index]!
+  }
   const expressionContext = createExpressionContext(
     fn,
     argumentExpressions,
@@ -297,23 +303,7 @@ function runEvaluation(
     seed.identityNamespace ?? fn.name,
   )
   const preconditions: InferredPrecondition[] = []
-  const numericPreconditions = createNumericPreconditionIndex()
   const boundsAssumptions: BoundsAssumption[] = [...(seed.boundsAssumptions ?? [])]
-  const numericInputSources = seed.numericInputSources ?? createNumericInputSources()
-  const entryArguments = arguments_.map((argument, index) => seedNumericInputSources(
-    argument,
-    fn.parameters[index]!.type,
-    argumentExpressions[index]!,
-    numericInputSources,
-  ))
-  const initial: ExecutionState = {
-    values: [],
-    shared: cloneSharedState(sharedState),
-    valueFacts: new Map(seed.valueFacts),
-  }
-  for (let index = 0; index < fn.parameters.length; index++) {
-    initial.values[fn.parameters[index]!.value] = entryArguments[index]!
-  }
   const successors = blockSuccessors(fn)
   const run: EvaluationRun = {
     fn,
@@ -332,16 +322,14 @@ function runEvaluation(
     callStack: functionID == null ? callStack : [...callStack, functionID],
     expressionContext,
     preconditions,
-    numericPreconditions,
     boundsAssumptions,
-    numericInputSources,
     evaluateFunction: (
       callee: FunctionID,
       values: AbstractValue[],
       expressions: Array<NumericExpression | null>,
       calleeState: SharedState,
       stack: FunctionID[],
-      valueFacts: ValueFacts,
+      valueFacts: ValueFact[],
       parameterIdentityKeys: string[],
       identityNamespace: string,
     ) => {
@@ -357,7 +345,7 @@ function runEvaluation(
         calleeState,
         program,
         stack,
-        {valueFacts, parameterIdentityKeys, identityNamespace, numericInputSources},
+        {valueFacts, parameterIdentityKeys, identityNamespace},
       ).evaluation
     },
   }
@@ -368,11 +356,8 @@ function runEvaluation(
     const entry = run.blocks[blockID]?.incoming
     if (block == null || entry == null) throw new Error(`Missing block ${blockID} in ${fn.name}`)
     const state = cloneState(entry.state)
-    for (const [key, fact] of state.valueFacts) {
-      if (fact.kind === 'guardFinite' && fact.scope === expressionContext.identityNamespace) {
-        state.valueFacts.delete(key)
-      }
-    }
+    state.valueFacts = state.valueFacts.filter(fact =>
+      fact.kind !== 'guardFinite' || fact.scope !== expressionContext.identityNamespace)
     for (const value of expressionContext.guaranteedFiniteByBlock[blockID]!) {
       addValueFact(state.valueFacts, {
         kind: 'guardFinite',
@@ -422,7 +407,7 @@ function runEvaluation(
         run.blocks[blockID]!.pendingReturn = {
           value,
           shared: cloneSharedState(state.shared),
-          valueFacts: new Map(state.valueFacts),
+          valueFacts: state.valueFacts.slice(),
         }
         break
       }

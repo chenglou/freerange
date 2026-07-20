@@ -6,7 +6,7 @@ import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import type {BoundsAssumption, InferredPrecondition} from '../requirements/model.ts'
 import {forEachOperand} from '../ir/instructions.ts'
 import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
-import {describeFailedNumericInput, formatObservedNeed, formatPrecondition} from './format-requirement.ts'
+import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 import {numericParameterPath} from '../requirements/infer.ts'
 
 export type FunctionReport =
@@ -303,22 +303,19 @@ function assumptionLines(
 ): string[] {
   const assumptions: string[] = []
   const reads = parameterReadPaths(fn)
-  const requiredNumberPaths = fn.parameters.map((): string[][] => [])
+  const explicitFinitePaths = fn.parameters.map((): string[][] => [])
   for (const precondition of preconditions) {
-    const provesRuntimeNumber = (precondition.kind === 'declaredNumberCheck'
-        && precondition.predicate !== 'nan')
-      || (precondition.kind === 'numericInput' && precondition.condition !== 'notNaN')
-    if (!provesRuntimeNumber) continue
+    if (precondition.kind !== 'declaredNumberCheck' || precondition.predicate === 'nan') continue
     const path = numericParameterPath(precondition.expression)
-    if (path != null) requiredNumberPaths[path.parameter]?.push(path.segments)
+    if (path != null) explicitFinitePaths[path.parameter]?.push(path.properties)
   }
   for (let index = 0; index < fn.parameters.length; index++) {
     const parameter = fn.parameters[index]!
     const readPath = keepFromReads(reads[index]!)
     const keepImplicitAssumption = (segments: string[]): boolean =>
-      readPath(segments) && !requiredNumberPaths[index]!.some(path =>
+      readPath(segments) && !explicitFinitePaths[index]!.some(path =>
         path.length === segments.length && path.every((part, partIndex) => part === segments[partIndex]))
-    pushRootAssumptions(parameter.name, parameter.type, assumptions, keepImplicitAssumption, true)
+    pushRootAssumptions(parameter.name, parameter.type, assumptions, keepImplicitAssumption)
   }
   // Module bindings filter at whole-binding granularity: assumedBindings already contains
   // only the bindings this function (or a callee) reads, and a callee's reads arrive as a
@@ -327,7 +324,7 @@ function assumptionLines(
     const binding = program.moduleBindings[bindingID]!
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) throw new Error(`Module binding ${binding.name} has no declared kind to assume`)
-    pushRootAssumptions(binding.name, declaredKind, assumptions, keepEverything, false)
+    pushRootAssumptions(binding.name, declaredKind, assumptions, keepEverything)
   }
   for (const assumption of boundsAssumptions) {
     // The engine could not prove the asserted element read in bounds; the entry's
@@ -397,31 +394,10 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // trust nothing rests on — and re-restrict legal callers at the unread position, the
 // exact over-restriction the read filter removes. When any covered position is unread,
 // the kept positions print per-property and the unread ones stay silent.
-function pushRootAssumptions(
-  path: string,
-  declared: DeclaredKind,
-  assumptions: string[],
-  keep: KeepPath,
-  numericInputRequirements: boolean,
-): void {
-  const numberLeaves = numberLeafCount(declared, [], keep, numericInputRequirements)
-  const foldsInputNumbers = numberLeaves.foldable
-    && numberLeaves.inputTotal >= 3
-    && numberLeaves.inputKept === numberLeaves.inputTotal
-    && declared.kind !== 'number'
-  // A finite-value fold over array elements cannot share wording with direct inputs that
-  // intentionally admit infinities. Keep those array lines explicit for mixed roots.
-  const foldsAssumedNumbers = numberLeaves.foldable
-    && numberLeaves.inputTotal === 0
-    && numberLeaves.assumedTotal >= 3
-    && numberLeaves.assumedKept === numberLeaves.assumedTotal
-    && declared.kind !== 'number'
-  if (foldsInputNumbers) {
-    assumptions.push(`every property declared as a number in ${path} holds a number`)
-  }
-  if (foldsAssumedNumbers) {
-    assumptions.push(`every property declared as a number in ${path} holds a finite non-NaN number`)
-  }
+function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[], keep: KeepPath): void {
+  const numberLeaves = numberLeafCount(declared, [], keep)
+  const folds = numberLeaves.total >= 3 && numberLeaves.kept === numberLeaves.total && declared.kind !== 'number'
+  if (folds) assumptions.push(`every property declared as a number in ${path} holds a finite non-NaN number`)
   if (declared.kind === 'record') {
     const arrayProperties = declared.properties.filter(property => property.declared.kind === 'array')
     const keptArrayProperties = arrayProperties.filter(property => keep([property.name]))
@@ -429,71 +405,41 @@ function pushRootAssumptions(
       assumptions.push(`every property declared as an array in ${path} holds a plain array — its length counts its elements, and every index below the length holds an element`)
       for (const property of declared.properties) {
         pushDeclaredAssumptions(`${path}.${property.name}`, [property.name], property.declared, assumptions, keep, {
-          skipInputNumberLeaves: foldsInputNumbers,
-          skipAssumedNumberLeaves: foldsAssumedNumbers,
+          skipNumberLeaves: folds,
           skipOwnArrayLine: property.declared.kind === 'array',
-          numericInputRequirements,
         })
       }
       return
     }
   }
-  pushDeclaredAssumptions(path, [], declared, assumptions, keep, {
-    skipInputNumberLeaves: foldsInputNumbers,
-    skipAssumedNumberLeaves: foldsAssumedNumbers,
-    skipOwnArrayLine: false,
-    numericInputRequirements,
-  })
+  pushDeclaredAssumptions(path, [], declared, assumptions, keep, {skipNumberLeaves: folds, skipOwnArrayLine: false})
 }
 
 // Counts the number leaves the fold may cover, and how many of them the read filter
 // keeps. Nullish subtrees count zero: their leaves keep exact per-leaf lines whether or
 // not the root folds.
-function numberLeafCount(
-  declared: DeclaredKind,
-  segments: string[],
-  keep: KeepPath,
-  numericInputRequirements: boolean,
-): NumberLeafCount {
+function numberLeafCount(declared: DeclaredKind, segments: string[], keep: KeepPath): {total: number; kept: number} {
   switch (declared.kind) {
-    case 'number': {
-      if (declared.interval != null) return emptyNumberLeafCount(false)
-      const kept = keep(segments) ? 1 : 0
-      return {
-        inputTotal: numericInputRequirements ? 1 : 0,
-        inputKept: numericInputRequirements ? kept : 0,
-        assumedTotal: numericInputRequirements ? 0 : 1,
-        assumedKept: numericInputRequirements ? 0 : kept,
-        foldable: true,
-      }
-    }
-    case 'boolean': return emptyNumberLeafCount(true)
-    case 'opaque': return emptyNumberLeafCount(true)
-    case 'nullish': return emptyNumberLeafCount(true)
-    case 'array': return numberLeafCount(declared.element, [...segments, '[each]'], keep, false)
+    case 'number': return {total: 1, kept: keep(segments) ? 1 : 0}
+    case 'boolean': return {total: 0, kept: 0}
+    case 'opaque': return {total: 0, kept: 0}
+    case 'nullish': return {total: 0, kept: 0}
+    case 'array': return numberLeafCount(declared.element, [...segments, '[each]'], keep)
     case 'tuple': {
-      const count = emptyNumberLeafCount(true)
+      const count = {total: 0, kept: 0}
       for (let index = 0; index < declared.elements.length; index++) {
-        const element = numberLeafCount(
-          declared.elements[index]!,
-          [...segments, String(index)],
-          keep,
-          numericInputRequirements,
-        )
-        addNumberLeafCount(count, element)
+        const element = numberLeafCount(declared.elements[index]!, [...segments, String(index)], keep)
+        count.total += element.total
+        count.kept += element.kept
       }
       return count
     }
     case 'record': {
-      const count = emptyNumberLeafCount(true)
+      const count = {total: 0, kept: 0}
       for (const property of declared.properties) {
-        const inner = numberLeafCount(
-          property.declared,
-          [...segments, property.name],
-          keep,
-          numericInputRequirements,
-        )
-        addNumberLeafCount(count, inner)
+        const inner = numberLeafCount(property.declared, [...segments, property.name], keep)
+        count.total += inner.total
+        count.kept += inner.kept
       }
       return count
     }
@@ -503,53 +449,23 @@ function numberLeafCount(
     // so an unqualified declaration-wide assertion is violated by every legal value,
     // while a presence-scoped one is vacuous for a wrong-shape smuggle (a review round
     // ran both failures).
-    case 'taggedUnion': return emptyNumberLeafCount(true)
+    case 'taggedUnion': return {total: 0, kept: 0}
   }
 }
 
-type NumberLeafCount = {
-  inputTotal: number
-  inputKept: number
-  assumedTotal: number
-  assumedKept: number
-  foldable: boolean
-}
-
-function emptyNumberLeafCount(foldable: boolean): NumberLeafCount {
-  return {inputTotal: 0, inputKept: 0, assumedTotal: 0, assumedKept: 0, foldable}
-}
-
-function addNumberLeafCount(target: NumberLeafCount, source: NumberLeafCount): void {
-  target.inputTotal += source.inputTotal
-  target.inputKept += source.inputKept
-  target.assumedTotal += source.assumedTotal
-  target.assumedKept += source.assumedKept
-  target.foldable = target.foldable && source.foldable
-}
-
 type AssumptionOptions = {
-  // A root may fold direct numeric inputs separately from array or conditional numbers,
-  // whose stronger finite-value assumption cannot describe the same set of values.
-  skipInputNumberLeaves: boolean
-  skipAssumedNumberLeaves: boolean
+  // True when the root already printed the folded number line; number leaves then add
+  // nothing, while boolean and qualified lines still print per leaf.
+  skipNumberLeaves: boolean
   // True when the folded plain-array line already restates this value's own plain-array
   // claim — set only on the direct non-nullable array properties of a folding record
   // root. The suppression covers exactly one line: nested levels below the value still
   // print theirs, because the folded sentence quantifies over the root's direct
   // properties only.
   skipOwnArrayLine: boolean
-  // Plain number parameters and their record/tuple fields use caller requirements.
-  // Arrays and conditional shapes turn this off before recursing because one condition
-  // cannot describe every element or only one possible shape.
-  numericInputRequirements: boolean
 }
 
-const exactLeaves: AssumptionOptions = {
-  skipInputNumberLeaves: false,
-  skipAssumedNumberLeaves: false,
-  skipOwnArrayLine: false,
-  numericInputRequirements: false,
-}
+const exactLeaves: AssumptionOptions = {skipNumberLeaves: false, skipOwnArrayLine: false}
 
 // One assumption line per leaf of the declared kind: a record binding's condition is a
 // condition on each of its properties, e.g. `pointer.x is finite and not NaN`. `segments`
@@ -558,15 +474,7 @@ const exactLeaves: AssumptionOptions = {
 function pushDeclaredAssumptions(path: string, segments: string[], declared: DeclaredKind, assumptions: string[], keep: KeepPath, options: AssumptionOptions = exactLeaves): void {
   switch (declared.kind) {
     case 'number': {
-      const skipped = options.numericInputRequirements
-        ? options.skipInputNumberLeaves
-        : options.skipAssumedNumberLeaves
-      if (!skipped && keep(segments)) {
-        const words = options.numericInputRequirements && declared.interval == null
-          ? 'a number'
-          : declaredNumberAssumption(declared)
-        assumptions.push(`${path} is ${words}`)
-      }
+      if (!options.skipNumberLeaves && keep(segments)) assumptions.push(`${path} is finite and not NaN`)
       break
     }
     case 'boolean': {
@@ -615,19 +523,7 @@ function pushDeclaredAssumptions(path: string, segments: string[], declared: Dec
       // its property path, e.g. `points[each].x is finite and not NaN`. The nested
       // plain-array line rides the same sugar: `every grid element is a plain array — ...`.
       const leaf: string[] = []
-      pushDeclaredAssumptions(
-        `${path}[each]`,
-        [...segments, '[each]'],
-        declared.element,
-        leaf,
-        keep,
-        {
-          skipInputNumberLeaves: options.skipInputNumberLeaves,
-          skipAssumedNumberLeaves: options.skipAssumedNumberLeaves,
-          skipOwnArrayLine: false,
-          numericInputRequirements: false,
-        },
-      )
+      pushDeclaredAssumptions(`${path}[each]`, [...segments, '[each]'], declared.element, leaf, keep, {skipNumberLeaves: options.skipNumberLeaves, skipOwnArrayLine: false})
       for (const line of leaf) {
         const prefix = `${path}[each] is `
         // The `every X element is` sugar only reads right when the element path appears
@@ -649,10 +545,7 @@ function pushDeclaredAssumptions(path: string, segments: string[], declared: Dec
       if (declared.inner.kind === 'number') {
         // E.g. `animatedUntilTime is null or a finite non-NaN number`. Never folded: the
         // folded line's kind assertion would wrongly forbid the legal null.
-        const numberWords = declared.inner.interval == null
-          ? 'a finite non-NaN number'
-          : declaredNumberAssumption(declared.inner)
-        assumptions.push(`${path} is ${sentinelWords} or ${numberWords}`)
+        assumptions.push(`${path} is ${sentinelWords} or a finite non-NaN number`)
       } else if (declared.inner.kind === 'boolean') {
         assumptions.push(`${path} is ${sentinelWords} or a boolean`)
       } else {
@@ -707,15 +600,6 @@ function pushDeclaredAssumptions(path: string, segments: string[], declared: Dec
       break
     }
   }
-}
-
-function declaredNumberAssumption(
-  declared: Extract<DeclaredKind, {kind: 'number'}>,
-): string {
-  const interval = declared.interval
-  if (interval == null) return 'finite and not NaN'
-  const integer = interval.integer ? ' integer' : ''
-  return `a finite${integer} number from ${String(interval.lower)} through ${String(interval.upper)}`
 }
 
 // Per function, the module bindings whose declared-kind seeding the result rests on.
@@ -802,7 +686,6 @@ function formatRequirementFailure(
     switch (failure.kind) {
       case 'elementInBounds': return `reads an element provably outside the array (at ${origin})`
       case 'nonzeroDivisor': return `${failure.operation} has a divisor that is definitely zero (at ${origin})`
-      case 'numericInput': return `uses a numeric input that ${describeFailedNumericInput(failure.condition)} (at ${origin})`
       case 'declared': return failure.status === 'refuted'
         ? `declared requirement is false (at ${origin})`
         : `could not express or prove the declared requirement (at ${origin})`
@@ -816,8 +699,6 @@ function formatRequirementFailure(
       return `call to ${callee} makes an asserted element read definitely out of bounds (call at ${callSite}; element read at ${origin})`
     case 'nonzeroDivisor':
       return `call to ${callee} violates its nonzero divisor requirement (call at ${callSite}; ${failure.operation} at ${origin})`
-    case 'numericInput':
-      return `call to ${callee} passes a numeric input that ${describeFailedNumericInput(failure.condition)} (call at ${callSite}; input used at ${origin})`
     case 'declared': return failure.status === 'refuted'
       ? `call to ${callee} makes its declared requirement definitely false (call at ${callSite}; declared at ${origin})`
       : `could not express or prove ${callee}'s declared requirement (call at ${callSite}; declared at ${origin})`
