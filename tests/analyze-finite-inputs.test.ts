@@ -162,6 +162,19 @@ describe('finite number input contracts', () => {
       function fromUnion(bounds: BoundsChoice): number {
         return width(bounds)
       }
+      type NestedBounds = {horizontal: {minimum: number; maximum: number}; label: string}
+      function nestedWidth(bounds: NestedBounds): number {
+        return bounds.horizontal.maximum - bounds.horizontal.minimum
+      }
+      function reorderedNestedWidth(bounds: NestedBounds): number {
+        return nestedWidth({
+          label: bounds.label,
+          horizontal: {
+            maximum: bounds.horizontal.maximum,
+            minimum: bounds.horizontal.minimum,
+          },
+        })
+      }
     `)
 
     expect(analyzedFunction(report, 'forwarded').requires.map(line => line.split(' (input at')[0])).toEqual([
@@ -173,6 +186,12 @@ describe('finite number input contracts', () => {
     expect(analyzedFunction(report, 'guardedCalculation').requires.map(line => line.split(' (input at')[0])).toEqual([
       'Number.isFinite(value)',
     ])
+    for (const name of ['nestedWidth', 'reorderedNestedWidth']) {
+      expect(analyzedFunction(report, name).requires.map(line => line.split(' (input at')[0])).toEqual([
+        'Number.isFinite(bounds.horizontal.minimum)',
+        'Number.isFinite(bounds.horizontal.maximum)',
+      ])
+    }
 
     const unnameable = report.functions.find(fn => fn.name === 'fromCalculation')
     if (unnameable?.kind !== 'partial') throw new Error('Expected fromCalculation to be partial')

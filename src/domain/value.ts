@@ -130,6 +130,10 @@ export function recordProperty(record: AbstractRecord, name: string): AbstractVa
   return property == null ? null : property.value
 }
 
+export function recordPropertiesByName(record: AbstractRecord): ReadonlyMap<string, AbstractValue> {
+  return new Map(record.properties.map(property => [property.name, property.value]))
+}
+
 export function joinValues(left: AbstractValue, right: AbstractValue): AbstractValue {
   const joined = tryJoinValues(left, right)
   // A top-level kind mismatch stays a crash: union-typed bindings are outside the accepted
@@ -269,7 +273,8 @@ function taggedUnionHull(union: AbstractTaggedUnion): AbstractRecord | null {
 // distinguishes {tab} from {article}.
 function sameVariantShape(left: AbstractRecord, right: AbstractRecord): boolean {
   if (left.properties.length !== right.properties.length) return false
-  return left.properties.every(property => recordProperty(right, property.name) != null)
+  const rightProperties = recordPropertiesByName(right)
+  return left.properties.every(property => rightProperties.has(property.name))
 }
 
 // The tuple's homogeneous hull, or null when its positions mix kinds (a mixed tuple never
@@ -298,9 +303,10 @@ function constantLength(length: number): AbstractNumber {
 // access gate rejects results whose static type mixes kinds. Either way, every readable
 // property survives the join.
 function joinRecords(left: AbstractRecord, right: AbstractRecord): AbstractRecord {
+  const rightProperties = recordPropertiesByName(right)
   const properties: Array<{name: string; value: AbstractValue}> = []
   for (const property of left.properties) {
-    const other = recordProperty(right, property.name)
+    const other = rightProperties.get(property.name)
     if (other == null) continue
     const joined = tryJoinValues(property.value, other)
     if (joined == null) continue
@@ -321,9 +327,10 @@ export function sameValues(left: AbstractValue, right: AbstractValue): boolean {
       // By name, not by index: two equal records can carry their properties in different
       // orders (e.g. a join's result takes the left side's order).
       const other = right as AbstractRecord
+      const otherProperties = recordPropertiesByName(other)
       return left.properties.length === other.properties.length
         && left.properties.every(property => {
-          const otherValue = recordProperty(other, property.name)
+          const otherValue = otherProperties.get(property.name)
           return otherValue != null && sameValues(property.value, otherValue)
         })
     }
@@ -371,11 +378,11 @@ export function widenValue(previous: AbstractValue, next: AbstractValue): Abstra
     // never stabilizes, so the loop round limit remains the termination backstop.
     case 'record': {
       if (previous.kind !== 'record') return next
-      const previousRecord = previous
+      const previousProperties = recordPropertiesByName(previous)
       return {
         kind: 'record',
         properties: next.properties.map(property => {
-          const before = recordProperty(previousRecord, property.name)
+          const before = previousProperties.get(property.name)
           return before == null ? property : {name: property.name, value: widenValue(before, property.value)}
         }),
       }

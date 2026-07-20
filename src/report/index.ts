@@ -100,17 +100,20 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       }
       case 'analyzed': {
         const lowering = fn.lowering
+        const finite = finiteInputs(lowering)
+        const requires = requirementLines(lowering, finite, fn.preconditions, program)
+        const assumptions = assumptionLines(
+          lowering,
+          program,
+          assumedBindings[functionID]!,
+          fn.boundsAssumptions,
+          finiteAssumptionInputs(lowering, finite, fn.preconditions),
+        )
         functions.push({
           kind: 'analyzed',
           name: lowering.name,
-          assumptions: assumptionLines(
-            lowering,
-            program,
-            assumedBindings[functionID]!,
-            fn.boundsAssumptions,
-            finiteAssumptionInputs(lowering, fn.preconditions),
-          ),
-          requires: requirementLines(lowering, fn.preconditions, program),
+          assumptions,
+          requires,
           ensures: returnSummaries('return', declaredReturn(fn.returnValue, lowering), program),
           ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
         })
@@ -123,35 +126,37 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
 
 function finiteAssumptionInputs(
   fn: FunctionIR,
+  automatic: FiniteInput[],
   preconditions: InferredPrecondition[],
 ): FiniteInput[] {
-  const inputs = finiteInputs(fn)
+  const inputs = [...automatic]
+  const paths = finitePathIndexes(fn, inputs)
   for (const precondition of preconditions) {
     if (precondition.kind !== 'declaredNumberCheck'
       || (precondition.predicate !== 'finite' && precondition.predicate !== 'integer')) continue
     const path = numericParameterPath(precondition.expression)
-    if (path == null || inputs.some(input =>
-      input.parameter === path.parameter && samePath(input.properties, path.properties))) continue
+    if (path == null || pathIndexHas(paths[path.parameter]!, path.properties)) continue
     inputs.push({parameter: path.parameter, properties: path.properties, site: precondition.site})
+    pathIndexAdd(paths[path.parameter]!, path.properties)
   }
   return inputs
 }
 
 function requirementLines(
   fn: FunctionIR,
+  inputs: FiniteInput[],
   preconditions: InferredPrecondition[],
   program: ProgramIR,
 ): string[] {
-  const inputs = finiteInputs(fn)
-  const folded = new Set<number>()
+  const inputsByParameter = fn.parameters.map((): FiniteInput[] => [])
+  for (const input of inputs) inputsByParameter[input.parameter]!.push(input)
+  const folded: boolean[] = []
   for (let parameter = 0; parameter < fn.parameters.length; parameter++) {
     const current = fn.parameters[parameter]!
-    if (current.bindings != null || inputs.filter(input => input.parameter === parameter).length >= 3) {
-      folded.add(parameter)
-    }
+    folded[parameter] = current.bindings != null || inputsByParameter[parameter]!.length >= 3
   }
   const lines: string[] = []
-  const emitted = new Set<number>()
+  const emitted: boolean[] = []
   for (const precondition of preconditions) {
     const isFiniteInput = precondition.kind === 'declaredNumberCheck'
       && precondition.predicate === 'finite'
@@ -159,19 +164,15 @@ function requirementLines(
     const path = isFiniteInput
       ? numericParameterPath(precondition.expression)
       : null
-    const automatic = path == null ? null : inputs.find(input =>
-      input.parameter === path.parameter
-      && input.site === precondition.site
-      && samePath(input.properties, path.properties))
-    if (automatic != null && folded.has(automatic.parameter)) {
-      if (!emitted.has(automatic.parameter)) {
-        const parameter = fn.parameters[automatic.parameter]!
-        const parameterInputs = inputs.filter(input => input.parameter === automatic.parameter)
+    if (path != null && folded[path.parameter]) {
+      if (!emitted[path.parameter]) {
+        const parameter = fn.parameters[path.parameter]!
+        const parameterInputs = inputsByParameter[path.parameter]!
         const condition = parameter.bindings == null
           ? `every number field in ${parameter.name} is finite`
           : finiteBindingList(parameter, parameterInputs)
         lines.push(`${condition} (input at ${formatSite(program, parameter.site)})`)
-        emitted.add(automatic.parameter)
+        emitted[path.parameter] = true
       }
       continue
     }
@@ -185,10 +186,13 @@ function requirementLines(
 }
 
 function finiteBindingList(parameter: FunctionIR['parameters'][number], inputs: FiniteInput[]): string {
+  const bindings = parameter.bindings == null
+    ? null
+    : new Map(parameter.bindings.map(binding => [binding.property, binding.local]))
   const names = inputs.map(input => {
     const [first, ...rest] = input.properties
-    const binding = parameter.bindings?.find(candidate => candidate.property === first)
-    return binding == null ? input.properties.join('.') : [binding.local, ...rest].join('.')
+    const binding = first == null ? null : bindings?.get(first)
+    return binding == null ? input.properties.join('.') : [binding, ...rest].join('.')
   })
   if (names.length === 1) return `${names[0]} is finite`
   if (names.length === 2) return `${names[0]} and ${names[1]} are finite`
@@ -281,31 +285,39 @@ type ParameterRead = {parameter: number; segments: string[]}
 //   switches on a union tag print an empty assumes block.
 // Any future instruction kind lands in the default arm, which marks every tracked
 // operand read — over-printing, never under.
-function parameterReadPaths(fn: FunctionIR): string[][][] {
+function parameterReadPaths(fn: FunctionIR): PathIndex[] {
   const tracked = new Map<ValueID, ParameterRead>()
-  for (let index = 0; index < fn.parameters.length; index++) {
-    tracked.set(fn.parameters[index]!.value, {parameter: index, segments: []})
-  }
-  // Property chains (box.inner.w) can span blocks; repeat until no projection is new so
-  // block order cannot hide a chain link. Chains are finite (declared types are trees),
-  // so this converges.
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const block of fn.blocks) {
-      for (const instruction of block.instructions) {
-        if (instruction.kind !== 'property' || tracked.has(instruction.result)) continue
-        const base = tracked.get(instruction.object)
-        if (base == null) continue
-        tracked.set(instruction.result, {parameter: base.parameter, segments: [...base.segments, instruction.property]})
-        changed = true
-      }
+  const projections = new Map<ValueID, Array<{result: ValueID; property: string}>>()
+  for (const block of fn.blocks) {
+    for (const instruction of block.instructions) {
+      if (instruction.kind !== 'property') continue
+      const dependents = projections.get(instruction.object) ?? []
+      dependents.push({result: instruction.result, property: instruction.property})
+      projections.set(instruction.object, dependents)
     }
   }
-  const reads: string[][][] = fn.parameters.map(() => [])
+  const queue: ValueID[] = []
+  for (let index = 0; index < fn.parameters.length; index++) {
+    const value = fn.parameters[index]!.value
+    tracked.set(value, {parameter: index, segments: []})
+    queue.push(value)
+  }
+  for (let current = 0; current < queue.length; current++) {
+    const value = queue[current]!
+    const base = tracked.get(value)!
+    for (const projection of projections.get(value) ?? []) {
+      if (tracked.has(projection.result)) continue
+      tracked.set(projection.result, {
+        parameter: base.parameter,
+        segments: [...base.segments, projection.property],
+      })
+      queue.push(projection.result)
+    }
+  }
+  const reads = fn.parameters.map((): PathIndex => ({terminal: false, children: new Map()}))
   const markOperand = (operand: ValueID): void => {
     const path = tracked.get(operand)
-    if (path != null) reads[path.parameter]!.push(path.segments)
+    if (path != null) pathIndexAdd(reads[path.parameter]!, path.segments)
   }
   for (const block of fn.blocks) {
     for (const instruction of block.instructions) {
@@ -354,16 +366,6 @@ function parameterReadPaths(fn: FunctionIR): string[][][] {
 // everything under it (an escaped record keeps its whole subtree).
 type KeepPath = (segments: string[]) => boolean
 
-function keepFromReads(reads: string[][]): KeepPath {
-  return segments => reads.some(read => {
-    const shared = Math.min(read.length, segments.length)
-    for (let index = 0; index < shared; index++) {
-      if (read[index] !== segments[index]) return false
-    }
-    return true
-  })
-}
-
 const keepEverything: KeepPath = () => true
 
 function assumptionLines(
@@ -375,13 +377,11 @@ function assumptionLines(
 ): string[] {
   const assumptions: string[] = []
   const reads = parameterReadPaths(fn)
-  const finitePaths = fn.parameters.map((): string[][] => [])
-  for (const input of finiteRequirements) finitePaths[input.parameter]!.push(input.properties)
+  const finitePaths = finitePathIndexes(fn, finiteRequirements)
   for (let index = 0; index < fn.parameters.length; index++) {
     const parameter = fn.parameters[index]!
-    const wasRead = keepFromReads(reads[index]!)
     const keep = (path: string[]): boolean =>
-      wasRead(path) && !finitePaths[index]!.some(required => samePath(required, path))
+      !pathIndexHas(finitePaths[index]!, path) && pathIndexOverlaps(reads[index]!, path)
     if (parameter.bindings == null) {
       pushRootAssumptions(parameter.name, parameter.type, assumptions, keep)
       continue
@@ -399,12 +399,13 @@ function assumptionLines(
       }
       continue
     }
+    const properties = new Map(parameter.type.properties.map(property => [property.name, property.declared]))
     for (const binding of parameter.bindings) {
-      const property = parameter.type.properties.find(candidate => candidate.name === binding.property)
+      const property = properties.get(binding.property)
       if (property == null) continue
       pushRootAssumptions(
         binding.local,
-        property.declared,
+        property,
         assumptions,
         path => keep([binding.property, ...path]),
       )
@@ -428,8 +429,50 @@ function assumptionLines(
   return assumptions
 }
 
-function samePath(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((part, index) => part === right[index])
+type PathIndex = {
+  terminal: boolean
+  children: Map<string, PathIndex>
+}
+
+function finitePathIndexes(fn: FunctionIR, inputs: FiniteInput[]): PathIndex[] {
+  const indexes = fn.parameters.map((): PathIndex => ({terminal: false, children: new Map()}))
+  for (const input of inputs) pathIndexAdd(indexes[input.parameter]!, input.properties)
+  return indexes
+}
+
+function pathIndexAdd(index: PathIndex, path: string[]): void {
+  let current = index
+  for (const segment of path) {
+    let child = current.children.get(segment)
+    if (child == null) {
+      child = {terminal: false, children: new Map()}
+      current.children.set(segment, child)
+    }
+    current = child
+  }
+  current.terminal = true
+}
+
+function pathIndexHas(index: PathIndex, path: string[]): boolean {
+  let current = index
+  for (const segment of path) {
+    const child = current.children.get(segment)
+    if (child == null) return false
+    current = child
+  }
+  return current.terminal
+}
+
+function pathIndexOverlaps(index: PathIndex, path: string[]): boolean {
+  let current = index
+  if (current.terminal) return true
+  for (const segment of path) {
+    const child = current.children.get(segment)
+    if (child == null) return false
+    current = child
+    if (current.terminal) return true
+  }
+  return current.children.size > 0
 }
 
 function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR): string {

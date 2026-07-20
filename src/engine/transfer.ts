@@ -24,6 +24,7 @@ import {
 import {
   joinValues,
   recordProperty,
+  recordPropertiesByName,
   recordValue,
   tryJoinValues,
   unknownBoolean,
@@ -34,9 +35,8 @@ import {
   type TaggedVariant,
 } from '../domain/value.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
-import {finiteInputs} from '../ir/finite-inputs.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
-import {coveringKindValue, declaredKindOf, type ProgramIR} from '../ir/program.ts'
+import {coveringKindValue, declaredKindOf, type DeclaredKind, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
   constantRequirementStatus,
@@ -577,9 +577,13 @@ function evaluateInstructionKinded(
       state.shared = completed.sharedState
       state.valueFacts = completed.valueFacts.filter(fact =>
         !valueFactUsesNamespace(fact, calleeNamespace))
-      for (const input of finiteInputs(callee)) {
-        const argument = instruction.arguments[input.parameter]
-        if (argument != null) refineFiniteCallArgument(state, argument, input.properties, context.expressionContext)
+      for (let index = 0; index < callee.parameters.length; index++) {
+        refineFiniteCallArgument(
+          state,
+          instruction.arguments[index]!,
+          callee.parameters[index]!.type,
+          context.expressionContext,
+        )
       }
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
@@ -843,42 +847,63 @@ function writeThroughProducers(
 function refineFiniteCallArgument(
   state: ExecutionState,
   value: ValueID,
-  properties: string[],
+  declared: DeclaredKind,
   expressionContext: ExpressionContext,
 ): void {
-  const refined = refineFiniteValue(requiredValue(state, value), properties)
+  const current = requiredValue(state, value)
+  const refined = refineFiniteValue(current, declared)
   if (refined == null) return
-  writeThroughProducers(state, value, refined, expressionContext.instructionByValue)
-  if (properties.length === 0) return
-  const [property, ...rest] = properties
+  if (refined !== current) {
+    writeThroughProducers(state, value, refined, expressionContext.instructionByValue)
+  }
+  if (declared.kind !== 'record') return
   const producer = expressionContext.instructionByValue[resolveStoredValue(value, expressionContext)]
-  if (property == null || producer?.kind !== 'object') return
-  const field = producer.properties.find(candidate => candidate.name === property)
-  if (field != null) refineFiniteCallArgument(state, field.value, rest, expressionContext)
+  if (producer?.kind !== 'object') return
+  const declaredProperties = new Map(declared.properties.map(property => [property.name, property.declared]))
+  for (const field of producer.properties) {
+    const fieldKind = declaredProperties.get(field.name)
+    if (fieldKind != null) refineFiniteCallArgument(state, field.value, fieldKind, expressionContext)
+  }
 }
 
-function refineFiniteValue(value: AbstractValue, properties: string[]): AbstractValue | null {
-  if (properties.length === 0) return value.kind === 'number' ? finiteNumberPart(value) : null
-  const [property, ...rest] = properties
-  if (property == null) return null
-  if (value.kind === 'record') {
-    const current = recordProperty(value, property)
-    if (current == null) return null
-    const refined = refineFiniteValue(current, rest)
-    if (refined == null) return null
-    return {
-      kind: 'record',
-      properties: value.properties.map(candidate =>
-        candidate.name === property ? {...candidate, value: refined} : candidate),
-    }
+function refineFiniteValue(value: AbstractValue, declared: DeclaredKind): AbstractValue | null {
+  if (declared.kind === 'number') {
+    if (declared.interval != null) return value
+    if (value.kind !== 'number') return null
+    return !value.mayBeNaN && isFiniteNumber(value) ? value : finiteNumberPart(value)
   }
+  if (declared.kind !== 'record') return value
+  if (value.kind === 'record') return refineFiniteRecord(value, declared)
   if (value.kind !== 'taggedUnion') return null
-  const variants = value.variants.map(variant => {
-    const refined = refineFiniteValue(variant.record, properties)
-    return refined?.kind === 'record' ? {...variant, record: refined} : null
-  })
-  if (variants.some(variant => variant == null)) return null
-  return {...value, variants: variants as typeof value.variants}
+  let changed = false
+  const variants: TaggedVariant[] = []
+  for (const variant of value.variants) {
+    const record = refineFiniteRecord(variant.record, declared)
+    if (record == null) return null
+    changed ||= record !== variant.record
+    variants.push(record === variant.record ? variant : {...variant, record})
+  }
+  if (!changed) return value
+  const [first, ...rest] = variants
+  return {...value, variants: [first!, ...rest]}
+}
+
+function refineFiniteRecord(value: AbstractRecord, declared: Extract<DeclaredKind, {kind: 'record'}>): AbstractRecord | null {
+  const declaredProperties = new Map(declared.properties.map(property => [property.name, property.declared]))
+  let changed = false
+  const properties: AbstractRecord['properties'] = []
+  for (const property of value.properties) {
+    const fieldKind = declaredProperties.get(property.name)
+    if (fieldKind == null) {
+      properties.push(property)
+      continue
+    }
+    const refined = refineFiniteValue(property.value, fieldKind)
+    if (refined == null) return null
+    changed ||= refined !== property.value
+    properties.push(refined === property.value ? property : {...property, value: refined})
+  }
+  return changed ? {kind: 'record', properties} : value
 }
 
 // The intersection of two covers of the same runtime value — both are supersets of the
@@ -887,6 +912,7 @@ function refineFiniteValue(value: AbstractValue, properties: string[]): Abstract
 // clobber a fresher length narrowing already on the destination); anything else keeps the
 // refined side.
 function meetValues(current: AbstractValue, refined: AbstractValue): AbstractValue {
+  if (current === refined) return current
   // An exhaustive switch on the refined side, like widenValue: every kind states its
   // meet behavior, so a future kind cannot silently discard the current side's facts.
   switch (refined.kind) {
@@ -915,10 +941,11 @@ function meetValues(current: AbstractValue, refined: AbstractValue): AbstractVal
     }
     case 'record': {
       if (current.kind !== 'record') return refined
+      const currentProperties = recordPropertiesByName(current)
       return {
         kind: 'record',
         properties: refined.properties.map(property => {
-          const existing = recordProperty(current, property.name)
+          const existing = currentProperties.get(property.name)
           return existing == null ? property : {name: property.name, value: meetValues(existing, property.value)}
         }),
       }

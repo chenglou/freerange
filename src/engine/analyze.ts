@@ -153,7 +153,7 @@ function publishedPreconditions(
 ): InferredPrecondition[] {
   const preconditions: InferredPrecondition[] = []
   for (const input of finiteInputs(fn)) {
-    addPrecondition(preconditions, {
+    preconditions.push({
       kind: 'declaredNumberCheck',
       predicate: 'finite',
       expression: finiteInputExpression(input),
