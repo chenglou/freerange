@@ -381,9 +381,20 @@ describe('module state and nullability', () => {
         return board.base
       }
     `)
-    expect(analyzedFunction(report, 'modeOf').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'modeOf').assumptions)
+      .toEqual(['zoom.mode is a finite integer number from 1 through 2'])
+    expect(analyzedFunction(report, 'modeOf').ensures)
+      .toEqual(['return is a finite integer number from 1 through 2'])
     const gauge = report.functions.find(candidate => candidate.name === 'readGauge')
     expect(gauge?.kind).toBe('unsupported')
+
+    const reset = analyzeSource('literal-union-reset.ts', `
+      let mode: 1 | 2 = 1
+      mode = JSON.parse('100')
+      const result = mode * 10
+      export function readResult(): number { return result }
+    `)
+    expect(analyzedFunction(reset, 'readResult').ensures[0]).toContain('possibly NaN')
   })
 
   test('the false branch of a comparison with a possibly-NaN operand refines nothing', () => {

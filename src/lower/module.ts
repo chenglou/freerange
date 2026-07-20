@@ -5,6 +5,7 @@ import {
   holdsMutableStructure,
   moduleInitializerName,
   type DeclaredKind,
+  type DeclaredNumberInterval,
   type DeclaredVariant,
   type FunctionIR,
   type InitializerSkip,
@@ -484,7 +485,10 @@ export function declaredKind(type: ts.Type, checker: ts.TypeChecker, seen: ts.Ty
 
 function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
   switch (valueKind(type, checker)) {
-    case 'number': return {kind: 'number'}
+    case 'number': {
+      const interval = numericLiteralInterval(type)
+      return interval === 'nonFinite' ? null : {kind: 'number', interval}
+    }
     case 'boolean': return {kind: 'boolean'}
     // `number | null` and friends: the declared kind wraps the non-missing part, keeping
     // which sentinels the type admits for seeding and report prose.
@@ -508,12 +512,7 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
         // to the bare union. Structural members keep the exactly-one rule — two record
         // shapes under a nullish wrapper are a tagged union, not a nullable record.
         const members = rest.map(member => declaredKind(member, checker, seen))
-        const first = members[0]
-        inner = first != null
-          && (first.kind === 'number' || first.kind === 'boolean' || first.kind === 'opaque')
-          && members.every(member => member != null && member.kind === first.kind)
-          ? first
-          : null
+        inner = joinScalarDeclaredKinds(members)
         // `owner: null | LightboxOwnerRoute` where the inner is itself a union of tagged
         // shapes: the non-missing members classify as one tagged union, and maybeNullish
         // carries it like any other inner.
@@ -602,6 +601,55 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
       return {kind: 'taggedUnion', tagProperty, variants: [firstVariant, ...restVariants]}
     }
     case null: return null
+  }
+}
+
+function numericLiteralInterval(type: ts.Type): DeclaredNumberInterval | 'nonFinite' | null {
+  const members = type.isUnion() ? type.types : [type]
+  if (!members.every(member =>
+    (member.flags & ts.TypeFlags.NumberLiteral) !== 0
+    && (member.flags & ts.TypeFlags.EnumLiteral) === 0)) return null
+  let lower = Infinity
+  let upper = -Infinity
+  let integer = true
+  for (const member of members) {
+    const value = (member as ts.NumberLiteralType).value
+    if (!Number.isFinite(value)) return 'nonFinite'
+    lower = Math.min(lower, value)
+    upper = Math.max(upper, value)
+    integer = integer && Number.isInteger(value)
+  }
+  return members.length === 0 ? null : {lower, upper, integer}
+}
+
+function joinScalarDeclaredKinds(members: Array<DeclaredKind | null>): DeclaredKind | null {
+  const first = members[0]
+  if (first == null) return null
+  switch (first.kind) {
+    case 'number': {
+      let interval = first.interval
+      for (let index = 1; index < members.length; index++) {
+        const member = members[index]
+        if (member?.kind !== 'number') return null
+        if (interval == null || member.interval == null) {
+          interval = null
+        } else {
+          interval = {
+            lower: Math.min(interval.lower, member.interval.lower),
+            upper: Math.max(interval.upper, member.interval.upper),
+            integer: interval.integer && member.interval.integer,
+          }
+        }
+      }
+      return {kind: 'number', interval}
+    }
+    case 'boolean': return members.every(member => member?.kind === 'boolean') ? first : null
+    case 'opaque': return members.every(member => member?.kind === 'opaque') ? first : null
+    case 'record':
+    case 'nullish':
+    case 'tuple':
+    case 'array':
+    case 'taggedUnion': return null
   }
 }
 

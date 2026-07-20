@@ -528,10 +528,10 @@ describe('arrays and declared values', () => {
     expect(analyzedFunction(report, 'zoomOr').ensures).toEqual(['return is a finite number'])
   })
 
-  test('optional literal-union parameters collapse to one scalar kind', () => {
+  test('numeric literal unions retain their range through declared shapes', () => {
     // `mode: 'compact' | 'wide' | undefined` has several non-missing union members; they
-    // classify as one scalar kind (opaque here, number for 4 | 8 | undefined), the same
-    // rule the bare union already gets. Two record shapes under a wrapper stay rejected.
+    // classify as one scalar kind. Numeric members retain the interval written in the
+    // type, including through nullable wrappers and array elements.
     const report = analyzeSource('optional-literal-unions.ts', `
       export function pick(mode: 'compact' | 'wide' | undefined, a: number, b: number): number {
         if (mode === 'compact') return a
@@ -540,14 +540,57 @@ describe('arrays and declared values', () => {
       export function gapFor(size: 4 | 8 | undefined): number {
         return size === undefined ? 4 : size
       }
+      export function toolbarHeight(rows: 1 | 2): number {
+        return rows * 40
+      }
+      export function fractionalScale(scale: 0.5 | 1.5): number {
+        return scale
+      }
+      export function first(values: Array<1 | 2>): number {
+        return values[0]!
+      }
+      export function mixedRecord(config: {rows: 1 | 2; width: number; height: number; gap: number}): number {
+        return config.rows + config.width + config.height + config.gap
+      }
       export function pickWidth(mode: string | undefined, compact: number, wide: number): number {
         if (mode === 'compact') return compact
         return wide
       }
+      export function invalidDefault(rows: 1 | 2 = 3 as any): number {
+        return rows
+      }
+      export function overflowedLiteral(value: 1e309): number {
+        return value
+      }
+      enum ToolbarRows { Compact = 1, Expanded = 2 }
+      export function enumRows(rows: ToolbarRows): number {
+        return rows
+      }
     `)
     expect(analyzedFunction(report, 'pick').ensures).toEqual(['return is a finite number'])
-    expect(analyzedFunction(report, 'gapFor').assumptions).toEqual(['size is undefined or a finite non-NaN number'])
+    expect(analyzedFunction(report, 'gapFor').assumptions)
+      .toEqual(['size is undefined or a finite integer number from 4 through 8'])
+    expect(analyzedFunction(report, 'gapFor').ensures)
+      .toEqual(['return is a finite integer number from 4 through 8'])
+    expect(analyzedFunction(report, 'toolbarHeight').assumptions)
+      .toEqual(['rows is a finite integer number from 1 through 2'])
+    expect(analyzedFunction(report, 'toolbarHeight').ensures)
+      .toEqual(['return is a finite integer number from 40 through 80'])
+    expect(analyzedFunction(report, 'fractionalScale').assumptions)
+      .toEqual(['scale is a finite number from 0.5 through 1.5'])
+    expect(analyzedFunction(report, 'first').assumptions[1])
+      .toEqual('every values element is a finite integer number from 1 through 2')
+    expect(analyzedFunction(report, 'first').ensures)
+      .toEqual(['return is a finite integer number from 1 through 2'])
+    const mixedRecord = analyzedFunction(report, 'mixedRecord')
+    expect(mixedRecord.assumptions)
+      .toContain('config.rows is a finite integer number from 1 through 2')
+    expect(mixedRecord.assumptions.some(line => line.startsWith('every property'))).toBe(false)
     expect(analyzedFunction(report, 'pickWidth').ensures).toEqual(['return is a finite number'])
+    for (const name of ['invalidDefault', 'overflowedLiteral']) {
+      expect(report.functions.find(fn => fn.name === name)?.kind).toBe('unsupported')
+    }
+    expect(analyzedFunction(report, 'enumRows').ensures).toEqual(['return is a finite number'])
   })
 
   test('every external array prints the plain-array trust it is analyzed under', () => {

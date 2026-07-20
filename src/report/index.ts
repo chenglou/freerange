@@ -372,7 +372,10 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // the kept positions print per-property and the unread ones stay silent.
 function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[], keep: KeepPath): void {
   const numberLeaves = numberLeafCount(declared, [], keep)
-  const folds = numberLeaves.total >= 3 && numberLeaves.kept === numberLeaves.total && declared.kind !== 'number'
+  const folds = !hasLiteralNumberInterval(declared)
+    && numberLeaves.total >= 3
+    && numberLeaves.kept === numberLeaves.total
+    && declared.kind !== 'number'
   if (folds) assumptions.push(`every property declared as a number in ${path} holds a finite non-NaN number`)
   if (declared.kind === 'record') {
     const arrayProperties = declared.properties.filter(property => property.declared.kind === 'array')
@@ -450,7 +453,9 @@ const exactLeaves: AssumptionOptions = {skipNumberLeaves: false, skipOwnArrayLin
 function pushDeclaredAssumptions(path: string, segments: string[], declared: DeclaredKind, assumptions: string[], keep: KeepPath, options: AssumptionOptions = exactLeaves): void {
   switch (declared.kind) {
     case 'number': {
-      if (!options.skipNumberLeaves && keep(segments)) assumptions.push(`${path} is finite and not NaN`)
+      if (!options.skipNumberLeaves && keep(segments)) {
+        assumptions.push(`${path} is ${declaredNumberAssumption(declared)}`)
+      }
       break
     }
     case 'boolean': {
@@ -521,7 +526,10 @@ function pushDeclaredAssumptions(path: string, segments: string[], declared: Dec
       if (declared.inner.kind === 'number') {
         // E.g. `animatedUntilTime is null or a finite non-NaN number`. Never folded: the
         // folded line's kind assertion would wrongly forbid the legal null.
-        assumptions.push(`${path} is ${sentinelWords} or a finite non-NaN number`)
+        const numberWords = declared.inner.interval == null
+          ? 'a finite non-NaN number'
+          : declaredNumberAssumption(declared.inner)
+        assumptions.push(`${path} is ${sentinelWords} or ${numberWords}`)
       } else if (declared.inner.kind === 'boolean') {
         assumptions.push(`${path} is ${sentinelWords} or a boolean`)
       } else {
@@ -576,6 +584,26 @@ function pushDeclaredAssumptions(path: string, segments: string[], declared: Dec
       break
     }
   }
+}
+
+function hasLiteralNumberInterval(declared: DeclaredKind): boolean {
+  switch (declared.kind) {
+    case 'number': return declared.interval != null
+    case 'boolean':
+    case 'opaque': return false
+    case 'nullish': return hasLiteralNumberInterval(declared.inner)
+    case 'tuple': return declared.elements.some(hasLiteralNumberInterval)
+    case 'array': return hasLiteralNumberInterval(declared.element)
+    case 'record': return declared.properties.some(property => hasLiteralNumberInterval(property.declared))
+    case 'taggedUnion': return declared.variants.some(variant =>
+      variant.properties.some(property => hasLiteralNumberInterval(property.declared)))
+  }
+}
+
+function declaredNumberAssumption(declared: Extract<DeclaredKind, {kind: 'number'}>): string {
+  if (declared.interval == null) return 'finite and not NaN'
+  const integer = declared.interval.integer ? ' integer' : ''
+  return `a finite${integer} number from ${String(declared.interval.lower)} through ${String(declared.interval.upper)}`
 }
 
 // Per function, the module bindings whose declared-kind seeding the result rests on.
