@@ -1,6 +1,6 @@
 import {describe, expect, test} from 'bun:test'
 import {analyzeSource} from '../src/index.ts'
-import {analyzedFunction} from './analyze-helpers.ts'
+import {analyzedFunction, nonInputRequirements} from './analyze-helpers.ts'
 
 describe('tagged unions and narrowing', () => {
   test('tagged unions: checks narrow, else-if chains prune, switch dispatches, literals build variants', () => {
@@ -79,7 +79,6 @@ describe('tagged unions and narrowing', () => {
     // the null caveat the folded assertion cannot), so only box.index counts toward the
     // fold threshold and every line stays exact.
     expect(analyzedFunction(report, 'ownerPage').assumptions).toEqual([
-      'box.index is finite and not NaN',
       "box.owner is null or box.owner.page is finite and not NaN (when box.owner.type is 'explore')",
       "box.owner is null or box.owner.count is finite and not NaN (when box.owner.type is 'imagine')",
     ])
@@ -122,7 +121,6 @@ describe('tagged unions and narrowing', () => {
     // the tag property contributes no line of its own either way.
     expect(analyzedFunction(report, 'unwrapOr').assumptions).toEqual([
       'result.value is finite and not NaN (when result.ok is true)',
-      'fallback is finite and not NaN',
     ])
     expect(analyzedFunction(report, 'negated').ensures).toEqual(['return is a finite number'])
     expect(analyzedFunction(report, 'makeBoth').ensures).toEqual([
@@ -345,7 +343,7 @@ describe('tagged unions and narrowing', () => {
         return x
       }
     `)
-    expect(analyzedFunction(report, 'divideWidth').requires).toEqual([])
+    expect(nonInputRequirements(report, 'divideWidth')).toEqual([])
     expect(analyzedFunction(report, 'fail').ensures).toEqual([])
     // A guarded call to an always-throwing helper behaves exactly like an inline throw:
     // the path ends silently and the returning path carries the full contract.
@@ -438,20 +436,20 @@ describe('tagged unions and narrowing', () => {
     const file = 'sweep-group4.ts'
     expect(analyzedFunction(report, 'nullishAssign').ensures).toEqual(['return is a finite number'])
     // The === 0 guard discharges the remainder's obligation like division's.
-    expect(analyzedFunction(report, 'modulo').requires).toEqual([])
+    expect(nonInputRequirements(report, 'modulo')).toEqual([])
     expect(analyzedFunction(report, 'modulo').ensures).toEqual(['return is a finite number'])
-    expect(analyzedFunction(report, 'moduloRequires').requires)
+    expect(nonInputRequirements(report, 'moduloRequires'))
       .toEqual([`length is nonzero (remainder at ${file}:12:16)`])
     expect(analyzedFunction(report, 'chainRead').assumptions)
       .toEqual(['config is null or config.volume is finite and not NaN'])
     expect(analyzedFunction(report, 'chainRead').ensures).toEqual(['return is a finite number'])
-    expect(analyzedFunction(report, 'area').assumptions).toEqual([
-      '{width, height}.width is finite and not NaN',
-      '{width, height}.height is finite and not NaN',
+    expect(analyzedFunction(report, 'area').assumptions).toEqual([])
+    expect(analyzedFunction(report, 'area').requires.map(line => line.split(' (input')[0])).toEqual([
+      'Number.isFinite(width)',
+      'Number.isFinite(height)',
     ])
-    // Requirements name destructured properties through the synthetic record parameter.
-    expect(analyzedFunction(report, 'ratioReq').requires)
-      .toEqual([`{width, height}.height is nonzero (division at ${file}:22:16)`])
+    expect(nonInputRequirements(report, 'ratioReq'))
+      .toEqual([`height is nonzero (division at ${file}:22:16)`])
   })
 
   test('module refinements require a local snapshot', () => {

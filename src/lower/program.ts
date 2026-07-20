@@ -171,7 +171,8 @@ function lowerFunction(
         throw unsupported(parameter, {kind: 'parameterDefaultValue', name: patternName})
       }
       const value = context.nextValue++
-      context.parameters.push({value, name: patternName, type})
+      const bindings: Array<{property: string; local: string}> = []
+      context.parameters.push({value, name: patternName, type, site: addSite(context, parameter), bindings})
       for (const element of parameter.name.elements) {
         if (!ts.isIdentifier(element.name) || element.dotDotDotToken != null || element.initializer != null) {
           throw unsupported(element, {kind: 'destructuredParameter'})
@@ -180,6 +181,7 @@ function lowerFunction(
           ? element.name.text
           : ts.isIdentifier(element.propertyName) ? element.propertyName.text : null
         if (property == null) throw unsupported(element, {kind: 'destructuredParameter'})
+        bindings.push({property, local: element.name.text})
         const read: MutableBlock['instructions'][number] = {
           kind: 'property',
           object: value,
@@ -212,7 +214,13 @@ function lowerFunction(
     }
     const value = context.nextValue++
     context.bindings.set(requiredSymbol(parameter.name, checker), value)
-    context.parameters.push({value, name: parameter.name.text, type})
+    context.parameters.push({
+      value,
+      name: parameter.name.text,
+      type,
+      site: addSite(context, parameter),
+      bindings: [],
+    })
   }
   lowerStatements(declaration.body.statements, context)
   if (context.currentBlock.terminator == null) {

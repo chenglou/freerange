@@ -216,8 +216,8 @@ export function clean(): number {
     expect(projectAudit.stdout.trimEnd()).toEndWith('coverage: 3/4 named top-level function declarations fully analyzed; 0 partially supported; 1 unsupported.')
     // Analysis entries come before suggestions within the unit.
     expect(projectAudit.stdout.indexOf('## Contracts')).toBeLessThan(projectAudit.stdout.indexOf('## Refactoring suggestions'))
-    expect(projectAudit.stdout).toContain(`divide
-  requires: columnCount is nonzero (division at advice.ts:2:10)`)
+    expect(projectAudit.stdout)
+      .toContain('requires: columnCount is nonzero (division at advice.ts:2:10)')
     expect(projectAudit.stdout).toContain('advice.ts(2,10): suggestion [guard-derived-value]: Check the exact divisor.')
     expect(projectAudit.stdout).toContain('advice.ts(2,10): suggestion [encode-input-rule]: Encode a real input rule where the calculation begins.')
     expect(projectAudit.stdout.split('suggestion [guard-derived-value]')).toHaveLength(2)
@@ -418,6 +418,14 @@ export {}
 console.log(at([1], 2))
 export {}
 `,
+      'finite.ts': `function identity(value: number): number {
+  return value
+}
+
+export function badFiniteInput(): number {
+  return identity(Infinity)
+}
+`,
     })
 
     const lint = runCli(projectDirectory)
@@ -432,6 +440,8 @@ export {}
     expect(lint.stdout).toContain('requirements.ts(22,10): error [inferred-requirement]: call to wrappedAspectRatio violates its nonzero divisor requirement')
     expect(lint.stdout).toContain('requirements.ts(26,10): error [inferred-requirement]: call to remainder violates its nonzero divisor requirement')
     expect(lint.stdout).toContain('skipped.ts(5,13): error [inferred-requirement]: call to aspectRatio violates its nonzero divisor requirement')
+    expect(lint.stdout).toContain('finite.ts(6,10): error [inferred-requirement]: call to identity passes a number that is definitely not finite (input declared at finite.ts(1,19))')
+    expect(lint.stdout).not.toContain('finite.ts(6,10): error [declared-requirement]')
     expect(lint.stdout).not.toContain('requirements.ts(30,10): error')
     expect(lint.stdout).not.toContain('safe-skips.ts(9')
     expect(lint.stdout).not.toContain('safe-skips.ts(10')

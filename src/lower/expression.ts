@@ -621,7 +621,7 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
 type WrittenRequirementOperand = {kind: 'parameter'; value: ValueID} | {kind: 'constant'; value: number}
 
 type WrittenRequirement =
-  | {kind: 'integer'; parameter: ValueID}
+  | {kind: 'numberCheck'; predicate: 'integer' | 'finite'; value: ValueID}
   | {
       kind: 'comparison'
       left: WrittenRequirementOperand
@@ -635,9 +635,16 @@ function writtenRequirement(condition: ts.Expression, context: FunctionContext):
     && current.arguments.length === 1 && ts.isPropertyAccessExpression(current.expression)
     && current.expression.questionDotToken == null
     && isStandardNumberObject(current.expression.expression, context.checker)
-    && current.expression.name.text === 'isInteger') {
-    const parameter = staticRequirementParameterValue(current.arguments[0]!, context)
-    return parameter == null ? null : {kind: 'integer', parameter}
+    && (current.expression.name.text === 'isInteger' || current.expression.name.text === 'isFinite')) {
+    const argument = current.arguments[0]!
+    const value = current.expression.name.text === 'isFinite'
+      ? staticRequirementParameterPathValue(argument, context)
+      : staticRequirementParameterValue(argument, context)
+    return value == null ? null : {
+      kind: 'numberCheck',
+      predicate: current.expression.name.text === 'isInteger' ? 'integer' : 'finite',
+      value,
+    }
   }
   if (!ts.isBinaryExpression(current) || !staticAssertionComparison(current.operatorToken.kind)) return null
   const leftParameter = staticRequirementParameterValue(current.left, context)
@@ -663,6 +670,30 @@ function staticRequirementParameterValue(expression: ts.Expression, context: Fun
   if (symbol == null) return null
   const value = context.bindings.get(symbol)
   return value != null && context.parameters.some(parameter => parameter.value === value) ? value : null
+}
+
+function staticRequirementParameterPathValue(expression: ts.Expression, context: FunctionContext): ValueID | null {
+  requireNumberType(expression, context.checker)
+  let root = unwrapParentheses(expression)
+  while (ts.isPropertyAccessExpression(root) && root.questionDotToken == null) {
+    root = unwrapParentheses(root.expression)
+  }
+  if (!ts.isIdentifier(root)) return null
+  const symbol = context.checker.getSymbolAtLocation(root)
+  const rootValue = symbol == null ? null : context.bindings.get(symbol)
+  if (rootValue == null || !valueComesFromParameter(rootValue, context)) return null
+  return lowerExpression(expression, context)
+}
+
+function valueComesFromParameter(value: ValueID, context: FunctionContext): boolean {
+  if (context.parameters.some(parameter => parameter.value === value)) return true
+  for (const block of context.blocks) {
+    const producer = block.instructions.find(instruction => instruction.result === value)
+    if (producer != null) {
+      return producer.kind === 'property' && valueComesFromParameter(producer.object, context)
+    }
+  }
+  return false
 }
 
 function staticFiniteValue(
@@ -693,8 +724,12 @@ function lowerWrittenRequirement(
   condition: ts.Expression,
   context: FunctionContext,
 ): ValueID {
-  if (requirement.kind === 'integer') {
-    return addInstruction(context, condition, {kind: 'numberCheck', predicate: 'integer', value: requirement.parameter})
+  if (requirement.kind === 'numberCheck') {
+    return addInstruction(context, condition, {
+      kind: 'numberCheck',
+      predicate: requirement.predicate,
+      value: requirement.value,
+    })
   }
   const lowerOperand = (operand: WrittenRequirementOperand): ValueID => {
     if (operand.kind === 'parameter') return operand.value

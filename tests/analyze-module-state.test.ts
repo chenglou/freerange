@@ -18,7 +18,7 @@ describe('module state and nullability', () => {
     // "at least 24" proves the exact 24 flowed in: a declared-kind-only read would have
     // contributed an arbitrary finite number and destroyed the lower bound.
     const padded = analyzedFunction(report, 'paddedWidth')
-    expect(padded.assumptions).toEqual(['width is finite and not NaN'])
+    expect(padded.assumptions).toEqual([])
     expect(padded.ensures).toEqual(['return is a finite number at least 24'])
     // The exact `false` prunes the true branch entirely.
     expect(analyzedFunction(report, 'debugOffset').ensures)
@@ -80,7 +80,6 @@ describe('module state and nullability', () => {
     `)
     const reader = analyzedFunction(report, 'scaledBy')
     expect(reader.assumptions).toEqual([
-      'width is finite and not NaN',
       'scale.factor is finite and not NaN',
     ])
     expect(reader.ensures).toEqual(['return is a finite number'])
@@ -634,11 +633,10 @@ describe('module state and nullability', () => {
       }
     `)
     expect(analyzedFunction(report, 'ratioOnly').assumptions).toEqual([
-      'x is finite and not NaN',
       'viewport.width is finite and not NaN',
       'viewport.ratio is finite and not NaN',
     ])
-    expect(analyzedFunction(report, 'ignoresViewport').assumptions).toEqual(['x is finite and not NaN'])
+    expect(analyzedFunction(report, 'ignoresViewport').assumptions).toEqual([])
   })
 
 })

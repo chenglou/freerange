@@ -22,6 +22,16 @@ function analyzed(report: AnalysisReport, name: string) {
   return result
 }
 
+function nonInputRequirements(report: AnalysisReport, name: string): string[] {
+  return analyzed(report, name).requires.filter(requirement => !requirement.includes('(input at '))
+}
+
+function isNonInputRequirement(reference: ReturnType<typeof auditSource>['references'][number]): boolean {
+  if (reference.reason.kind !== 'requires') return false
+  const {precondition} = reference.reason
+  return precondition.kind !== 'numberCheck' || precondition.origin !== 'input'
+}
+
 function guide(id: RefactorGuideID) {
   return refactorGuide(id)
 }
@@ -53,8 +63,8 @@ test('the README documents every audit suggestion code', () => {
 
 test('every suggested rewrite changes the analyzer result as claimed', () => {
   const guarded = guide('guard-derived-value')
-  expect(analyzed(analyzeSource('guard-before.ts', guarded.before), 'remap').requires).toHaveLength(1)
-  expect(analyzed(analyzeSource('guard-after.ts', guarded.after), 'remap').requires).toEqual([])
+  expect(nonInputRequirements(analyzeSource('guard-before.ts', guarded.before), 'remap')).toHaveLength(1)
+  expect(nonInputRequirements(analyzeSource('guard-after.ts', guarded.after), 'remap')).toEqual([])
 
   const normalized = guide('encode-input-rule')
   expect(analyzed(analyzeSource('normalize-before.ts', normalized.before), 'perColumn').ensures.join('\n'))
@@ -64,10 +74,10 @@ test('every suggested rewrite changes the analyzer result as claimed', () => {
 
   const direct = guide('use-direct-operands')
   const directBefore = analyzed(analyzeSource('direct-before.ts', direct.before), 'fittedHeight')
-  expect(directBefore.requires).toHaveLength(2)
+  expect(directBefore.requires.filter(requirement => !requirement.includes('(input at '))).toHaveLength(2)
   expect(directBefore.ensures.join('\n')).toContain('possibly NaN')
   const directAfter = analyzed(analyzeSource('direct-after.ts', direct.after), 'fittedHeight')
-  expect(directAfter.requires).toEqual([])
+  expect(directAfter.requires.filter(requirement => !requirement.includes('(input at '))).toEqual([])
   expect(directAfter.ensures.join('\n')).toContain('possibly non-finite')
   expect(directAfter.ensures.join('\n')).not.toContain('possibly NaN')
 
@@ -87,8 +97,8 @@ test('every suggested rewrite changes the analyzer result as claimed', () => {
     .toEqual(['return is a finite number'])
 
   const indexed = guide('guard-array-index')
-  expect(analyzed(analyzeSource('index-before.ts', indexed.before), 'valueAt').requires).toHaveLength(1)
-  expect(analyzed(analyzeSource('index-after.ts', indexed.after), 'valueAt').requires).toEqual([])
+  expect(nonInputRequirements(analyzeSource('index-before.ts', indexed.before), 'valueAt')).toHaveLength(1)
+  expect(nonInputRequirements(analyzeSource('index-after.ts', indexed.after), 'valueAt')).toEqual([])
 })
 
 test('behavior tests pin the suggestion caveats', async () => {
@@ -270,7 +280,7 @@ test('audit references preserve each propagated requirement payload', () => {
       return divide(width, width - gap)
     }
   `)
-  const requirements = audit.references.filter(reference => reference.reason.kind === 'requires')
+  const requirements = audit.references.filter(isNonInputRequirement)
   expect(requirements).toHaveLength(3)
   expect(requirements.map(reference => [
     reference.functionName,
@@ -363,7 +373,7 @@ test('partial audits retain requirements found before a path became unsupported'
   `)
   expect(audit.coverage).toMatchObject({functions: 2, analyzed: 0, partial: 1, unsupported: 1})
   const observedRequirement = audit.references.find(reference =>
-    reference.functionName === 'partial' && reference.reason.kind === 'requires')
+    reference.functionName === 'partial' && isNonInputRequirement(reference))
   expect(observedRequirement?.guideIDs).toEqual(['guard-derived-value', 'encode-input-rule'])
   expect(formatFileAuditUnit(audit)).toContain('suggestion [guard-derived-value]: Check the exact divisor.')
 })

@@ -1,6 +1,6 @@
 import {describe, expect, test} from 'bun:test'
 import {analyzeSource, formatReport} from '../src/index.ts'
-import {analyzedFunction} from './analyze-helpers.ts'
+import {analyzedFunction, nonInputRequirements} from './analyze-helpers.ts'
 
 describe('arrays and declared values', () => {
   test('tuples stay exact per position; arrays are homogeneous', () => {
@@ -71,7 +71,8 @@ describe('arrays and declared values', () => {
     // The same shapes as record properties are carried without claims: the record's
     // numeric contract survives, and nothing anywhere states a length for pair or spans.
     const gap = analyzedFunction(report, 'boxGap')
-    expect(gap.assumptions).toEqual(['box.gap is finite and not NaN'])
+    expect(gap.assumptions).toEqual([])
+    expect(gap.requires).toEqual(['Number.isFinite(box.gap) (input at tuple-arity.ts:12:30)'])
     expect(gap.ensures).toEqual(['return is a finite number'])
     // An as-const local tuple is built in this function, so its arity is exact by
     // construction, not by boundary trust — the classification change must not touch it.
@@ -140,7 +141,6 @@ describe('arrays and declared values', () => {
     expect(bare.assumptions).toEqual([
       'values is a plain array — its length counts its elements, and every index below the length holds an element',
       'every values element is finite and not NaN',
-      'index is finite and not NaN',
     ])
     expect(bare.ensures).toEqual(['return is a finite number'])
     // The asserted read's index and array are both nameable over the parameters, so the
@@ -150,9 +150,9 @@ describe('arrays and declared values', () => {
     expect(asserted.assumptions).toEqual([
       'values is a plain array — its length counts its elements, and every index below the length holds an element',
       'every values element is finite and not NaN',
-      'index is finite and not NaN',
     ])
-    expect(asserted.requires).toEqual([`index is a valid values index (element read at ${file}:7:16)`])
+    expect(nonInputRequirements(report, 'assertedRead'))
+      .toEqual([`index is a valid values index (element read at ${file}:7:16)`])
   })
 
   test('top-level destructuring publishes each name as its own binding', () => {
@@ -232,11 +232,11 @@ describe('arrays and declared values', () => {
       }
     `)
     const file = 'nameable.ts'
-    expect(analyzedFunction(report, 'rate').requires)
+    expect(nonInputRequirements(report, 'rate'))
       .toEqual([`interval is nonzero (division at ${file}:3:41)`])
     // copy.columns resolves through the local literal to the grid.columns read stored at
     // construction, so the requirement names grid.columns, which the caller can satisfy.
-    expect(analyzedFunction(report, 'throughCopyFields').requires)
+    expect(nonInputRequirements(report, 'throughCopyFields'))
       .toEqual([`grid.columns is nonzero (division at ${file}:8:16)`])
   })
 
@@ -280,13 +280,13 @@ describe('arrays and declared values', () => {
     // A refinement of a stale saved read meets the record's current property value instead
     // of clobbering the fresher guard.
     const lost = analyzedFunction(report, 'lostNarrowing')
-    expect(lost.requires).toEqual([])
+    expect(nonInputRequirements(report, 'lostNarrowing')).toEqual([])
     expect(lost.ensures).toEqual(['return is a finite number from 0 through 100'])
     // The explicit-fields twin is the supported spelling: the grid.columns read genuinely
     // happens and stores a real value, narrowing copy.columns narrows grid.columns (the
     // copy's property IS the stored read), and the guard discharges the division.
     const copied = analyzedFunction(report, 'throughCopyFields')
-    expect(copied.requires).toEqual([])
+    expect(nonInputRequirements(report, 'throughCopyFields')).toEqual([])
     expect(copied.ensures).toEqual(['return is a finite number from 0 through 100'])
     // A pure-sentinel operand (null | undefined after the outer narrow) still checks, and
     // typeof x !== 'undefined' is the classic spelling of the undefined sentinel check.
@@ -408,17 +408,13 @@ describe('arrays and declared values', () => {
     // The string property makes no assumption line — there is nothing to claim about it.
     // The boolean property makes none either, but only because scaledWidth never reads
     // box.visible; `flagged` below reads its boolean and prints the line.
-    expect(scaled.assumptions).toEqual([
-      'box.width is finite and not NaN',
-      'factor is finite and not NaN',
-    ])
+    expect(scaled.assumptions).toEqual([])
     // A template literal is carried; the numeric contract survives.
-    expect(analyzedFunction(report, 'labelled').assumptions).toEqual(['width is finite and not NaN'])
+    expect(analyzedFunction(report, 'labelled').assumptions).toEqual([])
     // String dispatch: the comparison is an unknown boolean, both branches analyzed.
     expect(analyzedFunction(report, 'pick').ensures).toEqual(['return is a finite number'])
     // Boolean parameters are new too (the flat-numbers gate rejected them).
-    expect(analyzedFunction(report, 'flagged').assumptions)
-      .toEqual(['enabled is a boolean', 'value is finite and not NaN'])
+    expect(analyzedFunction(report, 'flagged').assumptions).toEqual(['enabled is a boolean'])
     expect(analyzedFunction(report, 'concatenated').ensures).toEqual(['return is a finite number'])
   })
 
@@ -464,7 +460,6 @@ describe('arrays and declared values', () => {
     expect(analyzedFunction(report, 'firstOr').assumptions).toEqual([
       'values is null or values is a plain array — its length counts its elements, and every index below the length holds an element',
       'values is null or every values element is finite and not NaN',
-      'fallback is finite and not NaN',
     ])
     expect(analyzedFunction(report, 'gridSum').assumptions).toEqual([
       'grid is a plain array — its length counts its elements, and every index below the length holds an element',
@@ -511,8 +506,7 @@ describe('arrays and declared values', () => {
       throw new Error(`expected shadowedUndefined to be unsupported, got ${shadowedUndefined.kind}`)
     }
     expect(shadowedUndefined.unsupported).toContain('default value for parameter zoom')
-    expect(analyzedFunction(report, 'defaultedOptional').assumptions)
-      .toEqual(['zoom is finite and not NaN'])
+    expect(analyzedFunction(report, 'defaultedOptional').assumptions).toEqual([])
     expect(analyzedFunction(report, 'defaultedOptional').ensures)
       .toEqual(['return is a finite number'])
     const globalUndefinedReport = analyzeSource('undefined-default.ts', `
@@ -633,7 +627,6 @@ describe('arrays and declared values', () => {
     expect(grouped.assumptions).toEqual([
       'groups is a plain array — its length counts its elements, and every index below the length holds an element',
       'every groups element is a plain array — its length counts its elements, and every index below the length holds an element',
-      'index is finite and not NaN',
     ])
     const counted = analyzedFunction(report, 'count')
     expect(counted.ensures).toEqual(['return is a finite integer number from 0 through 4294967295'])
@@ -780,8 +773,10 @@ describe('arrays and declared values', () => {
       }
     `)
     expect(analyzedFunction(report, 'panelWidth').assumptions).toEqual([
-      'every property declared as a number in panel holds a finite non-NaN number',
       'every property declared as an array in panel holds a plain array — its length counts its elements, and every index below the length holds an element',
+      'every panel.widths element is finite and not NaN',
+      'every panel.gaps element is finite and not NaN',
+      'every panel.margins element is finite and not NaN',
     ])
   })
 
@@ -925,16 +920,12 @@ describe('arrays and declared values', () => {
       }
     `)
     expect(analyzedFunction(report, 'panelArea').assumptions).toEqual([
-      'every property declared as a number in panel holds a finite non-NaN number',
       'panel.visible is a boolean',
       'panel.ratio is null or a finite non-NaN number',
       "panel.meter.slope is finite and not NaN (when panel.meter.kind is 'linear')",
       "panel.meter.base is finite and not NaN (when panel.meter.kind is 'log')",
     ])
-    expect(analyzedFunction(report, 'span').assumptions).toEqual([
-      'range.low is finite and not NaN',
-      'range.high is finite and not NaN',
-    ])
+    expect(analyzedFunction(report, 'span').assumptions).toEqual([])
     // Both folds coexist on one value: the number fold covers the element leaves (array
     // elements are index properties), and the array-root value still prints its own
     // plain-array line — the root is not a record property, so the array fold's sentence
@@ -944,7 +935,6 @@ describe('arrays and declared values', () => {
       'points is a plain array — its length counts its elements, and every index below the length holds an element',
     ])
     expect(analyzedFunction(report, 'zoomedX').assumptions).toEqual([
-      'offset is finite and not NaN',
       'every property declared as a number in camera holds a finite non-NaN number',
     ])
   })

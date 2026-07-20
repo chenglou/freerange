@@ -5,10 +5,20 @@ import {recordValue, unknownBoolean, type AbstractValue, type TaggedVariant} fro
 import type {BlockID, SiteID, ValueID} from './ids.ts'
 import type {InstructionIR, TerminatorIR} from './instructions.ts'
 
-type ParameterIR = {
+export type ParameterIR = {
   value: ValueID
   name: string
   type: DeclaredKind
+  site: SiteID
+  // A destructured parameter still has one runtime argument, but reports should use the
+  // local binding the author wrote: `{width: availableWidth}` prints `availableWidth`.
+  bindings: Array<{property: string; local: string}>
+}
+
+export type FiniteInputIR = {
+  parameter: number
+  properties: string[]
+  site: SiteID
 }
 
 // Parameters share the module bindings' declared-kind language: one recursive

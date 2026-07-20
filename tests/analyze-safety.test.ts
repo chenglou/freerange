@@ -1,6 +1,6 @@
 import {describe, expect, test} from 'bun:test'
 import {analyzeFile, analyzeSource, formatReport} from '../src/index.ts'
-import {analyzedFunction} from './analyze-helpers.ts'
+import {analyzedFunction, nonInputRequirements} from './analyze-helpers.ts'
 
 describe('acceptance and module safety', () => {
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
@@ -200,7 +200,7 @@ describe('acceptance and module safety', () => {
     // literal type, so the value kind never changes; config constants written this way are
     // ordinary code. The exact 4 flowing into the result proves the value passed through.
     const fn = analyzedFunction(report, 'stepsFor')
-    expect(fn.assumptions).toEqual(['durationMs is finite and not NaN'])
+    expect(fn.assumptions).toEqual([])
     // Dividing by the exact 4 gives a concrete upper bound (largest finite double / 4),
     // which is the proof the const-assertion value flowed through.
     expect(fn.ensures).toEqual(['return is a finite number from 0 through 4.4942328371557893e+307'])
@@ -382,9 +382,9 @@ describe('acceptance and module safety', () => {
     expect(report.functions).toEqual([{
       kind: 'partial',
       name: 'stall',
-      assumptions: ['width is finite and not NaN'],
+      assumptions: [],
       partialReasons: [`the loop at ${file}:5:9 never exits on any analyzed path`],
-      observed: [],
+      observed: [`the input declared at ${file}:2:29 must satisfy Number.isFinite(width)`],
     }])
   })
 
@@ -416,7 +416,11 @@ describe('acceptance and module safety', () => {
       }
     `)
     const fn = analyzedFunction(report, 'gap')
-    expect(fn.assumptions).toEqual(['config.pos is finite and not NaN', 'config.dest is finite and not NaN'])
+    expect(fn.assumptions).toEqual([])
+    expect(fn.requires).toEqual([
+      'Number.isFinite(config.pos) (input at destructure.ts:3:27)',
+      'Number.isFinite(config.dest) (input at destructure.ts:3:27)',
+    ])
     expect(fn.ensures).toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${'destructure.ts'}:5:25)`])
   })
 
@@ -501,7 +505,8 @@ describe('acceptance and module safety', () => {
       }
     `)
     const fn = analyzedFunction(report, 'perColumn')
-    expect(fn.requires).toEqual([`Math.floor(cols) is nonzero (division at ${'floor-divisor.ts'}:3:16)`])
+    expect(nonInputRequirements(report, 'perColumn'))
+      .toEqual([`Math.floor(cols) is nonzero (division at ${'floor-divisor.ts'}:3:16)`])
     expect(fn.ensures).toEqual(['return is a finite number'])
   })
 
@@ -664,8 +669,8 @@ describe('acceptance and module safety', () => {
       // read carries exactly 7 instead of stopping — no assumes line about importedPad.
       kind: 'analyzed',
       name: 'paddedBy',
-      assumptions: ['width is finite and not NaN'],
-      requires: [],
+      assumptions: [],
+      requires: [`Number.isFinite(width) (input at ${importsReportPath}:4:26)`],
       ensures: ['return is a finite number at least 7'],
     }, {
       // importedOffset is a `let` export the other module can reassign; still a stop.

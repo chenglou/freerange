@@ -69,8 +69,9 @@ export type InferredPrecondition =
       site: SiteID
     }
   | {
-      kind: 'declaredNumberCheck'
+      kind: 'numberCheck'
       predicate: 'integer' | 'finite' | 'nan'
       expression: NumericExpression
+      origin: 'written' | 'input'
       site: SiteID
     }

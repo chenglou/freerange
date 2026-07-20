@@ -195,6 +195,23 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
       return
     }
 
+    if (failure.kind === 'finiteInput') {
+      const origin = siteLocation(program, failure.site)
+      addError(
+        stopSite,
+        'inferred-requirement',
+        calleeName == null
+          ? failure.status === 'refuted'
+            ? `number input is definitely not finite in ${functionName}`
+            : `could not verify the number input in ${functionName}`
+          : failure.status === 'refuted'
+            ? `call to ${calleeName} passes a number that is definitely not finite`
+            : `could not verify ${calleeName}'s number input at this call`,
+        {label: 'input declared at', ...origin},
+      )
+      return
+    }
+
     if (calleeName == null) {
       addError(
         stopSite,

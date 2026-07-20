@@ -180,7 +180,7 @@ Freerange uses a few terms consistently:
 
 - `requires`: a condition the caller must satisfy. The function's guarantees assume the condition is true.
 - `ensures`: a guarantee about the returned value whenever the function returns.
-- `assumes`: an input condition Freerange accepts without proving, such as a number parameter being finite and not `NaN`.
+- `assumes`: an input condition Freerange accepts without proving, such as every element of an input array being finite and not `NaN`.
 - `proves`: a successful static `console.assert` check.
 - `unsupported`: Freerange cannot analyze the function because it uses code outside the analyzed subset. Freerange shows the first blocker you can potentially refactor.
 - `partially supported`: Freerange can analyze some, but not all, of the function.
@@ -225,6 +225,10 @@ Freerange follows records, tuples, arrays, and tagged unions declared in your pr
 Property reads are assumed to be stable and side-effect-free during one analyzed function call. A getter or Proxy that changes its answer or performs work is outside the model. Property writes, including assignments that invoke setters, are unsupported. Object spread is also unsupported because JavaScript copies only an object's own enumerable properties, which may not match the fields declared by its TypeScript type.
 
 ### Caller requirements
+
+When a calculation, comparison, return value, or supported function call needs a plain `number` parameter to be finite, the audit includes `requires: Number.isFinite(value)`. A numeric field of a fixed plain-object parameter gets the same requirement only when the function needs that exact field. Numeric literal types such as `1 | 2` are already finite. Numbers inside arrays, tuples, nullable values, and tagged unions remain under `assumes` because one unconditional caller requirement cannot describe those shapes accurately.
+
+Supported calls in the same file reject a definitely non-finite argument. When an uncertain argument can be written as a caller condition, Freerange propagates `Number.isFinite(...)` to the caller. Otherwise Freerange analyzes the called function with the wider value, so the caller's guarantees still include the non-finite case. Functions in other files are not checked.
 
 When a division or array read creates a requirement inside a function, Freerange tries to express the requirement using the function's parameters so callers can be checked. A later operation on the same stored value and path may rely on that requirement; assigning a new value or repeating the calculation starts over. Freerange follows each intermediate calculation at most once. If one pass cannot reach the parameters, Freerange prints a local `assumes` condition instead.
 

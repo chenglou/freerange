@@ -375,7 +375,7 @@ function guidesForPrecondition(precondition: InferredPrecondition): RefactorGuid
   switch (precondition.kind) {
     case 'inBounds': return ['guard-array-index']
     case 'declaredComparison':
-    case 'declaredNumberCheck': return []
+    case 'numberCheck': return []
     case 'nonzero':
     case 'notEqualConstant': break
   }

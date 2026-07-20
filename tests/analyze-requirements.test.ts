@@ -1,6 +1,6 @@
 import {describe, expect, test} from 'bun:test'
 import {analyzeSource} from '../src/index.ts'
-import {analyzedFunction} from './analyze-helpers.ts'
+import {analyzedFunction, nonInputRequirements} from './analyze-helpers.ts'
 
 describe('requirements and numeric checks', () => {
   test('one evaluated number stays identical through arithmetic, stable reads, and calls', () => {
@@ -61,7 +61,7 @@ describe('requirements and numeric checks', () => {
     expect(analyzedFunction(report, 'nestedLocalRecords').ensures)
       .toEqual(['return is a finite integer number from 0 through 0'])
     const nestedRequirement = analyzedFunction(report, 'nestedRecordRequirement')
-    expect(nestedRequirement.requires).toHaveLength(1)
+    expect(nonInputRequirements(report, 'nestedRecordRequirement')).toHaveLength(1)
     expect(nestedRequirement.assumptions.filter(line => line.includes('divisor at'))).toHaveLength(0)
 
     for (const name of ['sameArgument', 'sameStoredResult', 'sameProperty', 'sameThroughWrapper']) {
@@ -204,9 +204,9 @@ describe('requirements and numeric checks', () => {
       }
     `)
 
-    expect(analyzedFunction(report, 'storedDivisor').requires).toHaveLength(1)
-    expect(analyzedFunction(report, 'recomputedDivisor').requires).toHaveLength(2)
-    expect(analyzedFunction(report, 'repeatedRead').requires).toHaveLength(1)
+    expect(nonInputRequirements(report, 'storedDivisor')).toHaveLength(1)
+    expect(nonInputRequirements(report, 'recomputedDivisor')).toHaveLength(2)
+    expect(nonInputRequirements(report, 'repeatedRead')).toHaveLength(1)
     expect(analyzedFunction(report, 'repeatedRead').ensures)
       .toEqual(['return is a finite integer number from 0 through 0'])
     for (const name of [
@@ -215,20 +215,20 @@ describe('requirements and numeric checks', () => {
       'afterDeclaredRequirement',
       'duplicateArguments',
     ]) {
-      expect(analyzedFunction(report, name).requires).toHaveLength(1)
+      expect(nonInputRequirements(report, name)).toHaveLength(1)
     }
-    expect(analyzedFunction(report, 'duplicateIndexes').requires).toHaveLength(1)
+    expect(nonInputRequirements(report, 'duplicateIndexes')).toHaveLength(1)
     const repeatedElement = analyzedFunction(report, 'repeatedElementDivisor')
-    expect(repeatedElement.requires).toHaveLength(1)
+    expect(nonInputRequirements(report, 'repeatedElementDivisor')).toHaveLength(1)
     expect(repeatedElement.assumptions.filter(line => line.includes('divisor at'))).toHaveLength(1)
     const guardedElement = analyzedFunction(report, 'guardedRepeatedElement')
-    expect(guardedElement.requires).toHaveLength(1)
+    expect(nonInputRequirements(report, 'guardedRepeatedElement')).toHaveLength(1)
     expect(guardedElement.assumptions.filter(line => line.includes('divisor at'))).toHaveLength(0)
-    expect(analyzedFunction(report, 'separateBranches').requires).toHaveLength(2)
-    expect(analyzedFunction(report, 'branchThenUse').requires).toHaveLength(2)
-    expect(analyzedFunction(report, 'loopThenUse').requires).toHaveLength(2)
-    expect(analyzedFunction(report, 'requirementBeforeLoop').requires).toHaveLength(1)
-    expect(analyzedFunction(report, 'separateArrays').requires).toHaveLength(2)
+    expect(nonInputRequirements(report, 'separateBranches')).toHaveLength(2)
+    expect(nonInputRequirements(report, 'branchThenUse')).toHaveLength(2)
+    expect(nonInputRequirements(report, 'loopThenUse')).toHaveLength(2)
+    expect(nonInputRequirements(report, 'requirementBeforeLoop')).toHaveLength(1)
+    expect(nonInputRequirements(report, 'separateArrays')).toHaveLength(2)
     expect(analyzedFunction(report, 'freshReads').ensures[0]).not.toContain('from 0 through 0')
 
     for (const name of [
@@ -300,7 +300,7 @@ describe('requirements and numeric checks', () => {
     expect(analyzedFunction(report, 'gapFor').ensures).toEqual(['return is a finite integer number from 1 through 3'])
     // Inside case 4 the subject is exactly 4, so the division discharges with no
     // requirement — the same narrowing an if (step === 4) gets.
-    expect(analyzedFunction(report, 'narrows').requires).toEqual([])
+    expect(nonInputRequirements(report, 'narrows')).toEqual([])
     expect(analyzedFunction(report, 'narrows').ensures).toEqual(['return is a finite integer number from 0 through 25'])
     const entries = new Map(report.functions.map(fn => [fn.name, fn]))
     const falls = entries.get('falls')!
@@ -331,7 +331,7 @@ describe('requirements and numeric checks', () => {
     `)
     for (const name of ['notEqualGuard', 'earlyReturn', 'positiveGuard']) {
       const fn = analyzedFunction(report, name)
-      expect(fn.requires).toEqual([])
+      expect(nonInputRequirements(report, name)).toEqual([])
       // A float divisor can sit arbitrarily close to zero, so the quotient can overflow;
       // the honest ensures is possibly non-finite, never NaN (zero is cut, so no 0/0).
       expect(fn.ensures[0]).toContain('possibly non-finite')
@@ -362,7 +362,7 @@ describe('requirements and numeric checks', () => {
         return total
       }
     `)
-    expect(analyzedFunction(report, 'accumulate').requires).toEqual([])
+    expect(nonInputRequirements(report, 'accumulate')).toEqual([])
   })
 
   test('nonzero obligations peel to caller-readable conditions through float-exact layers only', () => {
@@ -381,16 +381,16 @@ describe('requirements and numeric checks', () => {
       }
     `)
     const file = 'peeling.ts'
-    expect(analyzedFunction(report, 'pad').requires)
+    expect(nonInputRequirements(report, 'pad'))
       .toEqual([`width is not 4 (division at ${file}:3:16)`])
     // The multiply peels (|2| >= 1 cannot underflow the product to zero), then the add.
-    expect(analyzedFunction(report, 'doubled').requires)
+    expect(nonInputRequirements(report, 'doubled'))
       .toEqual([`scale is not -10 (division at ${file}:6:16)`])
     // A small constant CAN underflow the product to zero (1e-200 * 1e-200 === 0), so the
     // obligation stays as written.
-    expect(analyzedFunction(report, 'tinyFactor').requires)
+    expect(nonInputRequirements(report, 'tinyFactor'))
       .toEqual([`(x * 1e-300) is nonzero (division at ${file}:9:16)`])
-    expect(analyzedFunction(report, 'property').requires)
+    expect(nonInputRequirements(report, 'property'))
       .toEqual([`grid.cols is not 1 (division at ${file}:12:16)`])
   })
 
@@ -409,10 +409,10 @@ describe('requirements and numeric checks', () => {
     const file = 'peel-propagation.ts'
     // The peel stops at the substituted argument: (gutter + 1) is not 2 is float-exact,
     // while peeling further to 'gutter is not 1' would trust rounding.
-    expect(analyzedFunction(report, 'layout').requires)
+    expect(nonInputRequirements(report, 'layout'))
       .toEqual([`(gutter + 1) is not 2 (division at ${file}:3:16)`])
     // A constant argument discharges by plain evaluation: 10 - 2 is provably nonzero.
-    expect(analyzedFunction(report, 'fixed').requires).toEqual([])
+    expect(nonInputRequirements(report, 'fixed')).toEqual([])
   })
 
   test('the bounds-check idiom discharges asserted reads: relation, integrality, manual loops', () => {
@@ -441,14 +441,14 @@ describe('requirements and numeric checks', () => {
     `)
     const file = 'bounds-idiom.ts'
     // The full defensive guard proves the read: no requires line at all.
-    expect(analyzedFunction(report, 'at').requires).toEqual([])
-    expect(analyzedFunction(report, 'manualLoop').requires).toEqual([])
+    expect(nonInputRequirements(report, 'at')).toEqual([])
+    expect(nonInputRequirements(report, 'manualLoop')).toEqual([])
     // Without integrality the guard is not enough — sizes[1.5] misses — so the obligation
     // honestly survives as the caller-actionable requirement.
-    expect(analyzedFunction(report, 'floatIndex').requires)
+    expect(nonInputRequirements(report, 'floatIndex'))
       .toEqual([`slot is a valid sizes index (element read at ${file}:16:56)`])
     // The relation is paired per array: guarding a's length says nothing about b.
-    expect(analyzedFunction(report, 'wrongArray').requires)
+    expect(nonInputRequirements(report, 'wrongArray'))
       .toEqual([`i is a valid b index (element read at ${file}:20:69)`])
   })
 
@@ -480,10 +480,10 @@ describe('requirements and numeric checks', () => {
     `)
 
     for (const name of ['guardedFirst', 'readFirst']) {
-      expect(analyzedFunction(report, name).requires).toHaveLength(1)
-      expect(analyzedFunction(report, name).requires[0]).toContain('index is a valid values index')
+      expect(nonInputRequirements(report, name)).toHaveLength(1)
+      expect(nonInputRequirements(report, name)[0]).toContain('index is a valid values index')
     }
-    expect(analyzedFunction(report, 'differentArrays').requires).toHaveLength(2)
+    expect(nonInputRequirements(report, 'differentArrays')).toHaveLength(2)
   })
 
   test('unproven asserted reads mint a requires when nameable, an assumes otherwise', () => {
@@ -500,7 +500,7 @@ describe('requirements and numeric checks', () => {
     // A module array is not caller-visible, so the obligation stays an assumes line.
     expect(analyzedFunction(report, 'fromModule').assumptions)
       .toContain(`the element read at ${file}:4:16 is in bounds`)
-    expect(analyzedFunction(report, 'fromParameter').requires)
+    expect(nonInputRequirements(report, 'fromParameter'))
       .toEqual([`(slot + 1) is a valid sizes index (element read at ${file}:7:16)`])
   })
 
@@ -552,7 +552,7 @@ ${chain}
       }
     `)
     for (const name of ['widthGuard', 'scaleGuarded']) {
-      expect(analyzedFunction(report, name).requires).toEqual([])
+      expect(nonInputRequirements(report, name)).toEqual([])
     }
   })
 
@@ -579,10 +579,10 @@ ${chain}
       }
     `)
     const file = 'bounds-composition.ts'
-    expect(analyzedFunction(report, 'propertyGuard').requires).toEqual([])
-    expect(analyzedFunction(report, 'guardedCall').requires).toEqual([])
+    expect(nonInputRequirements(report, 'propertyGuard')).toEqual([])
+    expect(nonInputRequirements(report, 'guardedCall')).toEqual([])
     // The helper itself still carries the honest requirement for unguarded callers.
-    expect(analyzedFunction(report, 'sizeAt').requires)
+    expect(nonInputRequirements(report, 'sizeAt'))
       .toEqual([`slot is a valid sizes index (element read at ${file}:10:16)`])
   })
 
@@ -660,7 +660,8 @@ ${chain}
     const checked = analyzedFunction(report, 'checkedBreakpoint')
     expect(checked.assumptions).toEqual([`the element read at ${file}:4:32 is in bounds`])
     expect(checked.assertions?.map(assertion => assertion.verdict)).toEqual(['blocked'])
-    expect(analyzedFunction(report, 'unrelated').assumptions).toEqual(['x is finite and not NaN'])
+    expect(analyzedFunction(report, 'unrelated').assumptions).toEqual([])
+    expect(analyzedFunction(report, 'unrelated').requires[0]).toContain('Number.isFinite(x)')
   })
 
   test('the float biconditionals behind requirement simplification hold mechanically', () => {
@@ -734,7 +735,7 @@ ${chain}
     `)
     expect(analyzedFunction(report, 'cells').ensures)
       .toEqual(['return is a finite integer number from 1 through 7.490388061926316e+305'])
-    expect(analyzedFunction(report, 'snap').requires).toEqual([])
+    expect(nonInputRequirements(report, 'snap')).toEqual([])
     expect(analyzedFunction(report, 'snap').ensures[0]).toContain('possibly NaN')
     expect(analyzedFunction(report, 'truncated').ensures).toEqual(['return is a finite integer number'])
     // Squares cannot be negative, so the sum has no opposite-infinity corner and never
