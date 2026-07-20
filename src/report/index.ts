@@ -3,11 +3,10 @@ import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value
 import type {AssertionVerdict, FunctionAnalysis, ProgramAnalysis, RequirementFailure, Stop} from '../engine/outcome.ts'
 import type {FunctionID, ModuleBindingID, SiteID, ValueID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
-import type {BoundsAssumption, InferredPrecondition} from '../requirements/model.ts'
+import type {BoundsAssumption} from '../requirements/model.ts'
 import {forEachOperand} from '../ir/instructions.ts'
 import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
-import {numericParameterPath} from '../requirements/infer.ts'
 
 export type FunctionReport =
   | {kind: 'analyzed'; name: string; assumptions: string[]; requires: string[]; ensures: string[]; assertions?: AssertionReport[]}
@@ -91,13 +90,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'partial',
           name: lowering.name,
-          assumptions: assumptionLines(
-            lowering,
-            program,
-            assumedBindings[functionID]!,
-            fn.observedBoundsAssumptions,
-            fn.observedNeeds,
-          ),
+          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.observedBoundsAssumptions),
           partialReasons: fn.stops.map(stop => formatStop(stop, program, analysis)),
           observed,
           ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
@@ -110,13 +103,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'analyzed',
           name: lowering.name,
-          assumptions: assumptionLines(
-            lowering,
-            program,
-            assumedBindings[functionID]!,
-            fn.boundsAssumptions,
-            fn.preconditions,
-          ),
+          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.boundsAssumptions),
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
           ensures: returnSummaries('return', declaredReturn(fn.returnValue, lowering), program),
           ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
@@ -299,23 +286,12 @@ function assumptionLines(
   program: ProgramIR,
   assumedBindings: ReadonlySet<ModuleBindingID>,
   boundsAssumptions: BoundsAssumption[],
-  preconditions: InferredPrecondition[],
 ): string[] {
   const assumptions: string[] = []
   const reads = parameterReadPaths(fn)
-  const explicitFinitePaths = fn.parameters.map((): string[][] => [])
-  for (const precondition of preconditions) {
-    if (precondition.kind !== 'declaredNumberCheck' || precondition.predicate === 'nan') continue
-    const path = numericParameterPath(precondition.expression)
-    if (path != null) explicitFinitePaths[path.parameter]?.push(path.properties)
-  }
   for (let index = 0; index < fn.parameters.length; index++) {
     const parameter = fn.parameters[index]!
-    const readPath = keepFromReads(reads[index]!)
-    const keepImplicitAssumption = (segments: string[]): boolean =>
-      readPath(segments) && !explicitFinitePaths[index]!.some(path =>
-        path.length === segments.length && path.every((part, partIndex) => part === segments[partIndex]))
-    pushRootAssumptions(parameter.name, parameter.type, assumptions, keepImplicitAssumption)
+    pushRootAssumptions(parameter.name, parameter.type, assumptions, keepFromReads(reads[index]!))
   }
   // Module bindings filter at whole-binding granularity: assumedBindings already contains
   // only the bindings this function (or a callee) reads, and a callee's reads arrive as a
@@ -772,7 +748,7 @@ export function formatUnsupportedReason(reason: UnsupportedReason): string {
         case 'directCheck': return 'console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check'
         case 'bindValueFirst': return 'calculate or read the value before console.assert, then check the variable'
         case 'functionCall': return 'console.assert cannot call a function inside its condition except Number.isInteger, Number.isFinite, or Number.isNaN'
-        case 'callerRequirement': return 'a leading console.assert describes what callers must provide. It can compare one parameter with a fixed finite number, require one parameter to be an integer, or require a number parameter or one of its fields to be finite'
+        case 'callerRequirement': return 'a leading console.assert describes what callers must provide. It can compare one parameter with a fixed finite number, or require one parameter to be an integer'
       }
     }
     case 'varDeclaration': return 'var declarations (use let or const)'

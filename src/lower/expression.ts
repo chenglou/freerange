@@ -1,7 +1,7 @@
 import * as ts from 'typescript'
 import type {ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
-import type {DeclaredKind, StaticAssertionProblem} from '../ir/program.ts'
+import type {StaticAssertionProblem} from '../ir/program.ts'
 import {declaredOnlyInDeclarationFiles, platformFact} from './platform.ts'
 import {
   addInstruction,
@@ -621,7 +621,7 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
 type WrittenRequirementOperand = {kind: 'parameter'; value: ValueID} | {kind: 'constant'; value: number}
 
 type WrittenRequirement =
-  | {kind: 'numberCheck'; predicate: 'integer' | 'finite'; value: ValueID}
+  | {kind: 'integer'; parameter: ValueID}
   | {
       kind: 'comparison'
       left: WrittenRequirementOperand
@@ -635,16 +635,9 @@ function writtenRequirement(condition: ts.Expression, context: FunctionContext):
     && current.arguments.length === 1 && ts.isPropertyAccessExpression(current.expression)
     && current.expression.questionDotToken == null
     && isStandardNumberObject(current.expression.expression, context.checker)
-    && (current.expression.name.text === 'isInteger' || current.expression.name.text === 'isFinite')) {
-    const argument = current.arguments[0]!
-    const value = current.expression.name.text === 'isFinite'
-      ? staticRequirementParameterPathValue(argument, context)
-      : staticRequirementParameterValue(argument, context)
-    return value == null ? null : {
-      kind: 'numberCheck',
-      predicate: current.expression.name.text === 'isInteger' ? 'integer' : 'finite',
-      value,
-    }
+    && current.expression.name.text === 'isInteger') {
+    const parameter = staticRequirementParameterValue(current.arguments[0]!, context)
+    return parameter == null ? null : {kind: 'integer', parameter}
   }
   if (!ts.isBinaryExpression(current) || !staticAssertionComparison(current.operatorToken.kind)) return null
   const leftParameter = staticRequirementParameterValue(current.left, context)
@@ -670,29 +663,6 @@ function staticRequirementParameterValue(expression: ts.Expression, context: Fun
   if (symbol == null) return null
   const value = context.bindings.get(symbol)
   return value != null && context.parameters.some(parameter => parameter.value === value) ? value : null
-}
-
-function staticRequirementParameterPathValue(
-  expression: ts.Expression,
-  context: FunctionContext,
-): ValueID | null {
-  requireNumberType(expression, context.checker)
-  const value = lowerExpression(expression, context)
-  return parameterPathKind(value, context)?.kind === 'number' ? value : null
-}
-
-function parameterPathKind(value: ValueID, context: FunctionContext): DeclaredKind | null {
-  const parameter = context.parameters.find(candidate => candidate.value === value)
-  if (parameter != null) return parameter.type
-  let producer: InstructionIR | undefined
-  for (const block of context.blocks) {
-    producer = block.instructions.find(instruction => instruction.result === value)
-    if (producer != null) break
-  }
-  if (producer?.kind !== 'property') return null
-  const object = parameterPathKind(producer.object, context)
-  if (object?.kind !== 'record') return null
-  return object.properties.find(property => property.name === producer.property)?.declared ?? null
 }
 
 function staticFiniteValue(
@@ -723,12 +693,8 @@ function lowerWrittenRequirement(
   condition: ts.Expression,
   context: FunctionContext,
 ): ValueID {
-  if (requirement.kind === 'numberCheck') {
-    return addInstruction(context, condition, {
-      kind: 'numberCheck',
-      predicate: requirement.predicate,
-      value: requirement.value,
-    })
+  if (requirement.kind === 'integer') {
+    return addInstruction(context, condition, {kind: 'numberCheck', predicate: 'integer', value: requirement.parameter})
   }
   const lowerOperand = (operand: WrittenRequirementOperand): ValueID => {
     if (operand.kind === 'parameter') return operand.value

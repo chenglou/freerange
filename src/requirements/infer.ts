@@ -11,12 +11,7 @@ export type ExpressionContext = {
   parameterIdentityKeys: string[]
   identityNamespace: string
   parameterIndexByValue: Array<number | undefined>
-  // A continuation parameter whose every incoming edge carries the same runtime value is
-  // an alias, not a join. Resolve it exactly like a stored local so requirements and value
-  // facts do not forget identity merely because source control flow introduced a block.
-  storedValueByValue: Array<ValueID | undefined>
   instructionByValue: Array<InstructionIR | undefined>
-  guaranteedFiniteByBlock: string[][]
   instructionCount: number
 }
 
@@ -35,9 +30,7 @@ export function createExpressionContext(
     parameterIdentityKeys: identityKeys,
     identityNamespace,
     parameterIndexByValue: [],
-    storedValueByValue: [],
     instructionByValue: [],
-    guaranteedFiniteByBlock: [],
     instructionCount: 0,
   }
   for (let index = 0; index < fn.parameters.length; index++) {
@@ -49,87 +42,6 @@ export function createExpressionContext(
       context.instructionCount += 1
     }
   }
-  const incoming = fn.blocks.map(block => block.parameters.map((): ValueID[] => []))
-  const recordEdge = (block: number, arguments_: ValueID[]): void => {
-    for (let index = 0; index < arguments_.length; index++) {
-      incoming[block]?.[index]?.push(arguments_[index]!)
-    }
-  }
-  for (const block of fn.blocks) {
-    switch (block.terminator.kind) {
-      case 'jump':
-        recordEdge(block.terminator.target.block, block.terminator.target.arguments)
-        break
-      case 'branch':
-        recordEdge(block.terminator.whenTrue.block, block.terminator.whenTrue.arguments)
-        recordEdge(block.terminator.whenFalse.block, block.terminator.whenFalse.arguments)
-        break
-      case 'return':
-      case 'stop':
-      case 'thrown':
-        break
-    }
-  }
-  let changed = true
-  while (changed) {
-    changed = false
-    for (let blockIndex = 0; blockIndex < fn.blocks.length; blockIndex++) {
-      const block = fn.blocks[blockIndex]!
-      for (let parameterIndex = 0; parameterIndex < block.parameters.length; parameterIndex++) {
-        const parameter = block.parameters[parameterIndex]!
-        if (context.storedValueByValue[parameter] != null) continue
-        const arguments_ = incoming[blockIndex]![parameterIndex]!
-        if (arguments_.length === 0) continue
-        const key = canonicalValueKey(arguments_[0]!, context)
-        if (!arguments_.every(argument => canonicalValueKey(argument, context) === key)) continue
-        const source = resolveStoredValue(arguments_[0]!, context)
-        if (source === parameter) continue
-        context.storedValueByValue[parameter] = source
-        changed = true
-      }
-    }
-  }
-  const guaranteed: Array<Set<string> | null> = fn.blocks.map(() => null)
-  guaranteed[fn.entry] = new Set()
-  const queue = [fn.entry]
-  let queueIndex = 0
-  const propagate = (target: number, source: Set<string>, finiteValue?: ValueID): void => {
-    const candidate = new Set(source)
-    if (finiteValue != null) candidate.add(canonicalValueKey(finiteValue, context))
-    const previous = guaranteed[target]
-    const next = previous == null
-      ? candidate
-      : new Set([...previous].filter(value => candidate.has(value)))
-    if (previous != null && previous.size === next.size
-      && [...previous].every(value => next.has(value))) return
-    guaranteed[target] = next
-    queue.push(target)
-  }
-  while (queueIndex < queue.length) {
-    const blockIndex = queue[queueIndex++]!
-    const block = fn.blocks[blockIndex]!
-    const source = guaranteed[blockIndex]!
-    switch (block.terminator.kind) {
-      case 'jump':
-        propagate(block.terminator.target.block, source)
-        break
-      case 'branch': {
-        const check = context.instructionByValue[block.terminator.condition]
-        const finiteValue = check?.kind === 'numberCheck'
-          && (check.predicate === 'finite' || check.predicate === 'integer')
-          ? check.value
-          : undefined
-        propagate(block.terminator.whenTrue.block, source, finiteValue)
-        propagate(block.terminator.whenFalse.block, source)
-        break
-      }
-      case 'return':
-      case 'stop':
-      case 'thrown':
-        break
-    }
-  }
-  context.guaranteedFiniteByBlock = guaranteed.map(values => values == null ? [] : [...values])
   return context
 }
 
@@ -137,8 +49,6 @@ export function createExpressionContext(
 // value is the value that was actually stored, so ordinary analysis, assertion proofs,
 // and requirement expressions all use the same definition of identity.
 export function resolveStoredValue(value: ValueID, context: ExpressionContext): ValueID {
-  const stored = context.storedValueByValue[value]
-  if (stored != null && stored !== value) return resolveStoredValue(stored, context)
   const producer = context.instructionByValue[value]
   if (producer?.kind === 'moduleWrite') return resolveStoredValue(producer.value, context)
   if (producer?.kind === 'property') {
@@ -246,15 +156,6 @@ export function staticRequirement(
       : {kind: 'declaredNumberCheck', predicate: instruction.predicate, expression, site}
   }
   return null
-}
-
-export function numericParameterPath(
-  expression: NumericExpression,
-): {parameter: number; properties: string[]} | null {
-  if (expression.kind === 'parameter') return {parameter: expression.index, properties: []}
-  if (expression.kind !== 'property') return null
-  const base = numericParameterPath(expression.base)
-  return base == null ? null : {...base, properties: [...base.properties, expression.name]}
 }
 
 // A stable name for the runtime value an IR value holds. Forward value facts and exact
