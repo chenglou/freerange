@@ -86,6 +86,82 @@ describe('module state and nullability', () => {
     expect(reader.ensures).toEqual(['return is a finite number'])
   })
 
+  test('a skipped statement resets scalars only when it can run code that writes them', () => {
+    const inertWrite = analyzeSource('module-inert-write.ts', `
+      let value = 1
+      function changeValue(): void { value = Infinity }
+      document.title = 'Gallery'
+      const doubled = value * 2
+      export function readDoubled(): number { return doubled }
+    `)
+    expect(analyzedFunction(inertWrite, 'readDoubled').ensures)
+      .toEqual(['return is a finite integer number from 2 through 2'])
+
+    const unknownCall = analyzeSource('module-unknown-call.ts', `
+      let value = 1
+      function changeValue(): void { value = Infinity }
+      console.log('ready')
+      const doubled = value * 2
+      export function readDoubled(): number { return doubled }
+    `)
+    expect(analyzedFunction(unknownCall, 'readDoubled').ensures[0]).toContain('possibly NaN')
+
+    const directWrite = analyzeSource('module-direct-write.ts', `
+      let changed = 2
+      let untouched = 3
+      function changeUntouched(): void { untouched = Infinity }
+      changed **= 3
+      const changedResult = changed * 2
+      const untouchedResult = untouched * 2
+      export function readChanged(): number { return changedResult }
+      export function readUntouched(): number { return untouchedResult }
+    `)
+    expect(analyzedFunction(directWrite, 'readChanged').ensures[0]).toContain('possibly NaN')
+    expect(analyzedFunction(directWrite, 'readUntouched').ensures)
+      .toEqual(['return is a finite integer number from 6 through 6'])
+  })
+
+  test('creating functions defers their bodies, while iterators and computed names run now', () => {
+    for (const [file, declaration] of [
+      ['module-arrow.ts', 'const callback = (): void => { value = Infinity }'],
+      ['module-default-function.ts', 'export default function () { value = Infinity }'],
+      ['module-method.ts', 'const holder = {run(): void { value = Infinity }}'],
+    ] as const) {
+      const report = analyzeSource(file, `
+        let value = 1
+        ${declaration}
+        const doubled = value * 2
+        export function readDoubled(): number { return doubled }
+      `)
+      expect(analyzedFunction(report, 'readDoubled').ensures)
+        .toEqual(['return is a finite integer number from 2 through 2'])
+    }
+
+    const iterator = analyzeSource('module-iterator.ts', `
+      let value = 1
+      function changeValue(): void { value = Infinity }
+      let first: number | undefined
+      const source = {*[Symbol.iterator]() { changeValue(); yield 1 }}
+      const before = value * 2
+      ;[first] = source
+      const after = value * 2
+      export function readBefore(): number { return before }
+      export function readAfter(): number { return after }
+    `)
+    expect(analyzedFunction(iterator, 'readBefore').ensures)
+      .toEqual(['return is a finite integer number from 2 through 2'])
+    expect(analyzedFunction(iterator, 'readAfter').ensures[0]).toContain('possibly NaN')
+
+    const computedName = analyzeSource('module-computed-name.ts', `
+      let value = 1
+      function changeValue(): string { value = Infinity; return 'run' }
+      const holder = {[changeValue()](): void {}}
+      const doubled = value * 2
+      export function readDoubled(): number { return doubled }
+    `)
+    expect(analyzedFunction(computedName, 'readDoubled').ensures[0]).toContain('possibly NaN')
+  })
+
   test('module arrays publish exactly in fully analyzed files, hedge otherwise', () => {
     const report = analyzeSource('module-array.ts', `
       const items = [3, 5]

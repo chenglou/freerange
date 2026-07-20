@@ -131,14 +131,19 @@ function demoteModuleWritesInNode(
   checker: ts.TypeChecker,
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
   bindings: ModuleBindingIR[],
+  written?: boolean[],
 ): void {
+  const record = (binding: ModuleBindingID): void => {
+    demote(bindings, binding)
+    if (written != null) written[binding] = true
+  }
   const target = (expression: ts.Expression): void => {
     // An assignment target can be a plain identifier or a destructuring pattern; every
     // identifier inside a pattern is conservatively a write.
     if (ts.isIdentifier(expression)) {
       const symbol = checker.getSymbolAtLocation(expression)
       const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-      if (binding != null) demote(bindings, binding)
+      if (binding != null) record(binding)
       return
     }
     const visitPattern = (child: ts.Node): void => {
@@ -147,14 +152,14 @@ function demoteModuleWritesInNode(
       if (ts.isShorthandPropertyAssignment(child)) {
         const symbol = checker.getShorthandAssignmentValueSymbol(child)
         const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-        if (binding != null) demote(bindings, binding)
+        if (binding != null) record(binding)
         ts.forEachChild(child, visitPattern)
         return
       }
       if (ts.isIdentifier(child)) {
         const symbol = checker.getSymbolAtLocation(child)
         const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-        if (binding != null) demote(bindings, binding)
+        if (binding != null) record(binding)
         return
       }
       ts.forEachChild(child, visitPattern)
@@ -221,13 +226,21 @@ export function lowerModuleInitializer(
       // skipped statement can mutate one without any write-position mention of its
       // binding — `Object.assign(config, overrides)` holds the binding in argument
       // position, `scores.push(999)` in receiver position, and an alias variant mentions
-      // it nowhere — so no mention scan is sound for them. Scalars are copied on read;
-      // only a write-position form can change one, and those are collected above.
-      demoteAllModuleWrites(statement, checker, scan.bindingsBySymbol, scan.bindings)
+      // it nowhere — so no mention scan is sound for them. Scalars are copied on read.
+      // Reset one only when this statement writes it directly or can execute code that
+      // reaches one of the file's known scalar writes.
+      const effects = scanSkippedModuleEffects(
+        statement,
+        checker,
+        scan.bindingsBySymbol,
+        scan.bindings,
+      )
       for (let binding = 0; binding < scan.bindings.length; binding++) {
         const category = scan.bindings[binding]!.category
         const declared = declaredKindOf(category)
-        if (category.kind === 'kind' || (declared != null && holdsMutableStructure(declared))) {
+        if (effects.directWrites[binding] === true
+          || (category.kind === 'kind' && effects.invokesUnknownCode)
+          || (declared != null && holdsMutableStructure(declared))) {
           addInstruction(context, statement, {kind: 'moduleHavoc', binding})
         }
       }
@@ -248,6 +261,27 @@ export function lowerModuleInitializer(
     },
     skips,
   }
+}
+
+function containsArrayLiteral(root: ts.Node): boolean {
+  if (ts.isArrayLiteralExpression(root)) return true
+  let found = false
+  ts.forEachChild(root, child => {
+    if (!found && containsArrayLiteral(child)) found = true
+  })
+  return found
+}
+
+// A function's body and parameter defaults run later. A computed object-method name runs
+// while the surrounding object literal is built, so it remains part of the current walk.
+function forEachImmediatelyEvaluatedChild(node: ts.Node, visit: (child: ts.Node) => void): void {
+  if (ts.isFunctionLike(node)) {
+    if (node.name != null && ts.isComputedPropertyName(node.name)) {
+      visit(node.name.expression)
+    }
+    return
+  }
+  ts.forEachChild(node, visit)
 }
 
 // A direct top-level call evaluates its arguments before invoking the callee. When the
@@ -339,23 +373,50 @@ function skippedAtTopLevel(statement: ts.Statement): boolean {
     || ts.isExportDeclaration(statement)
 }
 
-function demoteAllModuleWrites(
+function scanSkippedModuleEffects(
   root: ts.Node,
   checker: ts.TypeChecker,
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
   bindings: ModuleBindingIR[],
-): void {
+): {directWrites: boolean[]; invokesUnknownCode: boolean} {
+  const directWrites: boolean[] = []
+  let invokesUnknownCode = false
   const visit = (node: ts.Node): void => {
-    demoteModuleWritesInNode(node, checker, bindingsBySymbol, bindings)
+    demoteModuleWritesInNode(node, checker, bindingsBySymbol, bindings, directWrites)
+    // Property reads and primitive operators are absent on purpose: the accepted object
+    // model already excludes getters, Proxies, and custom coercion. `using` stays
+    // conservative; Freerange does not model end-of-scope disposal.
+    invokesUnknownCode ||= ts.isCallExpression(node)
+      || ts.isNewExpression(node)
+      || ts.isTaggedTemplateExpression(node)
+      || ts.isAwaitExpression(node)
+      || ts.isYieldExpression(node)
+      || ts.isForOfStatement(node)
+      || ts.isSpreadElement(node)
+      || ts.isArrayBindingPattern(node)
+      || (ts.isVariableDeclarationList(node) && (node.flags & ts.NodeFlags.Using) !== 0)
+      || (ts.isBinaryExpression(node)
+        && (node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
+          || (node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+            && containsArrayLiteral(node.left))))
+      || ts.isJsxElement(node)
+      || ts.isJsxSelfClosingElement(node)
+      || ts.isJsxFragment(node)
+      || ts.isClassDeclaration(node)
+      || ts.isClassExpression(node)
     // A never-lowered declarator counts as a write to its own binding.
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const symbol = checker.getSymbolAtLocation(node.name)
       const binding = symbol == null ? undefined : bindingsBySymbol.get(symbol)
-      if (binding != null) demote(bindings, binding)
+      if (binding != null) {
+        demote(bindings, binding)
+        directWrites[binding] = true
+      }
     }
-    ts.forEachChild(node, visit)
+    forEachImmediatelyEvaluatedChild(node, visit)
   }
   visit(root)
+  return {directWrites, invokesUnknownCode}
 }
 
 function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleBindingCategory {
