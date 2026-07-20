@@ -217,11 +217,11 @@ export function lowerModuleInitializer(
       restoreLowering(context, recovery)
       lowerSupportedArgumentsOfSkippedTopLevelCall(statement, error, context)
       skips.push({site: addSite(context, error.node), reason: error.reason})
-      // Demote what the statement writes directly, then reset the slots of everything the
-      // statement could have written — its own targets plus, since it may call any
-      // function, every binding functions write. Without the reset, a later analyzed
-      // statement would compute from the stale pre-skip value and publish the result
-      // through a fresh binding that nothing demotes. Structural bindings (records,
+      // Demote what the statement writes directly, then reset every slot the statement
+      // could have changed — its own scalar targets and, when it can execute unknown
+      // code, scalars written by functions in this file. Without the reset, a later
+      // analyzed statement would compute from the stale pre-skip value and publish the
+      // result through a fresh binding that nothing demotes. Structural bindings (records,
       // tuples, arrays — nullish-wrapped included) are additionally ALL havocked: a
       // skipped statement can mutate one without any write-position mention of its
       // binding — `Object.assign(config, overrides)` holds the binding in argument
