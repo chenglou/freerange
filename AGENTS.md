@@ -2,7 +2,7 @@
 
 Read and ackowledge our `engineering.md`, and `goal-prompt.md`. Use the latter for extensive clearly-defined tasks.
 
-This project is private. Do NOT consider legacy and interop when refactoring.
+Do NOT preserve legacy compatibility or interoperability when refactoring.
 
 **Important:** do NOT monkey-patch. If you found yourself solving the symptom instead of the root cause, reconsider and do a proper fix.
 

@@ -46,7 +46,7 @@ const VERDICT_SCHEMA = {
 }
 
 const PREAMBLE = [
-  'Repo: /Users/chenglou/github/freerange — TypeScript static analyzer publishing',
+  'Repo: the current Freerange checkout — TypeScript static analyzer publishing',
   'per-function contracts. assumes lines are taken on faith: a claim is unsound only if',
   'falsifiable at runtime while EVERY printed assumes line holds. Honest stops and',
   'imprecision are not findings; findings need a reproduced runtime contradiction or an',
