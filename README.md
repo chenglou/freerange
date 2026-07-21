@@ -240,3 +240,7 @@ These limits may make a result less precise or stop analysis, but they cannot ma
 bun install
 bun run check
 ```
+
+## Credits
+
+[Infer](https://github.com/facebook/infer), [AlphaProof](https://deepmind.google/blog/ai-solves-imo-problems-at-silver-medal-level/)
