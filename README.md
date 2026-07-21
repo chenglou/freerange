@@ -12,7 +12,7 @@ Freerange is deliberately designed to cater to a useful (and growing) subset of 
 ## Install
 
 ```sh
-bun install --dev @chenglou/freerange
+bun install --dev @chenglou/freerange # npm install works too of course
 ```
 
 ## API
@@ -44,7 +44,7 @@ function gridItemWidth(containerWidth: number) {
 gridItemWidth(200)
 ```
 
-`bun fr` outputs:
+`bun fr` (or `npx fr`) outputs:
 
 ```zsh
 index.ts:9:1 - error [inferred-requirement]: call to gridItemWidth violates its nonzero divisor requirement (division at index.ts:6:10)

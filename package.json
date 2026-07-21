@@ -1,6 +1,6 @@
 {
   "name": "@chenglou/freerange",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Static numeric range analysis for TypeScript",
   "license": "MIT",
   "repository": {
@@ -9,12 +9,13 @@
   },
   "type": "module",
   "bin": {
-    "fr": "fr.ts"
+    "fr": "dist/fr.js"
   },
   "files": [
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "dist",
     "fr.ts",
     "src"
   ],
@@ -22,9 +23,11 @@
     "access": "public"
   },
   "scripts": {
+    "build": "bun build fr.ts --target=node --packages=external --banner=\"#!/usr/bin/env node\" --outfile=dist/fr.js",
     "check": "bunx @typescript/native && oxlint --type-aware && bun knip && bun test --parallel=4",
     "demo": "HOST=${HOST:-127.0.0.1}; PORT=${PORT:-3000}; bun ./demo/index.html --host=$HOST:$PORT",
-    "fr": "bun fr.ts"
+    "fr": "bun fr.ts",
+    "prepack": "bun run build"
   },
   "dependencies": {
     "typescript": "^6.0.2"

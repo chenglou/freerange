@@ -1,5 +1,3 @@
-#!/usr/bin/env bun
-
 // Two commands. `fr` checks the project for warnings and errors; `fr --audit` prints
 // every function's contracts and refactoring suggestions. Both take an optional file that
 // narrows the output to that file. Findings mode is the CI gate: it fails on error-level

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.0.2 - 2026-07-21
+
+- Add node support (#2)
+
 ## 0.0.1 - 2026-07-20
 
 Initial public release of `@chenglou/freerange`.
