@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 // Two commands. `fr` checks the project for warnings and errors; `fr --audit` prints
 // every function's contracts and refactoring suggestions. Both take an optional file that

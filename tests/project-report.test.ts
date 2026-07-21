@@ -5,11 +5,30 @@ import {dirname, join} from 'node:path'
 import * as ts from 'typescript'
 import {formatTypeScriptDiagnostics} from '../src/typescript/diagnostics.ts'
 
-const freerangeCli = new URL('../fr.ts', import.meta.url).pathname
+const freerangeCli = new URL('../dist/fr.js', import.meta.url).pathname
+
+function buildCli(): void {
+  const result = Bun.spawnSync({
+    cmd: [process.execPath, 'run', 'build'],
+    cwd: new URL('..', import.meta.url).pathname,
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+  if (result.exitCode !== 0) throw new Error('Failed to build the FreeRange CLI')
+}
+
+function findNodeExecutable(): string {
+  const nodeExecutable = Bun.which('node')
+  if (nodeExecutable == null) throw new Error('The project report tests require Node.js')
+  return nodeExecutable
+}
+
+buildCli()
+const nodeExecutable = findNodeExecutable()
 
 function runCli(cwd: string, ...arguments_: string[]) {
   const result = Bun.spawnSync({
-    cmd: [process.execPath, freerangeCli, ...arguments_],
+    cmd: [nodeExecutable, freerangeCli, ...arguments_],
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
@@ -85,7 +104,7 @@ export function outOfBounds(): number {
     expect(existsSync(join(projectDirectory, 'freerange-report'))).toBe(false)
 
     const colored = Bun.spawnSync({
-      cmd: [process.execPath, freerangeCli],
+      cmd: [nodeExecutable, freerangeCli],
       cwd: projectDirectory,
       env: {...process.env, NO_COLOR: '', FORCE_COLOR: '1'},
       stdout: 'pipe',
@@ -95,7 +114,7 @@ export function outOfBounds(): number {
     expect(colored).toContain('\u001B[90m [out-of-bounds-read]: \u001B[0m')
 
     const coloredAudit = Bun.spawnSync({
-      cmd: [process.execPath, freerangeCli, '--audit'],
+      cmd: [nodeExecutable, freerangeCli, '--audit'],
       cwd: projectDirectory,
       env: {...process.env, NO_COLOR: '', FORCE_COLOR: '1'},
       stdout: 'pipe',

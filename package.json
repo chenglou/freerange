@@ -9,22 +9,26 @@
   },
   "type": "module",
   "bin": {
-    "fr": "fr.ts"
+    "fr": "dist/fr.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "files": [
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
-    "fr.ts",
-    "src"
+    "dist"
   ],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "check": "bunx @typescript/native && oxlint --type-aware && bun knip && bun test --parallel=4",
+    "build": "bun build --target=node --external typescript --outdir dist fr.ts",
+    "check": "bun run build && bunx @typescript/native && oxlint --type-aware && bun knip && bun test --parallel=4",
     "demo": "HOST=${HOST:-127.0.0.1}; PORT=${PORT:-3000}; bun ./demo/index.html --host=$HOST:$PORT",
-    "fr": "bun fr.ts"
+    "fr": "node dist/fr.js",
+    "prepack": "bun run build"
   },
   "dependencies": {
     "typescript": "^6.0.2"

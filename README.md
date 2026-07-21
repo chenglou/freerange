@@ -12,8 +12,11 @@ Freerange is deliberately designed to cater to a useful (and growing) subset of 
 ## Install
 
 ```sh
-bun install --dev @chenglou/freerange
+npm install --save-dev @chenglou/freerange
 ```
+
+The `fr` command requires Node.js 18 or newer. Use your package manager's command
+runner (for example, `npx fr` or `pnpm exec fr`) in scripts and CI.
 
 ## API
 
@@ -44,7 +47,7 @@ function gridItemWidth(containerWidth: number) {
 gridItemWidth(200)
 ```
 
-`bun fr` outputs:
+`fr` outputs:
 
 ```zsh
 index.ts:9:1 - error [inferred-requirement]: call to gridItemWidth violates its nonzero divisor requirement (division at index.ts:6:10)
