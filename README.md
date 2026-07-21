@@ -7,7 +7,7 @@ Freerange shows you the range of every `number` in your TypeScript codebase, let
 - **Fast**. Uses a negligible fraction of TypeScript's analysis time.
 - **Robust**. Adversarially tested by agents against thousands of edge cases.
 
-Freerange is deliberately designed for code that can be refactored, especially code written or maintained by agents. It does not try to understand every TypeScript pattern. It accepts a small, predictable subset and gives concrete guidance for moving important calculations into that subset.
+Freerange is deliberately designed to cater to a useful (and growing) subset of TypeScript, and gives concrete guidance for moving important calculations into that subset, so that your code and math can meet in the middle to unlock the most proof power without much ergonomics drawbacks. AI agents are especially well-suited to refactor such code, and we highly recommend you asking them to do so. However, if you/they do find an unsupported TS feature truly valuable, please file an issue!
 
 ## Install
 
