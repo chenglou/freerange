@@ -22,5 +22,5 @@
     "noPropertyAccessFromIndexSignature": true,
     "skipLibCheck": true
   },
-  "include": ["*.ts", "demo/**/*.ts", "src/**/*.ts", "tests/**/*.ts"]
+  "include": ["*.ts", "demo/**/*.ts", "src/**/*.ts", "tests/**/*.ts", "video_exp_0/**/*.ts"]
 }

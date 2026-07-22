@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Response video editor — Freerange metric experiment</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #07090d;
+      color: #f5f3ee;
+      font-synthesis: none;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      overscroll-behavior: none;
+      background:
+        radial-gradient(circle at 14% -12%, rgb(80 63 147 / 24%), transparent 36%),
+        radial-gradient(circle at 91% 10%, rgb(30 115 114 / 15%), transparent 34%),
+        #07090d;
+    }
+
+    button {
+      margin: 0;
+      border: 0;
+      padding: 0;
+      font: inherit;
+      color: inherit;
+    }
+
+    #app {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #app * {
+      cursor: inherit;
+    }
+
+    button:focus-visible,
+    #crop-frame:focus-visible {
+      outline: 2px solid #f5f3ee;
+      outline-offset: 3px;
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    #toolbar,
+    #stage,
+    #timeline {
+      position: absolute;
+    }
+
+    #toolbar {
+      overflow: hidden;
+      border: 1px solid rgb(255 255 255 / 8%);
+      border-radius: 15px;
+      background: rgb(18 20 27 / 86%);
+      box-shadow: 0 18px 60px rgb(0 0 0 / 24%);
+      backdrop-filter: blur(20px);
+    }
+
+    .toolbar-group {
+      position: absolute;
+      top: 0;
+      display: flex;
+      height: 100%;
+      align-items: center;
+    }
+
+    #toolbar-brand {
+      left: 17px;
+      gap: 11px;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border: 1px solid rgb(159 142 255 / 38%);
+      border-radius: 10px;
+      background: linear-gradient(145deg, #a895ff, #6954de);
+      box-shadow: inset 0 1px rgb(255 255 255 / 30%), 0 6px 20px rgb(105 84 222 / 25%);
+      color: #0e0d16;
+      font-weight: 900;
+      letter-spacing: -0.08em;
+    }
+
+    .brand-copy {
+      display: grid;
+      gap: 1px;
+    }
+
+    .brand-title {
+      font-size: 13px;
+      font-weight: 720;
+      letter-spacing: -0.01em;
+    }
+
+    .brand-subtitle {
+      color: #858895;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    #toolbar-center {
+      left: 50%;
+      gap: 4px;
+      transform: translateX(-50%);
+    }
+
+    .tool-button {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 10px;
+      background: transparent;
+      color: #8f929e;
+    }
+
+    .tool-button.is-active {
+      border: 1px solid rgb(159 142 255 / 22%);
+      background: rgb(159 142 255 / 14%);
+      color: #d9d1ff;
+    }
+
+    #toolbar-status {
+      right: 15px;
+      gap: 9px;
+    }
+
+    .proof-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #64d8b4;
+      box-shadow: 0 0 0 4px rgb(100 216 180 / 10%);
+    }
+
+    #proof-summary {
+      color: #a9abb3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    #stage {
+      overflow: hidden;
+      border-radius: 18px;
+      background:
+        linear-gradient(rgb(255 255 255 / 2%) 1px, transparent 1px),
+        linear-gradient(90deg, rgb(255 255 255 / 2%) 1px, transparent 1px),
+        #101218;
+      background-size: 24px 24px;
+      box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%), 0 22px 70px rgb(0 0 0 / 30%);
+    }
+
+    #stage-formula,
+    #video-formula,
+    #crop-formula,
+    #menu-formula,
+    #timeline-formula {
+      position: absolute;
+      z-index: 30;
+      border: 1px solid rgb(255 255 255 / 10%);
+      border-radius: 8px;
+      background: rgb(7 9 13 / 78%);
+      color: #aeb1bd;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 9px;
+      line-height: 1.2;
+      white-space: nowrap;
+      backdrop-filter: blur(10px);
+      pointer-events: none;
+    }
+
+    #stage-formula {
+      top: 10px;
+      left: 10px;
+      padding: 7px 8px;
+      white-space: pre-line;
+    }
+
+    #video-shell {
+      position: absolute;
+      overflow: hidden;
+      border-radius: 12px;
+      background:
+        radial-gradient(circle at 52% 38%, rgb(126 109 211 / 24%), transparent 34%),
+        linear-gradient(145deg, #272834, #13151b 70%);
+      box-shadow: inset 0 0 0 1px rgb(255 255 255 / 12%), 0 18px 48px rgb(0 0 0 / 32%);
+    }
+
+    #source-video {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0.72;
+      filter: saturate(0.78) contrast(1.05) brightness(0.76);
+    }
+
+    .video-tone {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgb(5 6 9 / 7%), transparent 30%, rgb(5 6 9 / 38%)),
+        linear-gradient(90deg, rgb(38 31 77 / 14%), transparent 58%);
+      pointer-events: none;
+    }
+
+    #video-formula {
+      top: 9px;
+      right: 9px;
+      max-width: calc(100% - 18px);
+      overflow: hidden;
+      padding: 6px 7px;
+      text-overflow: ellipsis;
+    }
+
+    .video-meta {
+      position: absolute;
+      right: 10px;
+      bottom: 9px;
+      z-index: 4;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: rgb(245 243 238 / 76%);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 9px;
+      letter-spacing: 0.04em;
+    }
+
+    .record-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #ff6d7a;
+      box-shadow: 0 0 0 3px rgb(255 109 122 / 12%);
+    }
+
+    #crop-frame {
+      position: absolute;
+      z-index: 9;
+      border: 1.5px solid #b8a7ff;
+      border-radius: 4px;
+      box-shadow: 0 0 0 9999px rgb(3 4 7 / 48%), 0 0 0 1px rgb(184 167 255 / 22%);
+    }
+
+    #crop-frame::before,
+    #crop-frame::after {
+      position: absolute;
+      content: "";
+      pointer-events: none;
+    }
+
+    #crop-frame::before {
+      top: 0;
+      bottom: 0;
+      left: 33.333%;
+      width: 33.333%;
+      border-right: 1px solid rgb(255 255 255 / 26%);
+      border-left: 1px solid rgb(255 255 255 / 26%);
+    }
+
+    #crop-frame::after {
+      top: 33.333%;
+      right: 0;
+      left: 0;
+      height: 33.333%;
+      border-top: 1px solid rgb(255 255 255 / 26%);
+      border-bottom: 1px solid rgb(255 255 255 / 26%);
+    }
+
+    #crop-formula {
+      overflow: hidden;
+      padding: 5px 6px;
+      color: #e1dcff;
+      font-size: 8px;
+      line-height: 1.25;
+      white-space: pre-line;
+    }
+
+    .crop-handle {
+      position: absolute;
+      z-index: 3;
+      width: var(--crop-handle-size);
+      height: var(--crop-handle-size);
+      border: 2px solid #16131f;
+      border-radius: 3px;
+      background: #c7baff;
+      box-shadow: 0 0 0 1px rgb(255 255 255 / 42%), 0 3px 10px rgb(0 0 0 / 35%);
+    }
+
+    .crop-handle[data-handle="nw"] {top: 0; left: 0; transform: translate(-50%, -50%);}
+    .crop-handle[data-handle="n"] {top: 0; left: 50%; transform: translate(-50%, -50%);}
+    .crop-handle[data-handle="ne"] {top: 0; right: 0; transform: translate(50%, -50%);}
+    .crop-handle[data-handle="e"] {top: 50%; right: 0; transform: translate(50%, -50%);}
+    .crop-handle[data-handle="se"] {right: 0; bottom: 0; transform: translate(50%, 50%);}
+    .crop-handle[data-handle="s"] {bottom: 0; left: 50%; transform: translate(-50%, 50%);}
+    .crop-handle[data-handle="sw"] {bottom: 0; left: 0; transform: translate(-50%, 50%);}
+    .crop-handle[data-handle="w"] {top: 50%; left: 0; transform: translate(-50%, -50%);}
+
+    .snap-target {
+      position: absolute;
+      z-index: 3;
+      display: grid;
+      place-items: center;
+      border: 1px dashed rgb(89 207 199 / 38%);
+      border-radius: 13px;
+      color: rgb(89 207 199 / 55%);
+      font-size: 12px;
+      opacity: 0;
+    }
+
+    #menu-root {
+      position: absolute;
+      z-index: 40;
+      filter: drop-shadow(0 18px 28px rgb(0 0 0 / 28%));
+    }
+
+    #menu-panel {
+      position: absolute;
+      overflow: hidden;
+      border: 1px solid rgb(255 255 255 / 11%);
+      border-radius: 16px;
+      background: rgb(21 23 31 / 94%);
+      box-shadow: inset 0 1px rgb(255 255 255 / 5%);
+      backdrop-filter: blur(22px);
+    }
+
+    .menu-content {
+      position: absolute;
+      inset: 8px;
+      display: grid;
+      align-content: start;
+      gap: 5px;
+    }
+
+    #menu-formula {
+      position: static;
+      max-width: 100%;
+      padding: 5px 6px;
+      color: #b9e5df;
+      font-size: 7.5px;
+      line-height: 1.22;
+      white-space: pre-line;
+    }
+
+    .proof-list {
+      display: grid;
+      gap: 3px;
+    }
+
+    .proof-row {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 4px;
+      align-items: start;
+      color: #9ca0ac;
+      font-size: 7.5px;
+      line-height: 1.15;
+    }
+
+    .proof-kind {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 7px;
+      letter-spacing: 0.06em;
+    }
+
+    .proof-kind.static {color: #64d8b4;}
+    .proof-kind.runtime {color: #f6c66e;}
+    .proof-kind.outside {color: #ff8290;}
+
+    #menu-launcher {
+      position: absolute;
+      z-index: 3;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgb(255 255 255 / 16%);
+      border-radius: 14px;
+      background: linear-gradient(145deg, #87ded5, #53b7b0);
+      box-shadow: inset 0 1px rgb(255 255 255 / 32%), 0 8px 20px rgb(54 170 163 / 20%);
+      color: #0c2322;
+    }
+
+    .launcher-glyph {
+      display: grid;
+      grid-template-columns: repeat(2, 5px);
+      grid-template-rows: repeat(2, 5px);
+      gap: 3px;
+    }
+
+    .launcher-glyph i {
+      display: block;
+      border: 1.5px solid currentColor;
+      border-radius: 1px;
+    }
+
+    #timeline {
+      overflow: hidden;
+      border-radius: 16px;
+      background: rgb(16 18 24 / 95%);
+      box-shadow: inset 0 0 0 1px rgb(255 255 255 / 8%), 0 18px 60px rgb(0 0 0 / 24%);
+    }
+
+    #timeline-header {
+      position: absolute;
+      top: 0;
+      right: 0;
+      left: 0;
+      height: 46px;
+    }
+
+    #timeline-formula {
+      top: 5px;
+      right: 10px;
+      left: 10px;
+      padding: 4px 6px;
+      color: #f2b6d7;
+      font-size: 7.5px;
+      line-height: 1.05;
+      white-space: pre-line;
+    }
+
+    #timeline-track {
+      position: absolute;
+      overflow: hidden;
+      border-radius: 9px;
+      background:
+        linear-gradient(180deg, rgb(255 255 255 / 3%), transparent),
+        repeating-linear-gradient(90deg, transparent 0 39px, rgb(255 255 255 / 5%) 39px 40px),
+        #0d0f14;
+      box-shadow: inset 0 0 0 1px rgb(255 255 255 / 9%);
+    }
+
+    .time-label {
+      position: absolute;
+      top: 7px;
+      z-index: 2;
+      color: #686c76;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 8px;
+      transform: translateX(-50%);
+    }
+
+    .time-label:first-child {left: 2%; transform: none;}
+    .time-label:nth-child(2) {left: 25%;}
+    .time-label:nth-child(3) {left: 50%;}
+    .time-label:nth-child(4) {left: 75%;}
+    .time-label:last-child {right: 2%; transform: none;}
+
+    .waveform {
+      position: absolute;
+      right: 10px;
+      bottom: 12px;
+      left: 10px;
+      height: 27px;
+      opacity: 0.34;
+      background:
+        linear-gradient(180deg, transparent 48%, #8c909c 48% 52%, transparent 52%),
+        repeating-linear-gradient(90deg, transparent 0 3px, #9ea1aa 3px 4px, transparent 4px 8px);
+      clip-path: polygon(0 50%, 1% 30%, 2% 66%, 3% 42%, 4% 76%, 5% 26%, 6% 55%, 7% 36%, 8% 80%, 9% 20%, 10% 62%, 12% 36%, 14% 72%, 16% 28%, 18% 57%, 20% 22%, 22% 68%, 24% 34%, 26% 77%, 28% 27%, 30% 63%, 32% 38%, 34% 70%, 36% 30%, 38% 54%, 40% 18%, 42% 76%, 44% 40%, 46% 66%, 48% 23%, 50% 60%, 52% 32%, 54% 81%, 56% 22%, 58% 58%, 60% 38%, 62% 74%, 64% 28%, 66% 63%, 68% 19%, 70% 68%, 72% 34%, 74% 77%, 76% 24%, 78% 61%, 80% 41%, 82% 72%, 84% 28%, 86% 66%, 88% 22%, 90% 58%, 92% 34%, 94% 72%, 96% 27%, 98% 62%, 100% 50%, 100% 50%, 0 50%);
+    }
+
+    #trim-clip {
+      position: absolute;
+      z-index: 5;
+      overflow: visible;
+      border: 1px solid #ec7ebb;
+      border-radius: 7px;
+      background: linear-gradient(90deg, rgb(236 126 187 / 34%), rgb(179 93 181 / 25%));
+      box-shadow: 0 7px 20px rgb(165 68 130 / 14%), inset 0 1px rgb(255 255 255 / 14%);
+    }
+
+    #clip-label {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      color: #ffd7ed;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 9px;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    .trim-handle {
+      position: absolute;
+      top: -1px;
+      bottom: -1px;
+      z-index: 2;
+      border: 1px solid #ffd1ea;
+      background: #ec7ebb;
+      box-shadow: 0 3px 10px rgb(0 0 0 / 28%);
+    }
+
+    #trim-start {left: -1px; border-radius: 7px 3px 3px 7px;}
+    #trim-end {right: -1px; border-radius: 3px 7px 7px 3px;}
+
+    #playhead {
+      position: absolute;
+      z-index: 8;
+      width: 1px;
+      border-radius: 1px;
+      background: #f5f3ee;
+      box-shadow: 0 0 0 1px rgb(0 0 0 / 36%);
+    }
+
+    #playhead::before {
+      position: absolute;
+      top: -1px;
+      left: 50%;
+      width: 9px;
+      height: 9px;
+      border: 1px solid rgb(0 0 0 / 35%);
+      border-radius: 3px 3px 5px 5px;
+      background: #f5f3ee;
+      content: "";
+      transform: translate(-50%, -50%) rotate(45deg);
+    }
+
+    #interaction-hint {
+      position: absolute;
+      right: 14px;
+      bottom: 8px;
+      color: #5d606a;
+      font-size: 8px;
+      letter-spacing: 0.02em;
+    }
+
+    #viewport-warning {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      display: none;
+      place-items: center;
+      padding: 24px;
+      background: #07090d;
+      color: #d8d9df;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: center;
+      white-space: pre-line;
+    }
+
+    #app[data-viewport-supported="false"] #viewport-warning {
+      display: grid;
+    }
+
+    @media (max-width: 920px) {
+      #toolbar-center,
+      #proof-summary {
+        display: none;
+      }
+    }
+
+    @media (max-width: 760px) {
+      #interaction-hint,
+      #video-formula,
+      .video-meta {
+        display: none;
+      }
+
+      .brand-subtitle {
+        display: none;
+      }
+
+    }
+
+    @media (max-height: 450px) {
+      #video-formula,
+      .video-meta {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main id="app" aria-label="Response video editor metric experiment">
+    <header id="toolbar">
+      <div id="toolbar-brand" class="toolbar-group">
+        <div class="brand-mark" aria-hidden="true">R</div>
+        <div class="brand-copy">
+          <div class="brand-title">Response editor</div>
+          <div class="brand-subtitle">responsive metric experiment 0</div>
+        </div>
+      </div>
+      <div id="toolbar-center" class="toolbar-group" aria-hidden="true">
+        <div class="tool-button">↶</div>
+        <div class="tool-button">↷</div>
+        <div class="tool-button is-active">⌗</div>
+        <div class="tool-button">◐</div>
+        <div class="tool-button">T</div>
+      </div>
+      <div id="toolbar-status" class="toolbar-group">
+        <span class="proof-dot" aria-hidden="true"></span>
+        <span id="proof-summary">numeric kernel checked · browser boundary explicit</span>
+      </div>
+    </header>
+
+    <section id="stage" aria-label="Video stage">
+      <div id="stage-formula" role="note" aria-label="Stage dimensions"></div>
+      <div id="video-shell">
+        <video id="source-video" autoplay muted loop playsinline preload="metadata">
+          <source src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" type="video/mp4">
+        </video>
+        <div class="video-tone"></div>
+        <div id="video-formula" role="note" aria-label="Video dimensions"></div>
+        <div class="video-meta"><span class="record-dot"></span><span>RESPONSE TAKE 04 · 01:30</span></div>
+        <div id="crop-formula" role="note" aria-label="Crop dimensions"></div>
+        <p id="crop-instructions" class="visually-hidden">Arrow keys resize this handle by one pixel; hold Shift for ten pixels. Enter or Space grows the crop outward by one pixel. Current crop dimensions follow.</p>
+        <div id="crop-frame" role="group" tabindex="0" aria-label="Draggable crop rectangle; use arrow keys to move" aria-describedby="crop-formula">
+          <button type="button" class="crop-handle" data-handle="nw" aria-label="Resize crop from top left" aria-describedby="crop-instructions crop-formula"></button>
+          <button type="button" class="crop-handle" data-handle="n" aria-label="Resize crop from top" aria-describedby="crop-instructions crop-formula"></button>
+          <button type="button" class="crop-handle" data-handle="ne" aria-label="Resize crop from top right" aria-describedby="crop-instructions crop-formula"></button>
+          <button type="button" class="crop-handle" data-handle="e" aria-label="Resize crop from right" aria-describedby="crop-instructions crop-formula"></button>
+          <button type="button" class="crop-handle" data-handle="se" aria-label="Resize crop from bottom right" aria-describedby="crop-instructions crop-formula"></button>
+          <button type="button" class="crop-handle" data-handle="s" aria-label="Resize crop from bottom" aria-describedby="crop-instructions crop-formula"></button>
+          <button type="button" class="crop-handle" data-handle="sw" aria-label="Resize crop from bottom left" aria-describedby="crop-instructions crop-formula"></button>
+          <button type="button" class="crop-handle" data-handle="w" aria-label="Resize crop from left" aria-describedby="crop-instructions crop-formula"></button>
+        </div>
+      </div>
+
+      <div id="snap-top-left" class="snap-target" aria-hidden="true">↖</div>
+      <div id="snap-top-right" class="snap-target" aria-hidden="true">↗</div>
+      <div id="snap-bottom-right" class="snap-target" aria-hidden="true">↘</div>
+      <div id="snap-bottom-left" class="snap-target" aria-hidden="true">↙</div>
+
+      <aside id="menu-root" aria-label="Expandable corner menu">
+        <div id="menu-panel">
+          <div class="menu-content">
+            <div id="menu-formula" role="note" aria-label="Menu dimensions"></div>
+            <div class="proof-list">
+              <div class="proof-row"><span class="proof-kind static">PROVED</span><span>scalar final clamps</span></div>
+              <div class="proof-row"><span class="proof-kind runtime">RUNTIME</span><span>events / coordinates</span></div>
+              <div class="proof-row"><span class="proof-kind outside">UNPROVED</span><span>relations / CSS / media</span></div>
+            </div>
+          </div>
+        </div>
+        <button type="button" id="menu-launcher" aria-label="Drag menu or toggle expansion" aria-controls="menu-panel" aria-expanded="true">
+          <span class="launcher-glyph" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        </button>
+      </aside>
+    </section>
+
+    <section id="timeline" aria-label="Single video timeline">
+      <div id="timeline-header">
+        <div id="timeline-formula" role="note" aria-label="Timeline dimensions"></div>
+      </div>
+      <div id="timeline-track">
+        <span class="time-label">00:00</span>
+        <span class="time-label">00:22</span>
+        <span class="time-label">00:45</span>
+        <span class="time-label">01:07</span>
+        <span class="time-label">01:30</span>
+        <div class="waveform" aria-hidden="true"></div>
+        <div id="trim-clip">
+          <button type="button" id="trim-start" class="trim-handle" role="slider" aria-orientation="horizontal" aria-label="Trim clip start"></button>
+          <div id="clip-label" aria-hidden="true"></div>
+          <button type="button" id="trim-end" class="trim-handle" role="slider" aria-orientation="horizontal" aria-label="Trim clip end"></button>
+        </div>
+        <button type="button" id="playhead" role="slider" aria-orientation="horizontal" aria-label="Move playhead"></button>
+      </div>
+      <div id="interaction-hint">drag crop · trim clip · drag menu to a corner · esc cancels</div>
+    </section>
+    <output id="viewport-warning" aria-live="polite"></output>
+  </main>
+
+  <script type="module" src="./index.ts"></script>
+</body>
+</html>
