@@ -515,6 +515,15 @@ describe('acceptance and module safety', () => {
       export function frameBudgetUsed(startMs: number): number {
         return Math.max(0, performance.now() - startMs)
       }
+      export function randomUnit(): number {
+        return Math.random()
+      }
+      export function reciprocalRandomGap(): number {
+        return 1 / (1 - Math.random())
+      }
+      export function separateRandomCalls(): number {
+        return Math.random() === Math.random() ? 1 : 0
+      }
     `)
     // No parameters at all: the 1..7 range is proven entirely from clientWidth's catalog
     // entry (a nonnegative integer).
@@ -522,6 +531,12 @@ describe('acceptance and module safety', () => {
       .toEqual(['return is a finite integer number from 1 through 7'])
     expect(analyzedFunction(report, 'frameBudgetUsed').ensures)
       .toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${'platform.ts'}:7:28)`])
+    expect(analyzedFunction(report, 'randomUnit').ensures)
+      .toEqual(['return is a finite number at least 0 and less than 1'])
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'reciprocalRandomGap')))
+      .toEqual([])
+    expect(analyzedFunction(report, 'separateRandomCalls').ensures)
+      .toEqual(['return is a finite integer number from 0 through 1'])
   })
 
   test('a possibly NaN value keeps the comparison branch NaN takes at runtime', () => {

@@ -47,6 +47,9 @@ const catalog: PlatformEntry[] = [
   // resolution); Date.now is an integer count of milliseconds.
   {path: ['performance', 'now'], call: true, fact: {lower: 0, upper: Number.MAX_VALUE, integer: false}},
   {path: ['Date', 'now'], call: true, fact: {lower: 0, upper: Number.MAX_VALUE, integer: true}},
+  // Math.random returns one of JavaScript's discrete floating-point numbers below 1.
+  // Writing the predecessor of 1 keeps the exact closed range without adding open bounds.
+  {path: ['Math', 'random'], call: true, fact: {lower: 0, upper: 0.9999999999999999, integer: false}},
 ]
 
 // Matches a property chain rooted at a global whose symbol resolves into a declaration
