@@ -125,6 +125,8 @@ Freerange supports a subset of TS:
 
 Freerange could theoretically support a much larger subset of TS, and did before its public release. Those patterns often made numeric inference and proofs much harder and slower, however, and some questions are undecidable in general. Now that AI agents write code, we strongly recommend asking agents to refactor important calculations into shapes that Freerange analyzes well, guided by `fr --audit`. Code that is easy to analyze tends to resemble functional programming: immutable data, explicit inputs and outputs, and clean, direct control flow.
 
+See [Converting Code for Freerange](conversion-guide.md) for worked examples of common refactors and analysis boundaries.
+
 - **Put important calculations in small named functions.** A React component, callback, or async function can call a plain synchronous helper. Keep any helper functions that Freerange needs to inspect in the same file.
   ```tsx
   export function fittedImageHeight(frameWidth: number, imageWidth: number, imageHeight: number): number {
