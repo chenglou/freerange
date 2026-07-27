@@ -34,14 +34,21 @@ import {
   type AbstractValue,
   type TaggedVariant,
 } from '../domain/value.ts'
+import {
+  createValueIdentityOwner,
+  sameValueIdentity,
+  valueIdentityUsesOwner,
+  type ValueIdentity,
+  type ValueIdentityOwner,
+} from '../domain/value-identity.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import {coveringKindValue, declaredKindOf, type DeclaredKind, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
+  canonicalValueIdentity,
   constantRequirementStatus,
   peelNonzero,
-  canonicalValueKey,
   numericExpression,
   resolveStoredValue,
   sameRuntimeValue,
@@ -67,8 +74,8 @@ type EvaluateFunction = (
   sharedState: SharedState,
   callStack: FunctionID[],
   valueFacts: ValueFact[],
-  parameterIdentityKeys: string[],
-  identityNamespace: string,
+  parameterIdentities: ValueIdentity[],
+  identityOwner: ValueIdentityOwner,
 ) => FunctionEvaluation
 
 export type TransferContext = {
@@ -210,16 +217,32 @@ function evaluateInstructionKinded(
         ? tupleElement(sequence, index)
         : sequence.element
       const length = sequence.kind === 'tuple' ? constantNumber(sequence.elements.length) : sequence.length
-      const indexKey = canonicalValueKey(instruction.index, context.expressionContext)
-      const arrayKey = canonicalValueKey(instruction.array, context.expressionContext)
-      const assumedValid = hasIndexFact(state.valueFacts, 'validIndex', indexKey, arrayKey)
+      const indexIdentity = canonicalValueIdentity(
+        instruction.index,
+        context.expressionContext,
+      )
+      const arrayIdentity = canonicalValueIdentity(
+        instruction.array,
+        context.expressionContext,
+      )
+      const assumedValid = hasIndexFact(
+        state.valueFacts,
+        'validIndex',
+        indexIdentity,
+        arrayIdentity,
+      )
       // Three proofs of in-bounds: a complete prior requirement, intervals, or the strict
       // below-length half from a guard combined with the index's own integer/nonnegative
       // facts. A for-of loop reaches the same third proof through its generated guard.
       const inBounds = assumedValid
         || (index.integer && !index.mayBeNaN && index.lower >= 0 && index.upper < length.lower)
         || (index.integer && !index.mayBeNaN && index.lower >= 0
-          && hasIndexFact(state.valueFacts, 'belowLength', indexKey, arrayKey))
+          && hasIndexFact(
+            state.valueFacts,
+            'belowLength',
+            indexIdentity,
+            arrayIdentity,
+          ))
       // A provably out-of-bounds read: for the asserted form the assertion lied; for the
       // bare form the value is exactly undefined. An empty sequence is the special case
       // where every read is out of bounds.
@@ -263,7 +286,11 @@ function evaluateInstructionKinded(
           state, instruction.index, validIndexNumber(index),
           context.expressionContext.instructionByValue,
         )
-        addValueFact(state.valueFacts, {kind: 'validIndex', index: indexKey, array: arrayKey})
+        addValueFact(state.valueFacts, {
+          kind: 'validIndex',
+          index: indexIdentity,
+          array: arrayIdentity,
+        })
       }
       return passthroughValue(element)
     }
@@ -535,11 +562,14 @@ function evaluateInstructionKinded(
       }
       const arguments_ = instruction.arguments.map(id => requiredValue(state, id))
       const argumentExpressions = instruction.arguments.map(id => numericExpression(id, context.expressionContext))
-      // Parameters use their caller arguments' identity keys. The same small fact list
+      // Parameters use their caller arguments' identities. The same small fact list
       // therefore works inside the callee and comes back after every normal return, so a
       // requirement established by a completed helper call applies below that call.
-      const argumentKeys = instruction.arguments.map(id => canonicalValueKey(id, context.expressionContext))
-      const calleeNamespace = `${context.expressionContext.identityNamespace}call:${instruction.function}:${instruction.site}/`
+      const argumentIdentities = instruction.arguments.map(id =>
+        canonicalValueIdentity(id, context.expressionContext))
+      const calleeOwner = createValueIdentityOwner(
+        context.expressionContext.identityOwner,
+      )
       const evaluation = context.evaluateFunction(
         instruction.function,
         arguments_,
@@ -547,8 +577,8 @@ function evaluateInstructionKinded(
         state.shared,
         context.callStack,
         state.valueFacts,
-        argumentKeys,
-        calleeNamespace,
+        argumentIdentities,
+        calleeOwner,
       )
       // A partial callee's result is discarded wholesale: the callee ran on a clone, and
       // state.shared is assigned only on the complete path below, so a partial callee's
@@ -576,7 +606,7 @@ function evaluateInstructionKinded(
       }
       state.shared = completed.sharedState
       state.valueFacts = completed.valueFacts.filter(fact =>
-        !valueFactUsesNamespace(fact, calleeNamespace))
+        !valueFactUsesOwner(fact, calleeOwner))
       for (let index = 0; index < callee.parameters.length; index++) {
         refineFiniteCallArgument(
           state,
@@ -664,10 +694,13 @@ export function addBoundsAssumption(assumptions: BoundsAssumption[], candidate: 
   }
 }
 
-function valueFactUsesNamespace(fact: ValueFact, namespace: string): boolean {
-  const marker = `v:${namespace}`
-  if (fact.kind === 'nonzero') return fact.value.includes(marker)
-  return fact.index.includes(marker) || fact.array.includes(marker)
+function valueFactUsesOwner(
+  fact: ValueFact,
+  owner: ValueIdentityOwner,
+): boolean {
+  if (fact.kind === 'nonzero') return valueIdentityUsesOwner(fact.value, owner)
+  return valueIdentityUsesOwner(fact.index, owner)
+    || valueIdentityUsesOwner(fact.array, owner)
 }
 
 function sentinelsAdmit(sentinels: 'null' | 'undefined' | 'both', sentinel: 'null' | 'undefined'): boolean {
@@ -1114,8 +1147,8 @@ function refineComparison(
     if (rightProducer?.kind === 'arrayLength') {
       addValueFact(result.valueFacts, {
         kind: 'belowLength',
-        index: canonicalValueKey(comparison.left, expressionContext),
-        array: canonicalValueKey(rightProducer.array, expressionContext),
+        index: canonicalValueIdentity(comparison.left, expressionContext),
+        array: canonicalValueIdentity(rightProducer.array, expressionContext),
       })
     }
   }
@@ -1124,8 +1157,8 @@ function refineComparison(
     if (leftProducer?.kind === 'arrayLength') {
       addValueFact(result.valueFacts, {
         kind: 'belowLength',
-        index: canonicalValueKey(comparison.right, expressionContext),
-        array: canonicalValueKey(leftProducer.array, expressionContext),
+        index: canonicalValueIdentity(comparison.right, expressionContext),
+        array: canonicalValueIdentity(leftProducer.array, expressionContext),
       })
     }
   }
@@ -1212,11 +1245,15 @@ function numberWithFacts(
   const held = state.values[id]
   if (held?.kind !== 'number') return null
   let result = held
-  const key = canonicalValueKey(id, expressionContext)
-  if (state.valueFacts.some(fact => fact.kind === 'validIndex' && fact.index === key)) {
+  const identity = canonicalValueIdentity(id, expressionContext)
+  if (state.valueFacts.some(fact =>
+    fact.kind === 'validIndex'
+    && sameValueIdentity(fact.index, identity))) {
     result = validIndexNumber(result)
   }
-  if (hasNonzeroFact(state.valueFacts, key)) result = excludePointFrom(result, constantNumber(0))
+  if (hasNonzeroFact(state.valueFacts, identity)) {
+    result = excludePointFrom(result, constantNumber(0))
+  }
   return result
 }
 
@@ -1245,7 +1282,10 @@ function recordNonzeroValueFact(
   value: ValueID,
   expressionContext: ExpressionContext,
 ): void {
-  addValueFact(state.valueFacts, {kind: 'nonzero', value: canonicalValueKey(value, expressionContext)})
+  addValueFact(state.valueFacts, {
+    kind: 'nonzero',
+    value: canonicalValueIdentity(value, expressionContext),
+  })
 }
 
 export function requiredBoolean(state: ExecutionState, id: ValueID): AbstractBoolean {

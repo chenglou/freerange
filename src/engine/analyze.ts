@@ -1,11 +1,17 @@
 import {constantNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
+import type {ValueIdentity, ValueIdentityOwner} from '../domain/value-identity.ts'
 import type {BlockID, FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import {finiteInputExpression, finiteInputs} from '../ir/finite-inputs.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
 import {declaredKindOf, declaredKindValue, holdsMutableStructure, type FunctionIR, type ProgramIR} from '../ir/program.ts'
-import {addPrecondition, constantRequirementStatus, createExpressionContext, staticRequirement} from '../requirements/infer.ts'
+import {
+  addPrecondition,
+  constantRequirementStatus,
+  createExpressionContext,
+  staticRequirement,
+} from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {
   completedEvaluation,
@@ -63,7 +69,6 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     initializerState,
     program,
     [],
-    {identityNamespace: 'module/'},
   )
   const moduleValues = publishedModuleValues(program, initializer.run, initializer.evaluation)
   const functionEntrySharedState = seedModuleSlots(program, moduleValues)
@@ -98,7 +103,6 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       [],
       {
         boundsAssumptions: moduleReads[functionID]!.size > 0 ? initializerBounds : [],
-        identityNamespace: `function:${functionID}/`,
       },
     )
     functions.push(publishedAnalysis(fn, evaluation))
@@ -307,8 +311,8 @@ type EvaluationRun = {
 type EvaluationSeed = {
   boundsAssumptions?: BoundsAssumption[]
   valueFacts?: ValueFact[]
-  parameterIdentityKeys?: string[]
-  identityNamespace?: string
+  parameterIdentities?: ValueIdentity[]
+  identityOwner?: ValueIdentityOwner
 }
 
 function runEvaluation(
@@ -334,8 +338,8 @@ function runEvaluation(
   const expressionContext = createExpressionContext(
     fn,
     argumentExpressions,
-    seed.parameterIdentityKeys,
-    seed.identityNamespace ?? fn.name,
+    seed.parameterIdentities,
+    seed.identityOwner,
   )
   const preconditions: InferredPrecondition[] = []
   const boundsAssumptions: BoundsAssumption[] = [...(seed.boundsAssumptions ?? [])]
@@ -365,8 +369,8 @@ function runEvaluation(
       calleeState: SharedState,
       stack: FunctionID[],
       valueFacts: ValueFact[],
-      parameterIdentityKeys: string[],
-      identityNamespace: string,
+      parameterIdentities: ValueIdentity[],
+      identityOwner: ValueIdentityOwner,
     ) => {
       const calleeFn = program.functions[callee]
       if (calleeFn == null) throw new Error(`Unknown function ${callee}`)
@@ -380,7 +384,7 @@ function runEvaluation(
         calleeState,
         program,
         stack,
-        {valueFacts, parameterIdentityKeys, identityNamespace},
+        {valueFacts, parameterIdentities, identityOwner},
       ).evaluation
     },
   }

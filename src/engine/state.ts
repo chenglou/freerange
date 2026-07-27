@@ -1,5 +1,9 @@
 import type {AbstractValue} from '../domain/value.ts'
 import {joinValues, sameValues, widenValue} from '../domain/value.ts'
+import {
+  sameValueIdentity,
+  type ValueIdentity,
+} from '../domain/value-identity.ts'
 
 // Indexed by ModuleBindingID, fixed length per program. Flows through calls, so a
 // callee's module writes are visible to the caller after a completed call. Null means the
@@ -17,24 +21,28 @@ export type ExecutionState = {
 }
 
 export type ValueFact =
-  | {kind: 'nonzero'; value: string}
+  | {kind: 'nonzero'; value: ValueIdentity}
   // The strict `index < array.length` half of a bounds guard. The index's own abstract
   // number must still prove integer, non-NaN, and nonnegative.
-  | {kind: 'belowLength'; index: string; array: string}
+  | {kind: 'belowLength'; index: ValueIdentity; array: ValueIdentity}
   // A requirement or assumption for an asserted read proves the complete condition.
-  | {kind: 'validIndex'; index: string; array: string}
+  | {kind: 'validIndex'; index: ValueIdentity; array: ValueIdentity}
 
-export function hasNonzeroFact(facts: ValueFact[], value: string): boolean {
-  return facts.some(fact => fact.kind === 'nonzero' && fact.value === value)
+export function hasNonzeroFact(facts: ValueFact[], value: ValueIdentity): boolean {
+  return facts.some(fact =>
+    fact.kind === 'nonzero' && sameValueIdentity(fact.value, value))
 }
 
 export function hasIndexFact(
   facts: ValueFact[],
   kind: 'belowLength' | 'validIndex',
-  index: string,
-  array: string,
+  index: ValueIdentity,
+  array: ValueIdentity,
 ): boolean {
-  return facts.some(fact => fact.kind === kind && fact.index === index && fact.array === array)
+  return facts.some(fact =>
+    fact.kind === kind
+    && sameValueIdentity(fact.index, index)
+    && sameValueIdentity(fact.array, array))
 }
 
 export function addValueFact(facts: ValueFact[], candidate: ValueFact): void {
@@ -55,15 +63,19 @@ export function intersectValueFacts(left: ValueFact[], right: ValueFact[]): Valu
 function intersectValueFact(left: ValueFact, right: ValueFact): ValueFact | null {
   if (sameValueFact(left, right)) return left
   if (left.kind === 'nonzero' || right.kind === 'nonzero') return null
-  if (left.index !== right.index || left.array !== right.array) return null
+  if (!sameValueIdentity(left.index, right.index)
+    || !sameValueIdentity(left.array, right.array)) return null
   return {kind: 'belowLength', index: left.index, array: left.array}
 }
 
 function sameValueFact(left: ValueFact, right: ValueFact): boolean {
   if (left.kind !== right.kind) return false
-  if (left.kind === 'nonzero' && right.kind === 'nonzero') return left.value === right.value
+  if (left.kind === 'nonzero' && right.kind === 'nonzero') {
+    return sameValueIdentity(left.value, right.value)
+  }
   if (left.kind === 'nonzero' || right.kind === 'nonzero') return false
-  return left.index === right.index && left.array === right.array
+  return sameValueIdentity(left.index, right.index)
+    && sameValueIdentity(left.array, right.array)
 }
 
 export function emptySharedState(moduleCount: number): SharedState {

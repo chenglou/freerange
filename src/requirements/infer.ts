@@ -1,15 +1,22 @@
 import type {SiteID, ValueID} from '../ir/ids.ts'
 import type {InstructionIR} from '../ir/instructions.ts'
 import type {FunctionIR} from '../ir/program.ts'
+import {
+  createValueIdentityOwner,
+  sameValueIdentity,
+  type ValueIdentity,
+  type ValueIdentityOwner,
+} from '../domain/value-identity.ts'
 import type {InferredPrecondition, NumericExpression} from './model.ts'
 
 export type ExpressionContext = {
   parameterExpressions: Array<NumericExpression | null>
-  // Calls pass the caller's value keys directly, so duplicate arguments and facts created
-  // in a callee refer to the same identity as the caller. Local keys use a nested namespace
-  // to avoid colliding with the caller's ValueIDs.
-  parameterIdentityKeys: string[]
-  identityNamespace: string
+  // Calls pass the caller's identities directly, so duplicate arguments and facts created
+  // in a callee refer to the same stored value. Local identities use the evaluation's
+  // owner token, which distinguishes separate calls without encoding the call path.
+  parameterIdentities: ValueIdentity[]
+  identityOwner: ValueIdentityOwner
+  identityByValue: Array<ValueIdentity | undefined>
   parameterIndexByValue: Array<number | undefined>
   instructionByValue: Array<InstructionIR | undefined>
   instructionCount: number
@@ -18,20 +25,26 @@ export type ExpressionContext = {
 export function createExpressionContext(
   fn: FunctionIR,
   parameterExpressions: Array<NumericExpression | null>,
-  parameterIdentityKeys?: string[],
-  identityNamespace = `${fn.name}/`,
+  parameterIdentities?: ValueIdentity[],
+  identityOwner = createValueIdentityOwner(),
 ): ExpressionContext {
-  const identityKeys = parameterIdentityKeys ?? fn.parameters.map((_, index) => `p${index}`)
-  if (identityKeys.length !== fn.parameters.length) {
-    throw new Error(`Expected ${fn.parameters.length} parameter identity keys for ${fn.name}`)
-  }
   const context: ExpressionContext = {
     parameterExpressions,
-    parameterIdentityKeys: identityKeys,
-    identityNamespace,
+    parameterIdentities: [],
+    identityOwner,
+    identityByValue: [],
     parameterIndexByValue: [],
     instructionByValue: [],
     instructionCount: 0,
+  }
+  context.parameterIdentities = parameterIdentities
+    ?? fn.parameters.map(parameter => ({
+      kind: 'local',
+      owner: identityOwner,
+      value: parameter.value,
+    }))
+  if (context.parameterIdentities.length !== fn.parameters.length) {
+    throw new Error(`Expected ${fn.parameters.length} parameter identities for ${fn.name}`)
   }
   for (let index = 0; index < fn.parameters.length; index++) {
     context.parameterIndexByValue[fn.parameters[index]!.value] = index
@@ -159,29 +172,67 @@ export function staticRequirement(
   return null
 }
 
-// A stable name for the runtime value an IR value holds. Forward value facts and exact
+// A stable identity for the runtime value an IR value holds. Forward value facts and exact
 // same-value operations share this rule instead of maintaining separate notions of
 // identity. Property and array reads are stable under the accepted subset's immutability
 // rules; module and platform reads stay value-keyed because they may change between reads.
-export function canonicalValueKey(value: ValueID, context: ExpressionContext): string {
+export function canonicalValueIdentity(
+  value: ValueID,
+  context: ExpressionContext,
+): ValueIdentity {
+  const cached = context.identityByValue[value]
+  if (cached != null) return cached
   const stored = resolveStoredValue(value, context)
-  if (stored !== value) return canonicalValueKey(stored, context)
+  if (stored !== value) {
+    const identity = canonicalValueIdentity(stored, context)
+    context.identityByValue[value] = identity
+    return identity
+  }
   const parameterIndex = context.parameterIndexByValue[value]
-  if (parameterIndex != null) return context.parameterIdentityKeys[parameterIndex] ?? `p${parameterIndex}`
+  if (parameterIndex != null) {
+    const identity = context.parameterIdentities[parameterIndex]
+    if (identity == null) throw new Error(`Missing identity for parameter ${parameterIndex}`)
+    context.identityByValue[value] = identity
+    return identity
+  }
   const producer = context.instructionByValue[value]
+  let identity: ValueIdentity
   if (producer?.kind === 'property') {
-    return `${canonicalValueKey(producer.object, context)}.${JSON.stringify(producer.property)}`
+    identity = {
+      kind: 'property',
+      object: canonicalValueIdentity(producer.object, context),
+      property: producer.property,
+    }
+  } else if (producer?.kind === 'arrayLength') {
+    identity = {
+      kind: 'property',
+      object: canonicalValueIdentity(producer.array, context),
+      property: 'length',
+    }
+  } else if (producer?.kind === 'stringLength') {
+    identity = {
+      kind: 'property',
+      object: canonicalValueIdentity(producer.value, context),
+      property: 'length',
+    }
+  } else if (producer?.kind === 'arrayIndex') {
+    identity = {
+      kind: 'arrayIndex',
+      array: canonicalValueIdentity(producer.array, context),
+      index: canonicalValueIdentity(producer.index, context),
+    }
+  } else {
+    identity = {kind: 'local', owner: context.identityOwner, value}
   }
-  if (producer?.kind === 'arrayLength') return `${canonicalValueKey(producer.array, context)}.length`
-  if (producer?.kind === 'stringLength') return `${canonicalValueKey(producer.value, context)}.length`
-  if (producer?.kind === 'arrayIndex') {
-    return `${canonicalValueKey(producer.array, context)}[${canonicalValueKey(producer.index, context)}]`
-  }
-  return `v:${context.identityNamespace}${value}`
+  context.identityByValue[value] = identity
+  return identity
 }
 
 export function sameRuntimeValue(left: ValueID, right: ValueID, context: ExpressionContext): boolean {
-  return left === right || canonicalValueKey(left, context) === canonicalValueKey(right, context)
+  return left === right || sameValueIdentity(
+    canonicalValueIdentity(left, context),
+    canonicalValueIdentity(right, context),
+  )
 }
 
 export function addPrecondition(preconditions: InferredPrecondition[], candidate: InferredPrecondition): void {
