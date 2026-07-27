@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Video Geometry · Freerange Experiment 1</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-synthesis: none;
+      --accent: #f8cf3e;
+      --accent-strong: #ffe469;
+      --ink: #f5f4ef;
+      --muted: #979aa6;
+      --panel: rgba(26, 28, 35, .88);
+      --line: rgba(255, 255, 255, .11);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #08090d;
+      user-select: none;
+      -webkit-user-select: none;
+      overscroll-behavior: none;
+    }
+
+    button,
+    output {
+      font: inherit;
+    }
+
+    button {
+      padding: 0;
+      border: 0;
+    }
+
+    button:focus-visible,
+    #cropOverlay:focus-visible,
+    .trimHandle:focus-visible,
+    #playhead:focus-visible {
+      outline: 2px solid var(--accent-strong);
+      outline-offset: 3px;
+    }
+
+    .visuallyHidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
+    #app {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      touch-action: none;
+      background:
+        radial-gradient(100% 84% at 50% 2%, #1d202a 0%, #101118 48%, #08090d 100%);
+    }
+
+    #header,
+    #stage,
+    #timelineArea,
+    #previewShell,
+    #cropOverlay,
+    #timeline,
+    #mediaPanel,
+    #playButton,
+    #timeReadout {
+      position: absolute;
+    }
+
+    #header {
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 18px;
+      overflow: hidden;
+      background: rgba(9, 10, 14, .7);
+      box-shadow: inset 0 -1px rgba(255, 255, 255, .07);
+      backdrop-filter: blur(18px) saturate(135%);
+      -webkit-backdrop-filter: blur(18px) saturate(135%);
+    }
+
+    #brand {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      gap: 9px;
+      white-space: nowrap;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 660;
+      letter-spacing: .02em;
+    }
+
+    #brandMark {
+      width: 9px;
+      height: 9px;
+      flex: none;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 16px rgba(248, 207, 62, .65);
+    }
+
+    #proofBadge {
+      flex: none;
+      padding: 5px 8px;
+      border-radius: 999px;
+      color: #d5f7df;
+      background: rgba(55, 145, 83, .15);
+      box-shadow: inset 0 0 0 1px rgba(102, 220, 136, .24);
+      font: 650 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    #metricReadout {
+      min-width: 0;
+      margin-left: auto;
+      overflow: hidden;
+      color: var(--muted);
+      font: 500 10px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-align: right;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #stage {
+      z-index: 1;
+      overflow: hidden;
+    }
+
+    #previewShell {
+      overflow: hidden;
+      border-radius: 13px;
+      background: #0a0b0f;
+      box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, .14),
+        0 26px 65px rgba(0, 0, 0, .54),
+        0 7px 18px rgba(0, 0, 0, .38);
+    }
+
+    #preview,
+    #filmstrip {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #previewVignette {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: radial-gradient(115% 100% at 52% 44%, transparent 55%, rgba(0, 0, 0, .44) 100%);
+    }
+
+    #cropOverlay {
+      cursor: move;
+      touch-action: none;
+      box-shadow: 0 0 0 9999px rgba(4, 5, 8, .58);
+    }
+
+    #cropEdge {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, .95),
+        0 0 0 1px rgba(0, 0, 0, .38),
+        0 0 18px rgba(0, 0, 0, .5);
+    }
+
+    .cropGuideVertical,
+    .cropGuideHorizontal {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(255, 255, 255, .55);
+    }
+
+    .cropGuideVertical {
+      top: 0;
+      bottom: 0;
+      width: 1px;
+    }
+
+    .cropGuideHorizontal {
+      right: 0;
+      left: 0;
+      height: 1px;
+    }
+
+    .cropGuideVertical.first { left: 33.333%; }
+    .cropGuideVertical.second { left: 66.666%; }
+    .cropGuideHorizontal.first { top: 33.333%; }
+    .cropGuideHorizontal.second { top: 66.666%; }
+
+    .cropHandle {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      pointer-events: none;
+      filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .7));
+    }
+
+    .cropHandle::after {
+      position: absolute;
+      inset: 4px;
+      content: "";
+    }
+
+    .cropHandle.nw { top: -6px; left: -6px; }
+    .cropHandle.n  { top: -6px; left: calc(50% - 14px); }
+    .cropHandle.ne { top: -6px; right: -6px; }
+    .cropHandle.e  { top: calc(50% - 14px); right: -6px; }
+    .cropHandle.se { right: -6px; bottom: -6px; }
+    .cropHandle.s  { bottom: -6px; left: calc(50% - 14px); }
+    .cropHandle.sw { bottom: -6px; left: -6px; }
+    .cropHandle.w  { top: calc(50% - 14px); left: -6px; }
+
+    .cropHandle.nw::after { border-top: 4px solid white; border-left: 4px solid white; border-radius: 5px 0 0; }
+    .cropHandle.ne::after { border-top: 4px solid white; border-right: 4px solid white; border-radius: 0 5px 0 0; }
+    .cropHandle.se::after { border-right: 4px solid white; border-bottom: 4px solid white; border-radius: 0 0 5px; }
+    .cropHandle.sw::after { border-bottom: 4px solid white; border-left: 4px solid white; border-radius: 0 0 0 5px; }
+    .cropHandle.n::after,
+    .cropHandle.s::after {
+      width: 20px;
+      height: 4px;
+      border-radius: 2px;
+      background: white;
+    }
+    .cropHandle.w::after,
+    .cropHandle.e::after {
+      width: 4px;
+      height: 20px;
+      border-radius: 2px;
+      background: white;
+    }
+
+    #timelineArea {
+      z-index: 12;
+      background: rgba(12, 13, 18, .91);
+      box-shadow: inset 0 1px rgba(255, 255, 255, .075);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    #playButton {
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: #101115;
+      background: #faf9f4;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, .42);
+      cursor: pointer;
+    }
+
+    #playIcon {
+      width: 0;
+      height: 0;
+      margin-left: 3px;
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      border-left: 11px solid currentColor;
+    }
+
+    #playButton.playing #playIcon {
+      width: 11px;
+      height: 14px;
+      margin-left: 0;
+      border: 0;
+      background: linear-gradient(90deg, currentColor 0 4px, transparent 4px 7px, currentColor 7px 11px);
+    }
+
+    #timeReadout {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      color: var(--muted);
+      font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: nowrap;
+    }
+
+    #currentTime {
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    #timeline {
+      overflow: visible;
+      border-radius: 10px;
+      background: #181a21;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .11);
+      touch-action: none;
+    }
+
+    #leftShade,
+    #rightShade,
+    #trimSelection,
+    #playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      pointer-events: none;
+    }
+
+    #leftShade,
+    #rightShade {
+      z-index: 2;
+      background:
+        repeating-linear-gradient(135deg, rgba(5, 6, 9, .78) 0 6px, rgba(14, 15, 20, .82) 6px 12px);
+    }
+
+    #leftShade { left: 0; border-radius: 10px 0 0 10px; }
+    #rightShade { right: 0; border-radius: 0 10px 10px 0; }
+
+    #trimSelection {
+      z-index: 3;
+      box-shadow:
+        inset 0 3px var(--accent),
+        inset 0 -3px var(--accent);
+    }
+
+    .trimHandle {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 18px;
+      pointer-events: none;
+      background: linear-gradient(180deg, var(--accent-strong), var(--accent) 55%, #d7a900);
+      box-shadow: 0 0 0 1px rgba(70, 52, 0, .28);
+    }
+
+    .trimHandle::after {
+      position: absolute;
+      top: calc(50% - 8px);
+      width: 6px;
+      height: 16px;
+      border-radius: 2px;
+      background: rgba(67, 50, 0, .58);
+      content: "";
+    }
+
+    #trimStartHandle {
+      right: 100%;
+      border-radius: 10px 0 0 10px;
+    }
+
+    #trimStartHandle::after { right: 4px; }
+
+    #trimEndHandle {
+      left: 100%;
+      border-radius: 0 10px 10px 0;
+    }
+
+    #trimEndHandle::after { left: 4px; }
+
+    #playhead {
+      z-index: 5;
+      width: 3px;
+      border-radius: 2px;
+      background: white;
+      box-shadow: 0 0 10px rgba(0, 0, 0, .85);
+    }
+
+    #playhead::before {
+      position: absolute;
+      top: -8px;
+      left: -5px;
+      width: 0;
+      height: 0;
+      border-top: 0;
+      border-right: 6px solid transparent;
+      border-bottom: 7px solid white;
+      border-left: 6px solid transparent;
+      content: "";
+    }
+
+    #scrubBubble {
+      position: absolute;
+      z-index: 8;
+      top: -35px;
+      padding: 5px 8px;
+      border-radius: 7px;
+      color: var(--ink);
+      background: rgba(20, 22, 28, .96);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12), 0 5px 16px rgba(0, 0, 0, .45);
+      font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      pointer-events: none;
+    }
+
+    #mediaPanel {
+      z-index: 50;
+      overflow: hidden;
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, .12),
+        inset 0 1px rgba(255, 255, 255, .07),
+        0 22px 54px rgba(0, 0, 0, .58);
+      backdrop-filter: blur(24px) saturate(150%);
+      -webkit-backdrop-filter: blur(24px) saturate(150%);
+      touch-action: none;
+    }
+
+    #mediaHeader {
+      position: absolute;
+      inset: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 11px;
+      color: var(--ink);
+      cursor: grab;
+    }
+
+    #mediaGrip {
+      display: grid;
+      grid-template-columns: repeat(2, 3px);
+      gap: 3px;
+      width: 9px;
+      flex: none;
+    }
+
+    #mediaGrip i {
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: #868a95;
+    }
+
+    #mediaLabel {
+      font-size: 12px;
+      font-weight: 680;
+      letter-spacing: .02em;
+    }
+
+    #mediaCount {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #mediaToggle {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      color: var(--ink);
+      background: rgba(255, 255, 255, .08);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
+      cursor: pointer;
+    }
+
+    #mediaToggleGlyph {
+      display: block;
+      font-size: 15px;
+      line-height: 1;
+      transform-origin: 50% 50%;
+    }
+
+    .mediaItem {
+      position: absolute;
+      overflow: hidden;
+      border-radius: 8px;
+      background-color: #1a1c22;
+      background-position: center;
+      background-size: cover;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .11);
+      cursor: pointer;
+    }
+
+    .mediaItem::after {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(155deg, transparent 38%, rgba(5, 6, 9, .5));
+      content: "";
+    }
+
+    .mediaItem.selected {
+      box-shadow:
+        inset 0 0 0 2px var(--accent),
+        0 0 14px rgba(248, 207, 62, .28);
+    }
+
+    .mediaItem[data-media-index="0"] { background-image: linear-gradient(145deg, #28304d 0 38%, #c5776a 39% 53%, #192539 54%); }
+    .mediaItem[data-media-index="1"] { background-image: linear-gradient(160deg, #42637f 0 48%, #b8a673 49% 55%, #234456 56%); }
+    .mediaItem[data-media-index="2"] { background-image: linear-gradient(110deg, #314d43 0 36%, #9bb9b1 37% 48%, #1a332d 49%); }
+
+    #rangeCard {
+      position: absolute;
+      z-index: 100;
+      max-width: min(760px, calc(100vw - 24px));
+      overflow: hidden;
+      padding: 7px 10px;
+      border-radius: 9px;
+      color: #b9bdc8;
+      background: rgba(12, 14, 19, .7);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .075);
+      font: 500 9px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      pointer-events: none;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    @media (max-width: 719px) {
+      #header {
+        gap: 7px;
+        padding: 0 12px;
+      }
+
+      #brand {
+        font-size: 12px;
+      }
+
+      #proofBadge {
+        padding: 4px 6px;
+        font-size: 8px;
+      }
+
+      #metricReadout {
+        max-width: 130px;
+        overflow: visible;
+        font-size: 8px;
+        line-height: 1.2;
+        text-overflow: clip;
+        white-space: normal;
+      }
+
+      #timeReadout {
+        font-size: 9px;
+      }
+
+      #rangeCard {
+        font-size: 8px;
+        line-height: 1.3;
+      }
+    }
+
+    @media (max-width: 339px) {
+      #proofBadge {
+        display: none;
+      }
+
+      #rangeCard {
+        padding: 5px 7px;
+        font-size: 6px;
+        line-height: 1.15;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <p id="keyboardHelp" class="visuallyHidden">The crop rectangle uses Arrow keys to move and Shift plus Arrow keys to resize its right or bottom edge. Timeline sliders use Left and Right Arrow keys; hold Shift for one-second steps.</p>
+    <header id="header">
+      <div id="brand"><span id="brandMark"></span><span>Video Geometry</span></div>
+      <div id="proofBadge" title="Freerange proves the pure geometry; browser checks cover DOM, input, canvas, and animation.">FR geometry</div>
+      <output id="metricReadout"></output>
+    </header>
+
+    <main id="stage">
+      <div id="previewShell">
+        <canvas id="preview" aria-label="Procedural video preview"></canvas>
+        <div id="previewVignette"></div>
+        <div id="cropOverlay" role="group" tabindex="0" aria-label="Crop rectangle" aria-describedby="keyboardHelp">
+          <div id="cropEdge"></div>
+          <div class="cropGuideVertical first"></div>
+          <div class="cropGuideVertical second"></div>
+          <div class="cropGuideHorizontal first"></div>
+          <div class="cropGuideHorizontal second"></div>
+          <div class="cropHandle nw"></div>
+          <div class="cropHandle n"></div>
+          <div class="cropHandle ne"></div>
+          <div class="cropHandle e"></div>
+          <div class="cropHandle se"></div>
+          <div class="cropHandle s"></div>
+          <div class="cropHandle sw"></div>
+          <div class="cropHandle w"></div>
+        </div>
+      </div>
+    </main>
+    <output id="rangeCard"></output>
+
+    <section id="timelineArea" aria-label="Clip timeline">
+      <button id="playButton" type="button" aria-label="Play"><span id="playIcon"></span></button>
+      <output id="timeReadout"><span id="currentTime"></span>&nbsp;/&nbsp;<span id="totalTime"></span></output>
+      <div id="timeline">
+        <canvas id="filmstrip"></canvas>
+        <div id="leftShade"></div>
+        <div id="rightShade"></div>
+        <div id="trimSelection">
+          <div id="trimStartHandle" class="trimHandle" role="slider" tabindex="0" aria-label="Clip start" aria-orientation="horizontal" aria-valuemin="0" aria-valuemax="8.8" aria-valuenow="1.2"></div>
+          <div id="trimEndHandle" class="trimHandle" role="slider" tabindex="0" aria-label="Clip end" aria-orientation="horizontal" aria-valuemin="2.2" aria-valuemax="12" aria-valuenow="9.8"></div>
+        </div>
+        <div id="playhead" role="slider" tabindex="0" aria-label="Playhead" aria-orientation="horizontal" aria-valuemin="1.2" aria-valuemax="9.8" aria-valuenow="4.25"></div>
+        <output id="scrubBubble"></output>
+      </div>
+    </section>
+
+    <aside id="mediaPanel" aria-label="Media clips">
+      <div id="mediaHeader">
+        <span id="mediaGrip"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+        <span id="mediaLabel">Media</span>
+        <span id="mediaCount">3 clips</span>
+      </div>
+      <button id="mediaToggle" type="button" aria-label="Collapse media menu" aria-controls="mediaPanel" aria-expanded="true"><span id="mediaToggleGlyph">−</span></button>
+      <button class="mediaItem" type="button" data-media-index="0" aria-label="Select clip 1"></button>
+      <button class="mediaItem" type="button" data-media-index="1" aria-label="Select clip 2"></button>
+      <button class="mediaItem" type="button" data-media-index="2" aria-label="Select clip 3"></button>
+    </aside>
+  </div>
+
+  <script type="module" src="./index.ts"></script>
+</body>
+</html>
