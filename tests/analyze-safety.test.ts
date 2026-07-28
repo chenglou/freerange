@@ -390,6 +390,10 @@ describe('acceptance and module safety', () => {
 
   test('lowers boolean logical operators with short-circuit shape', () => {
     const report = analyzeSource('logical.ts', `
+      type Point = {x: number; y: number}
+      function sameX(left: Point, right: Point): boolean {
+        return left.x === right.x
+      }
       export function inRange(v: number): boolean {
         return 0 <= v && v <= 100
       }
@@ -400,11 +404,35 @@ describe('acceptance and module safety', () => {
       export function either(v: number): boolean {
         return !(v > 0) || v > 100
       }
+      export function equal(left: Point | null, right: Point): boolean {
+        return left !== null
+          && sameX(left, right)
+          && left.y === right.y
+      }
+      export function missingOrDifferent(left: Point | null, right: Point): boolean {
+        return left === null
+          || left.x !== right.x
+          || left.y !== right.y
+      }
+      export function stored(left: Point | null, right: Point): boolean {
+        const result = left !== null
+          && left.x === right.x
+          && left.y === right.y
+        return result
+      }
+      export function wrapped(left: Point | null, right: Point): boolean {
+        return (left !== null
+          && left.x === right.x
+          && left.y === right.y) satisfies boolean
+      }
     `)
     expect(analyzedFunction(report, 'inRange').ensures).toEqual(['return is boolean'])
     expect(analyzedFunction(report, 'settled').ensures)
       .toEqual(['return is a finite integer number from 0 through 1'])
     expect(analyzedFunction(report, 'either').ensures).toEqual(['return is boolean'])
+    for (const name of ['equal', 'missingOrDifferent', 'stored', 'wrapped']) {
+      expect(analyzedFunction(report, name).ensures).toEqual(['return is boolean'])
+    }
   })
 
   test('lowers object destructuring declarations to property reads', () => {

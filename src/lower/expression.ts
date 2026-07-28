@@ -882,12 +882,10 @@ export function compoundAssignmentOperator(kind: ts.SyntaxKind): Extract<Instruc
   }
 }
 
-// The shared value-producing branch shape: branch on the condition, lower each arm in its
-// own block, and join at a continuation whose single parameter carries the result. Arms are
-// provably assignment-free — assignments lower only through lowerStatementExpression — so
-// no bindings can change across the arms and the join needs no binding merge. Ternaries and
-// the logical operators are the two consumers; lowerIfStatement stays separate (no result
-// value, arms may terminate, and assignments are allowed there).
+// The shared value-producing branch shape: lower each arm in its own block, then join at
+// a continuation whose single parameter carries the result. Arms are assignment-free, so
+// the join needs no binding merge. One entry accepts an existing condition value; the other
+// keeps a compound condition split into branches so each check can narrow later operands.
 function lowerValueBranch(
   node: ts.Expression,
   condition: ValueID,
@@ -904,6 +902,44 @@ function lowerValueBranch(
     whenFalse: {block: whenFalse, arguments: []},
     site: addSite(context, node),
   })
+  return joinValueBranches(
+    node,
+    whenTrue,
+    whenFalse,
+    lowerTrueArm,
+    lowerFalseArm,
+    context,
+  )
+}
+
+function lowerBranchingValue(
+  node: ts.Expression,
+  condition: ts.Expression,
+  lowerTrueArm: () => ValueID,
+  lowerFalseArm: () => ValueID,
+  context: FunctionContext,
+): ValueID {
+  const whenTrue = createBlock(context)
+  const whenFalse = createBlock(context)
+  lowerBranchingCondition(condition, whenTrue, whenFalse, context)
+  return joinValueBranches(
+    node,
+    whenTrue,
+    whenFalse,
+    lowerTrueArm,
+    lowerFalseArm,
+    context,
+  )
+}
+
+function joinValueBranches(
+  node: ts.Expression,
+  whenTrue: number,
+  whenFalse: number,
+  lowerTrueArm: () => ValueID,
+  lowerFalseArm: () => ValueID,
+  context: FunctionContext,
+): ValueID {
   context.currentBlock = context.blocks[whenTrue]!
   const trueValue = lowerTrueArm()
   const trueBlock = context.currentBlock
@@ -937,28 +973,13 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
   // condition as one boolean expression (the previous shape) hid the conjuncts behind a
   // joined block parameter no branch refinement could see through; a conversion pass on
   // the owner's repo caught the asymmetry.
-  const whenTrue = createBlock(context)
-  const whenFalse = createBlock(context)
-  lowerBranchingCondition(expression.condition, whenTrue, whenFalse, context)
-  context.currentBlock = context.blocks[whenTrue]!
-  const trueValue = lowerExpression(expression.whenTrue, context)
-  const trueBlock = context.currentBlock
-  context.currentBlock = context.blocks[whenFalse]!
-  const falseValue = lowerExpression(expression.whenFalse, context)
-  const falseBlock = context.currentBlock
-  const continuation = createBlock(context, 1)
-  terminate(trueBlock, {
-    kind: 'jump',
-    target: {block: continuation, arguments: [trueValue]},
-    site: addSite(context, expression),
-  })
-  terminate(falseBlock, {
-    kind: 'jump',
-    target: {block: continuation, arguments: [falseValue]},
-    site: addSite(context, expression),
-  })
-  context.currentBlock = context.blocks[continuation]!
-  return context.currentBlock.parameters[0]!
+  return lowerBranchingValue(
+    expression,
+    expression.condition,
+    () => lowerExpression(expression.whenTrue, context),
+    () => lowerExpression(expression.whenFalse, context),
+    context,
+  )
 }
 
 // `a && b` evaluates b only when a is true and yields false otherwise; `a || b` mirrors it —
@@ -1017,10 +1038,9 @@ function lowerLogicalExpression(expression: ts.BinaryExpression, context: Functi
   requireBooleanCondition(expression.left, context.checker)
   requireBooleanCondition(expression.right, context.checker)
   const isAnd = expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
-  const condition = lowerExpression(expression.left, context)
-  return lowerValueBranch(
+  return lowerBranchingValue(
     expression,
-    condition,
+    expression.left,
     () => isAnd
       ? lowerExpression(expression.right, context)
       : addInstruction(context, expression, {kind: 'booleanConstant', value: true}),
