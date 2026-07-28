@@ -2,6 +2,7 @@ import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
 import type {FunctionIR, UnsupportedFunctionIR, UnsupportedReason} from '../ir/program.ts'
 import type {BoundsAssumption, InferredPrecondition} from '../requirements/model.ts'
+import type {ConditionReference, ValueReference} from '../requirements/infer.ts'
 import type {SharedState, ValueFact} from './state.ts'
 
 export type RequirementFailure =
@@ -66,7 +67,14 @@ export type AssertionVerdict = {
 // `if (flag > 0) return 10; unsupportedThing()` the true branch returns 10 while the other
 // path stops. Empty `stops` means every path completed.
 export type FunctionEvaluation = {
-  normal: {returnValue: AbstractValue; sharedState: SharedState; valueFacts: ValueFact[]} | null
+  normal: {
+    returnValue: AbstractValue
+    returnOrigin: ValueReference | null
+    returnCondition: ConditionReference | null
+    parameterValues: AbstractValue[]
+    sharedState: SharedState
+    valueFacts: ValueFact[]
+  } | null
   preconditions: InferredPrecondition[]
   boundsAssumptions: BoundsAssumption[]
   assertions: AssertionVerdict[]
@@ -79,6 +87,9 @@ export type FunctionEvaluation = {
 // exists, so partial results structurally cannot flow into those consumers.
 export type CompletedEvaluation = {
   returnValue: AbstractValue
+  returnOrigin: ValueReference | null
+  returnCondition: ConditionReference | null
+  parameterValues: AbstractValue[]
   sharedState: SharedState
   valueFacts: ValueFact[]
   preconditions: InferredPrecondition[]
@@ -89,6 +100,9 @@ export function completedEvaluation(evaluation: FunctionEvaluation): CompletedEv
   if (evaluation.stops.length > 0 || evaluation.normal == null) return null
   return {
     returnValue: evaluation.normal.returnValue,
+    returnOrigin: evaluation.normal.returnOrigin,
+    returnCondition: evaluation.normal.returnCondition,
+    parameterValues: evaluation.normal.parameterValues,
     sharedState: evaluation.normal.sharedState,
     valueFacts: evaluation.normal.valueFacts,
     preconditions: evaluation.preconditions,

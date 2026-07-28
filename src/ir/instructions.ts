@@ -147,7 +147,13 @@ export type EdgeIR = {
 }
 
 export type TerminatorIR =
-  | {kind: 'return'; value: ValueID | null; site: SiteID}
+  | {
+      kind: 'return'
+      value: ValueID | null
+      // Set only on the two exits made by a directly returned boolean condition.
+      conditionOutcome: boolean | null
+      site: SiteID
+    }
   | {kind: 'jump'; target: EdgeIR; site: SiteID}
   | {kind: 'branch'; condition: ValueID; whenTrue: EdgeIR; whenFalse: EdgeIR; site: SiteID}
   // The evaluation must record a stop here instead of returning. Only the file-wide

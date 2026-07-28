@@ -26,12 +26,14 @@ import {
   recordProperty,
   recordPropertiesByName,
   recordValue,
+  sameValues,
   tryJoinValues,
   unknownBoolean,
   type AbstractBoolean,
   type AbstractRecord,
   type AbstractTaggedUnion,
   type AbstractValue,
+  type NullishSentinels,
   type TaggedVariant,
 } from '../domain/value.ts'
 import {
@@ -43,17 +45,22 @@ import {
 } from '../domain/value-identity.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
-import {coveringKindValue, declaredKindOf, type DeclaredKind, type ProgramIR} from '../ir/program.ts'
+import {coveringKindValue, declaredKindOf, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
   canonicalValueIdentity,
   constantRequirementStatus,
   peelNonzero,
   numericExpression,
+  resolveProjectedValueReference,
   resolveStoredValue,
+  resolveValueReference,
   sameRuntimeValue,
   staticRequirement,
+  type ConditionBranch,
+  type ConditionReference,
   type ExpressionContext,
+  type ValueReference,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {completedEvaluation, type FunctionEvaluation, type RequirementFailure, type Stop} from './outcome.ts'
@@ -75,6 +82,7 @@ type EvaluateFunction = (
   callStack: FunctionID[],
   valueFacts: ValueFact[],
   parameterIdentities: ValueIdentity[],
+  parameterOrigins: Array<ValueReference | null>,
   identityOwner: ValueIdentityOwner,
 ) => FunctionEvaluation
 
@@ -282,10 +290,12 @@ function evaluateInstructionKinded(
         }
         // The function's contract now assumes this read is valid. Keep the index facts
         // and the exact array/index relationship for later reads on this path.
-        writeThroughProducers(
-          state, instruction.index, validIndexNumber(index),
-          context.expressionContext.instructionByValue,
-        )
+        if (!writeProjectedValue(
+          state,
+          instruction.index,
+          validIndexNumber(index),
+          context.expressionContext,
+        )) return {kind: 'ends'}
         addValueFact(state.valueFacts, {
           kind: 'validIndex',
           index: indexIdentity,
@@ -455,7 +465,10 @@ function evaluateInstructionKinded(
       const leftNumber = requiredNumberWithFacts(state, instruction.left, context.expressionContext)
       const rightNumber = requiredNumberWithFacts(state, instruction.right, context.expressionContext)
       if (same) {
-        return value(compareSameNumber(intersectSameNumbers(leftNumber, rightNumber), instruction.operator))
+        const operand = intersectSameNumbers(leftNumber, rightNumber)
+        return operand == null
+          ? {kind: 'ends'}
+          : value(compareSameNumber(operand, instruction.operator))
       }
       const intervalResult = compareNumbers(leftNumber, rightNumber, instruction.operator)
       return value(intervalResult)
@@ -567,6 +580,11 @@ function evaluateInstructionKinded(
       // requirement established by a completed helper call applies below that call.
       const argumentIdentities = instruction.arguments.map(id =>
         canonicalValueIdentity(id, context.expressionContext))
+      const argumentOrigins = instruction.arguments.map(value => ({
+        value,
+        context: context.expressionContext,
+        state,
+      }))
       const calleeOwner = createValueIdentityOwner(
         context.expressionContext.identityOwner,
       )
@@ -578,6 +596,7 @@ function evaluateInstructionKinded(
         context.callStack,
         state.valueFacts,
         argumentIdentities,
+        argumentOrigins,
         calleeOwner,
       )
       // A partial callee's result is discarded wholesale: the callee ran on a clone, and
@@ -605,15 +624,20 @@ function evaluateInstructionKinded(
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
+      context.expressionContext.callReturns[instruction.result] = completed.returnOrigin ?? undefined
+      context.expressionContext.callConditions[instruction.result] = completed.returnCondition ?? undefined
       state.valueFacts = completed.valueFacts.filter(fact =>
         !valueFactUsesOwner(fact, calleeOwner))
       for (let index = 0; index < callee.parameters.length; index++) {
-        refineFiniteCallArgument(
+        const argument = instruction.arguments[index]!
+        if (!writeProjectedValue(
           state,
-          instruction.arguments[index]!,
-          callee.parameters[index]!.type,
+          argument,
+          completed.parameterValues[index]!,
           context.expressionContext,
-        )
+        )) {
+          return {kind: 'ends'}
+        }
       }
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
@@ -622,11 +646,15 @@ function evaluateInstructionKinded(
     case 'binary': {
       const left = requiredNumberWithFacts(state, instruction.left, context.expressionContext)
       const right = requiredNumberWithFacts(state, instruction.right, context.expressionContext)
-      const sameOperand = sameRuntimeValue(
+      const sameRuntimeOperand = sameRuntimeValue(
         instruction.left,
         instruction.right,
         context.expressionContext,
-      ) ? intersectSameNumbers(left, right) : null
+      )
+      const sameOperand = sameRuntimeOperand
+        ? intersectSameNumbers(left, right)
+        : null
+      if (sameRuntimeOperand && sameOperand == null) return {kind: 'ends'}
       if (
         (instruction.operator === 'divide' || instruction.operator === 'remainder')
         && isDefinitelyZero(right)
@@ -657,12 +685,12 @@ function evaluateInstructionKinded(
         // Preconditions and assumptions are promises made by the caller. Later uses of
         // this same stored divisor on this path may rely on the promise just recorded.
         recordNonzeroValueFact(state, instruction.right, context.expressionContext)
-        writeThroughProducers(
+        if (!writeProjectedValue(
           state,
           instruction.right,
           excludePointFrom(right, constantNumber(0)),
-          context.expressionContext.instructionByValue,
-        )
+          context.expressionContext,
+        )) return {kind: 'ends'}
         // Ensures assume the requires: with the nonzero requirement recorded, the quotient
         // is computed over the divisor's range with zero cut out. An integer divisor gives
         // a genuinely finite result; a non-integer one can still sit arbitrarily close to
@@ -732,7 +760,7 @@ function refineTagCheck(
   state: ExecutionState,
   check: Extract<InstructionIR, {kind: 'tagCheck'}>,
   truth: boolean,
-  producers: Array<InstructionIR | undefined>,
+  expressionContext: ExpressionContext,
 ): ExecutionState | null {
   const result = cloneState(state)
   // A record operand has nothing to refine (its tag value was never learned); both
@@ -742,23 +770,35 @@ function refineTagCheck(
   const wantMatch = truth !== check.negated
   const [firstKept, ...restKept] = union.variants.filter(variant => (variant.tagValue === check.tagValue) === wantMatch)
   if (firstKept == null) return null
-  writeThroughProducers(result, check.union, {kind: 'taggedUnion', tagProperty: union.tagProperty, variants: [firstKept, ...restKept]}, producers)
-  return result
+  return writeProjectedValue(
+    result,
+    check.union,
+    {
+      kind: 'taggedUnion',
+      tagProperty: union.tagProperty,
+      variants: [firstKept, ...restKept],
+    },
+    expressionContext,
+  ) ? result : null
 }
 
 function refineNullishCheck(
   state: ExecutionState,
   check: Extract<InstructionIR, {kind: 'nullishCheck'}>,
   truth: boolean,
-  producers: Array<InstructionIR | undefined>,
+  expressionContext: ExpressionContext,
 ): ExecutionState | null {
   const result = cloneState(state)
   const operand = requiredValue(result, check.value)
   const isSentinel = truth !== check.negated
   const refined = refineForSentinel(operand, check.sentinel, isSentinel)
   if (refined == null) return null
-  writeThroughProducers(result, check.value, refined, producers)
-  return result
+  return writeProjectedValue(
+    result,
+    check.value,
+    refined,
+    expressionContext,
+  ) ? result : null
 }
 
 function refineForSentinel(
@@ -809,202 +849,404 @@ function refineForSentinel(
 // rebuild the record (and chase through a freshly built record into the value that went
 // in: with `const copy = {columns: grid.columns}`, narrowing copy.columns narrows
 // grid.columns, since the copy's property IS the stored grid.columns read); length reads
-// rebuild the array's length interval. Every write MEETS the destination's current value
-// — a refinement of a stale read must not widen a fresher narrowing already sitting in
-// the record.
+// rebuild the array's length interval. Every write intersects the destination's current
+// value — a refinement of a stale read must not widen a fresher narrowing already sitting
+// in the record. A null result means the path's claims cannot all hold.
 function writeThroughProducers(
   state: ExecutionState,
   id: ValueID,
   refined: AbstractValue,
-  producers: Array<InstructionIR | undefined>,
-): void {
+  expressionContext: ExpressionContext,
+): AbstractValue | null {
+  const producers = expressionContext.instructionByValue
   const current = state.values[id]
-  const met = current == null ? refined : meetValues(current, refined)
-  state.values[id] = met
+  const intersection = current == null ? refined : intersectValues(current, refined)
+  if (intersection == null) return null
+  state.values[id] = intersection
+  const aliases = expressionContext.parameterAliasesByValue[id]
+  if (aliases != null) {
+    for (const alias of aliases) {
+      if (alias === id) continue
+      const aliasValue = state.values[alias]
+      if (aliasValue == null) continue
+      const aliasIntersection = intersectValues(aliasValue, intersection)
+      if (aliasIntersection == null) return null
+      state.values[alias] = aliasIntersection
+    }
+  }
   const producer = producers[id]
   if (producer?.kind === 'property') {
     const parent = state.values[producer.object]
     if (parent?.kind === 'record') {
+      const existing = recordProperty(parent, producer.property)
+      if (existing == null) return null
+      const propertyValue = intersectValues(existing, intersection)
+      if (propertyValue == null) return null
       const rebuilt: AbstractValue = {
         kind: 'record',
         properties: parent.properties.map(property =>
           property.name === producer.property
-            ? {name: property.name, value: meetValues(property.value, met)}
+            ? {name: property.name, value: propertyValue}
             : property),
       }
-      writeThroughProducers(state, producer.object, rebuilt, producers)
+      if (writeThroughProducers(
+        state,
+        producer.object,
+        rebuilt,
+        expressionContext,
+      ) == null) {
+        return null
+      }
     }
     // A property read through a tagged union (box.owner after a tag check on box, or a
     // shared property before one): the refinement meets into every variant that carries
     // the property, so the narrowing sticks on the union binding, not just this read.
     if (parent?.kind === 'taggedUnion') {
-      const rebuildVariant = (variant: TaggedVariant): TaggedVariant => {
+      const variants: TaggedVariant[] = []
+      for (const variant of parent.variants) {
         const existing = recordProperty(variant.record, producer.property)
-        if (existing == null) return variant
-        return {
+        if (existing == null) {
+          variants.push(variant)
+          continue
+        }
+        const propertyValue = intersectValues(existing, intersection)
+        if (propertyValue == null) continue
+        variants.push({
           tagValue: variant.tagValue,
           record: {
             kind: 'record',
             properties: variant.record.properties.map(property =>
               property.name === producer.property
-                ? {name: property.name, value: meetValues(property.value, met)}
+                ? {name: property.name, value: propertyValue}
                 : property),
           },
-        }
+        })
       }
-      const [firstVariant, ...restVariants] = parent.variants
+      const [firstVariant, ...restVariants] = variants
+      if (firstVariant == null) return null
       const rebuilt: AbstractValue = {
         kind: 'taggedUnion',
         tagProperty: parent.tagProperty,
-        variants: [rebuildVariant(firstVariant), ...restVariants.map(rebuildVariant)],
+        variants: [firstVariant, ...restVariants],
       }
-      writeThroughProducers(state, producer.object, rebuilt, producers)
+      if (writeThroughProducers(
+        state,
+        producer.object,
+        rebuilt,
+        expressionContext,
+      ) == null) {
+        return null
+      }
     }
     // A read through a freshly built record narrows the value that went in.
     const parentProducer = producers[producer.object]
     if (parentProducer?.kind === 'object') {
       const source = parentProducer.properties.find(property => property.name === producer.property)
-      if (source != null) writeThroughProducers(state, source.value, met, producers)
+      if (source != null
+        && writeThroughProducers(
+          state,
+          source.value,
+          intersection,
+          expressionContext,
+        ) == null) {
+        return null
+      }
     }
-    return
+    return intersection
   }
-  if (producer?.kind === 'arrayLength' && met.kind === 'number') {
+  if (producer?.kind === 'arrayLength' && intersection.kind === 'number') {
     const parent = state.values[producer.array]
-    if (parent?.kind !== 'array') return
-    const length = meetValues(parent.length, met)
-    if (length.kind !== 'number') return
-    writeThroughProducers(state, producer.array, {kind: 'array', element: parent.element, length}, producers)
+    if (parent?.kind !== 'array') return intersection
+    const length = intersectValues(parent.length, intersection)
+    if (length?.kind !== 'number') return null
+    if (writeThroughProducers(
+      state,
+      producer.array,
+      {kind: 'array', element: parent.element, length},
+      expressionContext,
+    ) == null) return null
   }
+  return intersection
 }
 
-function refineFiniteCallArgument(
+// Copy a callee's narrowing back to the caller value it came from. An identity helper
+// reaches the original argument; a fresh record reaches the values stored in its fields.
+// Calculations stop at their own result because the analyzer does not solve them backward.
+function writeProjectedReference(
+  state: ExecutionState,
+  reference: ValueReference,
+  narrowed: AbstractValue,
+  expressionContext: ExpressionContext,
+): boolean {
+  const projectedByContext = new Map<ExpressionContext, Map<ValueID, AbstractValue>>()
+  const project = (reference: ValueReference, refined: AbstractValue): boolean => {
+    const projectedByValue = projectedByContext.get(reference.context)
+      ?? new Map<ValueID, AbstractValue>()
+    projectedByContext.set(reference.context, projectedByValue)
+    const previous = projectedByValue.get(reference.value)
+    if (previous != null) {
+      const combined = intersectValues(previous, refined)
+      if (combined == null) return false
+      if (sameValues(previous, combined)) return true
+      refined = combined
+    }
+    projectedByValue.set(reference.value, refined)
+
+    let projected = refined
+    if (reference.context === expressionContext) {
+      const intersection = writeThroughProducers(
+        state,
+        reference.value,
+        projected,
+        expressionContext,
+      )
+      if (intersection == null) return false
+      projected = intersection
+    }
+
+    const resolved = resolveProjectedValueReference(reference, expressionContext)
+    if (resolved.context !== reference.context || resolved.value !== reference.value) {
+      return project(resolved, projected)
+    }
+
+    const producer = resolved.context.instructionByValue[resolved.value]
+    if (producer?.kind !== 'object' || projected.kind !== 'record') return true
+    for (const property of producer.properties) {
+      const propertyValue = recordProperty(projected, property.name)
+      if (propertyValue == null) continue
+      if (!project({
+        value: property.value,
+        context: resolved.context,
+        state: resolved.state,
+      }, propertyValue)) return false
+    }
+    return true
+  }
+
+  return project(reference, narrowed)
+}
+
+function writeProjectedValue(
   state: ExecutionState,
   value: ValueID,
-  declared: DeclaredKind,
+  narrowed: AbstractValue,
   expressionContext: ExpressionContext,
-): void {
-  const current = requiredValue(state, value)
-  const refined = refineFiniteValue(current, declared)
-  if (refined == null) return
-  if (refined !== current) {
-    writeThroughProducers(state, value, refined, expressionContext.instructionByValue)
-  }
-  if (declared.kind !== 'record') return
-  const producer = expressionContext.instructionByValue[resolveStoredValue(value, expressionContext)]
-  if (producer?.kind !== 'object') return
-  const declaredProperties = new Map(declared.properties.map(property => [property.name, property.declared]))
-  for (const field of producer.properties) {
-    const fieldKind = declaredProperties.get(field.name)
-    if (fieldKind != null) refineFiniteCallArgument(state, field.value, fieldKind, expressionContext)
-  }
+): boolean {
+  return writeProjectedReference(
+    state,
+    {value, context: expressionContext, state},
+    narrowed,
+    expressionContext,
+  )
 }
 
-function refineFiniteValue(value: AbstractValue, declared: DeclaredKind): AbstractValue | null {
-  if (declared.kind === 'number') {
-    if (declared.interval != null) return value
-    if (value.kind !== 'number') return null
-    return !value.mayBeNaN && isFiniteNumber(value) ? value : finiteNumberPart(value)
-  }
-  if (declared.kind !== 'record') return value
-  if (value.kind === 'record') return refineFiniteRecord(value, declared)
-  if (value.kind !== 'taggedUnion') return null
-  let changed = false
-  const variants: TaggedVariant[] = []
-  for (const variant of value.variants) {
-    const record = refineFiniteRecord(variant.record, declared)
-    if (record == null) return null
-    changed ||= record !== variant.record
-    variants.push(record === variant.record ? variant : {...variant, record})
-  }
-  if (!changed) return value
-  const [first, ...rest] = variants
-  return {...value, variants: [first!, ...rest]}
-}
-
-function refineFiniteRecord(value: AbstractRecord, declared: Extract<DeclaredKind, {kind: 'record'}>): AbstractRecord | null {
-  const declaredProperties = new Map(declared.properties.map(property => [property.name, property.declared]))
-  let changed = false
-  const properties: AbstractRecord['properties'] = []
-  for (const property of value.properties) {
-    const fieldKind = declaredProperties.get(property.name)
-    if (fieldKind == null) {
-      properties.push(property)
-      continue
-    }
-    const refined = refineFiniteValue(property.value, fieldKind)
-    if (refined == null) return null
-    changed ||= refined !== property.value
-    properties.push(refined === property.value ? property : {...property, value: refined})
-  }
-  return changed ? {kind: 'record', properties} : value
-}
-
-// The intersection of two covers of the same runtime value — both are supersets of the
-// truth, so keeping the tighter fact per dimension is sound. Numbers intersect bounds;
-// records, arrays, and tuples meet their structure pointwise (a rebuilt array must not
-// clobber a fresher length narrowing already on the destination); anything else keeps the
-// refined side.
-function meetValues(current: AbstractValue, refined: AbstractValue): AbstractValue {
+// Both values describe the same runtime value. Keep every compatible narrowing and
+// return null when the descriptions cannot both hold.
+function intersectValues(
+  current: AbstractValue,
+  refined: AbstractValue,
+): AbstractValue | null {
   if (current === refined) return current
-  // An exhaustive switch on the refined side, like widenValue: every kind states its
-  // meet behavior, so a future kind cannot silently discard the current side's facts.
+  // A missing-or-value wrapper narrowed to its own opaque inner is the non-missing
+  // branch. Preserve that refinement before the claim-free opaque case below treats the
+  // inner as otherwise unconstrained.
+  if (current.kind === 'maybeNullish'
+    && refined.kind === 'opaque'
+    && refined.content == null) {
+    return intersectValues(current.inner, refined)
+  }
+  // A claim-free opaque is the top value: it can be anything the other side describes.
+  // Handle it before nullable decomposition so its possible null/undefined inhabitants
+  // do not recursively intersect the same opaque inner.
+  if (current.kind === 'opaque' && current.content == null) return refined
+  if (refined.kind === 'opaque' && refined.content == null) return current
+
+  const currentNullable = nullableParts(current)
+  const refinedNullable = nullableParts(refined)
+  if (currentNullable.sentinels != null || refinedNullable.sentinels != null) {
+    const sentinels = currentNullable.sentinels == null
+      || refinedNullable.sentinels == null
+      ? null
+      : intersectSentinels(
+          currentNullable.sentinels,
+          refinedNullable.sentinels,
+        )
+    const inner = currentNullable.inner == null || refinedNullable.inner == null
+      ? null
+      : intersectValues(
+          currentNullable.inner,
+          refinedNullable.inner,
+        )
+    if (inner == null) {
+      return sentinels == null ? null : {kind: 'nullish', sentinels}
+    }
+    return sentinels == null
+      ? inner
+      : {kind: 'maybeNullish', inner, sentinels}
+  }
+
+  if (current.kind !== refined.kind) {
+    return null
+  }
+
   switch (refined.kind) {
     case 'number': {
-      if (current.kind !== 'number') return refined
-      let met = normalizeRefinedNumber({
+      if (current.kind !== 'number') return null
+      let intersection = normalizeRefinedNumber({
         kind: 'number',
         lower: Math.max(current.lower, refined.lower),
         upper: Math.min(current.upper, refined.upper),
         integer: current.integer || refined.integer,
         mayBeNaN: current.mayBeNaN && refined.mayBeNaN,
       })
-      // An intersection keeps every fact either cover proved; only one point fits the
-      // field, and the refined side's is the fresher fact.
+      // The domain carries one excluded point. Prefer the newer fact when both sides
+      // exclude different points; dropping the older exclusion only loses precision.
       const excludedPoint = refined.excludesPoint ?? current.excludesPoint
-      if (excludedPoint != null) met = normalizeRefinedNumber({...met, excludesPoint: excludedPoint})
-      if (!isFiniteNumber(met)) {
+      if (excludedPoint != null) {
+        intersection = normalizeRefinedNumber({
+          ...intersection,
+          excludesPoint: excludedPoint,
+        })
+      }
+      if (!isFiniteNumber(intersection)) {
         const nonFiniteSite = refined.nonFiniteSite ?? current.nonFiniteSite
-        if (nonFiniteSite != null) met.nonFiniteSite = nonFiniteSite
+        if (nonFiniteSite != null) intersection.nonFiniteSite = nonFiniteSite
       }
-      if (met.mayBeNaN) {
+      if (intersection.mayBeNaN) {
         const nanSite = refined.nanSite ?? current.nanSite
-        if (nanSite != null) met.nanSite = nanSite
+        if (nanSite != null) intersection.nanSite = nanSite
       }
-      return met
+      if (numberIntervalsOverlap(intersection, intersection)) return intersection
+      // The domain has no NaN-only value. Either original side remains a sound cover
+      // when NaN is their only common inhabitant.
+      return intersection.mayBeNaN ? refined : null
+    }
+    case 'boolean': {
+      if (current.kind !== 'boolean') return null
+      const result = {
+        kind: 'boolean',
+        canBeTrue: current.canBeTrue && refined.canBeTrue,
+        canBeFalse: current.canBeFalse && refined.canBeFalse,
+      } as const
+      return result.canBeTrue || result.canBeFalse ? result : null
     }
     case 'record': {
-      if (current.kind !== 'record') return refined
+      if (current.kind !== 'record') return null
       const currentProperties = recordPropertiesByName(current)
-      return {
-        kind: 'record',
-        properties: refined.properties.map(property => {
-          const existing = currentProperties.get(property.name)
-          return existing == null ? property : {name: property.name, value: meetValues(existing, property.value)}
-        }),
+      const properties: AbstractRecord['properties'] = []
+      for (const property of refined.properties) {
+        const existing = currentProperties.get(property.name)
+        if (existing == null) {
+          properties.push(property)
+          continue
+        }
+        const value = intersectValues(existing, property.value)
+        if (value == null) return null
+        properties.push({name: property.name, value})
       }
+      return {kind: 'record', properties}
     }
     case 'array': {
-      if (current.kind !== 'array') return refined
-      const length = meetValues(current.length, refined.length)
-      const element = current.element == null ? refined.element
-        : refined.element == null ? current.element
-        : meetValues(current.element, refined.element)
-      return {kind: 'array', element, length: length.kind === 'number' ? length : refined.length}
+      if (current.kind !== 'array') return null
+      const length = intersectValues(current.length, refined.length)
+      if (length?.kind !== 'number') return null
+      if (current.element == null || refined.element == null) {
+        return {kind: 'array', element: null, length}
+      }
+      const element = intersectValues(current.element, refined.element)
+      return element == null ? null : {kind: 'array', element, length}
     }
     case 'tuple': {
-      if (current.kind !== 'tuple' || current.elements.length !== refined.elements.length) return refined
-      return {kind: 'tuple', elements: refined.elements.map((element, index) => meetValues(current.elements[index]!, element))}
+      if (current.kind !== 'tuple'
+        || current.elements.length !== refined.elements.length) return null
+      const elements: AbstractValue[] = []
+      for (let index = 0; index < refined.elements.length; index++) {
+        const element = intersectValues(
+          current.elements[index]!,
+          refined.elements[index]!,
+        )
+        if (element == null) return null
+        elements.push(element)
+      }
+      return {kind: 'tuple', elements}
     }
-    // No pointwise structure to intersect (or, for taggedUnion, none the refinements
-    // produce today): the refined side is the fresher cover of the same runtime value.
-    case 'boolean':
-    case 'void':
+    case 'taggedUnion': {
+      if (current.kind !== 'taggedUnion'
+        || current.tagProperty !== refined.tagProperty) return null
+      const variants: TaggedVariant[] = []
+      for (const right of refined.variants) {
+        const left = current.variants.find(candidate =>
+          candidate.tagValue === right.tagValue
+          && sameRecordPropertySet(candidate.record, right.record))
+        if (left == null) continue
+        const record = intersectValues(left.record, right.record)
+        if (record?.kind === 'record') {
+          variants.push({tagValue: right.tagValue, record})
+        }
+      }
+      const [first, ...rest] = variants
+      return first == null
+        ? null
+        : {
+            kind: 'taggedUnion',
+            tagProperty: refined.tagProperty,
+            variants: [first, ...rest],
+          }
+    }
+    case 'opaque': {
+      if (current.kind !== 'opaque') return null
+      if (current.content != null && refined.content != null
+        && current.content !== refined.content) return null
+      const content = current.content ?? refined.content
+      return content == null ? {kind: 'opaque'} : {kind: 'opaque', content}
+    }
+    case 'void': return current.kind === 'void' ? current : null
     case 'nullish':
     case 'maybeNullish':
-    case 'opaque':
-    case 'taggedUnion':
-      return refined
+      throw new Error('Nullable values were handled before kind dispatch')
   }
+}
+
+function nullableParts(value: AbstractValue): {
+  inner: AbstractValue | null
+  sentinels: NullishSentinels | null
+} {
+  if (value.kind === 'nullish') {
+    return {inner: null, sentinels: value.sentinels}
+  }
+  if (value.kind === 'maybeNullish') {
+    // A claim-free opaque inner may itself be null or undefined. The wrapper records
+    // additional sentinels introduced by a join; it does not limit the opaque value.
+    return {
+      inner: value.inner,
+      sentinels: value.inner.kind === 'opaque' && value.inner.content == null
+        ? 'both'
+        : value.sentinels,
+    }
+  }
+  if (value.kind === 'opaque' && value.content == null) {
+    return {inner: value, sentinels: 'both'}
+  }
+  return {inner: value, sentinels: null}
+}
+
+function intersectSentinels(
+  left: NullishSentinels,
+  right: NullishSentinels,
+): NullishSentinels | null {
+  if (left === right) return left
+  if (left === 'both') return right
+  if (right === 'both') return left
+  return null
+}
+
+function sameRecordPropertySet(
+  left: AbstractRecord,
+  right: AbstractRecord,
+): boolean {
+  if (left.properties.length !== right.properties.length) return false
+  const rightNames = new Set(right.properties.map(property => property.name))
+  return left.properties.every(property => rightNames.has(property.name))
 }
 
 function evaluateNumberCheck(predicate: 'integer' | 'finite' | 'nan', operand: AbstractNumber): AbstractBoolean {
@@ -1034,7 +1276,7 @@ function refineNumberCheck(
   state: ExecutionState,
   check: Extract<InstructionIR, {kind: 'numberCheck'}>,
   truth: boolean,
-  producers: Array<InstructionIR | undefined>,
+  expressionContext: ExpressionContext,
 ): ExecutionState | null {
   const result = cloneState(state)
   const operand = requiredNumber(result, check.value)
@@ -1044,8 +1286,12 @@ function refineNumberCheck(
     // value provably cannot be NaN. The failing branch launders: mayBeNaN clears.
     if (truth) return operand.mayBeNaN ? result : null
     const laundered: AbstractNumber = {...operand, mayBeNaN: false}
-    writeThroughProducers(result, check.value, laundered, producers)
-    return result
+    return writeProjectedValue(
+      result,
+      check.value,
+      laundered,
+      expressionContext,
+    ) ? result : null
   }
   if (truth) {
     // The passing branch proves finiteness for both predicates (isInteger rejects the
@@ -1056,8 +1302,12 @@ function refineNumberCheck(
       refined = {...refined, integer: true, lower: Math.ceil(refined.lower), upper: Math.floor(refined.upper)}
     }
     if (refined.lower > refined.upper) return null
-    writeThroughProducers(result, check.value, refined, producers)
-    return result
+    return writeProjectedValue(
+      result,
+      check.value,
+      refined,
+      expressionContext,
+    ) ? result : null
   }
   // The failing branch holds NaN, the infinities, and (for isInteger) every non-integer —
   // none of which an interval can carve out, except the one provable contradiction: a
@@ -1086,8 +1336,12 @@ function refineComparison(
     const refineTo = (id: ValueID, mustBe: boolean): boolean => {
       const current = requiredBoolean(result, id)
       if (mustBe ? !current.canBeTrue : !current.canBeFalse) return false
-      writeThroughProducers(result, id, {kind: 'boolean', canBeTrue: mustBe, canBeFalse: !mustBe}, producers)
-      return true
+      return writeProjectedValue(
+        result,
+        id,
+        {kind: 'boolean', canBeTrue: mustBe, canBeFalse: !mustBe},
+        expressionContext,
+      )
     }
     const leftKnown = known(leftOperand)
     const rightKnown = known(rightOperand)
@@ -1126,7 +1380,11 @@ function refineComparison(
       refinedRight = withBounds(right, right.lower, Math.min(right.upper, left.upper))
       break
     case 'equal': {
+      // NaN is never equal to itself, so this branch needs an ordinary number shared by
+      // the two intervals; a NaN-only overlap cannot keep it alive.
+      if (!numberIntervalsOverlap(left, right)) return null
       const intersection = intersectSameNumbers(left, right)
+      if (intersection == null) return null
       refinedLeft = intersection
       refinedRight = intersection
       break
@@ -1185,8 +1443,12 @@ function refineComparison(
   // arrayLength's result rebuilds the array value with the narrowed length (so
   // `if (values.length > 0) values[0]!` proves the read), and narrowing a property read
   // rebuilds the record.
-  writeThroughProducers(result, comparison.left, refinedLeft, producers)
-  writeThroughProducers(result, comparison.right, refinedRight, producers)
+  if (!writeProjectedValue(result, comparison.left, refinedLeft, expressionContext)) {
+    return null
+  }
+  if (!writeProjectedValue(result, comparison.right, refinedRight, expressionContext)) {
+    return null
+  }
   recordNonzeroComparisonFacts(result, comparison, expressionContext)
   return result
 }
@@ -1215,10 +1477,170 @@ export function refineCheck(
 ): ExecutionState | null {
   switch (check.kind) {
     case 'compare': return refineComparison(state, check, truth, expressionContext)
-    case 'nullishCheck': return refineNullishCheck(state, check, truth, expressionContext.instructionByValue)
-    case 'numberCheck': return refineNumberCheck(state, check, truth, expressionContext.instructionByValue)
-    case 'tagCheck': return refineTagCheck(state, check, truth, expressionContext.instructionByValue)
+    case 'nullishCheck': return refineNullishCheck(state, check, truth, expressionContext)
+    case 'numberCheck': return refineNumberCheck(state, check, truth, expressionContext)
+    case 'tagCheck': return refineTagCheck(state, check, truth, expressionContext)
   }
+}
+
+export type ConditionRefinements =
+  | {kind: 'notRefinable'}
+  | {
+      kind: 'refined'
+      whenTrue: ExecutionState | null
+      whenFalse: ExecutionState | null
+    }
+
+// A boolean returned by one completed helper call is the condition literal inlining
+// would place here. Refine it in the helper, then copy parameter changes back to the
+// caller arguments. Joined returns have no condition reference.
+export function refineConditionBranches(
+  state: ExecutionState,
+  value: ValueID,
+  expressionContext: ExpressionContext,
+): ConditionRefinements {
+  let reference: ValueReference = {
+    value: resolveStoredValue(value, expressionContext),
+    context: expressionContext,
+    state,
+  }
+  let negated = false
+  while (true) {
+    const producer = reference.context.instructionByValue[reference.value]
+    if (producer?.kind === 'not') {
+      negated = !negated
+      reference = {
+        value: resolveStoredValue(producer.value, reference.context),
+        context: reference.context,
+        state: reference.state,
+      }
+      continue
+    }
+
+    const cached = reference.context.callConditions[reference.value]
+    if (cached != null) {
+      return projectConditionBranches(
+        state,
+        expressionContext,
+        cached.context,
+        negated
+          ? {whenTrue: cached.whenFalse, whenFalse: cached.whenTrue}
+          : cached,
+      )
+    }
+
+    const check = asRefinableCheck(producer)
+    if (check != null) {
+      const checkState = reference.context === expressionContext
+        ? state
+        : stateWithCallerFacts(reference.state, state)
+      if (checkState == null) return {kind: 'notRefinable'}
+      const branches = {
+        whenTrue: refineCheck(
+          checkState,
+          check,
+          !negated,
+          reference.context,
+        ),
+        whenFalse: refineCheck(
+          checkState,
+          check,
+          negated,
+          reference.context,
+        ),
+      }
+      if (reference.context === expressionContext) {
+        return {kind: 'refined', ...branches}
+      }
+      return projectConditionBranches(
+        state,
+        expressionContext,
+        reference.context,
+        {
+          whenTrue: summarizeConditionState(reference.context, branches.whenTrue),
+          whenFalse: summarizeConditionState(reference.context, branches.whenFalse),
+        },
+      )
+    }
+
+    const resolved = resolveProjectedValueReference(reference, expressionContext)
+    if (resolved.context === reference.context && resolved.value === reference.value) {
+      return {kind: 'notRefinable'}
+    }
+    reference = resolved
+  }
+}
+
+function stateWithCallerFacts(
+  referenceState: ExecutionState | undefined,
+  callerState: ExecutionState,
+): ExecutionState | null {
+  if (referenceState == null) return null
+  const result = cloneState(referenceState)
+  for (const fact of callerState.valueFacts) addValueFact(result.valueFacts, fact)
+  return result
+}
+
+function summarizeConditionState(
+  context: ExpressionContext,
+  state: ExecutionState | null,
+): ConditionBranch | null {
+  if (state == null) return null
+  return {
+    parameterValues: context.parameterValueIDs.map(value =>
+      requiredValue(state, value)),
+    valueFacts: state.valueFacts,
+  }
+}
+
+function projectConditionBranches(
+  state: ExecutionState,
+  expressionContext: ExpressionContext,
+  referenceContext: ExpressionContext,
+  branches: Pick<ConditionReference, 'whenTrue' | 'whenFalse'>,
+): ConditionRefinements {
+  return {
+    kind: 'refined',
+    whenTrue: projectConditionState(
+      state,
+      expressionContext,
+      referenceContext,
+      branches.whenTrue,
+    ),
+    whenFalse: projectConditionState(
+      state,
+      expressionContext,
+      referenceContext,
+      branches.whenFalse,
+    ),
+  }
+}
+
+function projectConditionState(
+  state: ExecutionState,
+  expressionContext: ExpressionContext,
+  referenceContext: ExpressionContext,
+  refined: ConditionBranch | null,
+): ExecutionState | null {
+  if (refined == null) return null
+  const result = cloneState(state)
+  for (let parameterIndex = 0; parameterIndex < refined.parameterValues.length; parameterIndex++) {
+    const origin = referenceContext.parameterOrigins[parameterIndex]
+    const narrowed = refined.parameterValues[parameterIndex]
+    if (origin == null || narrowed == null) continue
+    if (!writeProjectedReference(
+      result,
+      origin,
+      narrowed,
+      expressionContext,
+    )) return null
+  }
+  for (const fact of refined.valueFacts) {
+    if (!valueFactUsesOwner(fact, referenceContext.identityOwner)) {
+      addValueFact(result.valueFacts, fact)
+    }
+  }
+  return result
 }
 
 function requiredNumber(state: ExecutionState, id: ValueID): AbstractNumber {
@@ -1381,10 +1803,23 @@ function evaluateBinary(
   }
 }
 
-function intersectSameNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
-  const met = meetValues(left, right)
-  if (met.kind !== 'number') throw new Error('Meeting two numbers produced a non-number')
-  return met
+function intersectSameNumbers(
+  left: AbstractNumber,
+  right: AbstractNumber,
+): AbstractNumber | null {
+  const intersection = intersectValues(left, right)
+  return intersection?.kind === 'number' ? intersection : null
+}
+
+function numberIntervalsOverlap(
+  left: AbstractNumber,
+  right: AbstractNumber,
+): boolean {
+  const lower = Math.max(left.lower, right.lower)
+  const upper = Math.min(left.upper, right.upper)
+  if (lower > upper) return false
+  return !(left.integer || right.integer)
+    || Math.ceil(lower) <= Math.floor(upper)
 }
 
 // These are JavaScript operations on one already-evaluated value, not algebraic rewrites
@@ -1506,27 +1941,52 @@ function createComparisonProof(
   state: ExecutionState,
   context: ExpressionContext,
 ): {
-  same: (left: ValueID, right: ValueID) => boolean
   atMost: (left: ValueID, right: ValueID) => boolean
   strictlyBelow: (left: ValueID, right: ValueID) => boolean
 } {
-  const atMostMemo = new Map<string, boolean>()
+  const atMostMemo = new Map<ValueIdentity, Map<ValueIdentity, boolean>>()
 
-  const heldNumber = (value: ValueID): AbstractNumber | null => {
-    return numberWithFacts(state, resolveStoredValue(value, context), context)
+  const rootReference = (value: ValueID): ValueReference => ({value, context, state})
+
+  const heldNumber = (raw: ValueReference): AbstractNumber | null => {
+    const reference = resolveValueReference(raw)
+    if (reference.state == null) return null
+    return numberWithFacts(
+      reference.state,
+      reference.value,
+      reference.context,
+    )
   }
 
-  const same = (left: ValueID, right: ValueID): boolean => sameRuntimeValue(left, right, context)
+  const referenceIdentity = (raw: ValueReference): ValueIdentity => {
+    const reference = resolveValueReference(raw)
+    return canonicalValueIdentity(reference.value, reference.context)
+  }
 
-  const nonnegative = (value: ValueID): boolean => {
+  const operand = (owner: ValueReference, value: ValueID): ValueReference => ({
+    value,
+    context: owner.context,
+    state: owner.state,
+  })
+
+  const sameReferences = (left: ValueReference, right: ValueReference): boolean =>
+    sameValueIdentity(
+      canonicalValueIdentity(left.value, left.context),
+      canonicalValueIdentity(right.value, right.context),
+    )
+
+  const nonnegative = (value: ValueReference): boolean => {
     const held = heldNumber(value)
     return held != null && held.lower >= 0 && !held.mayBeNaN
   }
 
-  const atMost = (rawLeft: ValueID, rawRight: ValueID): boolean => {
-    const left = resolveStoredValue(rawLeft, context)
-    const right = resolveStoredValue(rawRight, context)
-    if (same(left, right)) return true
+  const atMostReferences = (
+    rawLeft: ValueReference,
+    rawRight: ValueReference,
+  ): boolean => {
+    const left = resolveValueReference(rawLeft)
+    const right = resolveValueReference(rawRight)
+    if (sameReferences(left, right)) return true
 
     const leftNumber = heldNumber(left)
     const rightNumber = heldNumber(right)
@@ -1534,22 +1994,30 @@ function createComparisonProof(
       && !leftNumber.mayBeNaN && !rightNumber.mayBeNaN
       && leftNumber.upper <= rightNumber.lower) return true
 
-    const key = `${left}:${right}`
-    const cached = atMostMemo.get(key)
+    const leftIdentity = referenceIdentity(left)
+    const rightIdentity = referenceIdentity(right)
+    let memoForLeft = atMostMemo.get(leftIdentity)
+    const cached = memoForLeft?.get(rightIdentity)
     if (cached != null) return cached
-    atMostMemo.set(key, false)
+    if (memoForLeft == null) {
+      memoForLeft = new Map()
+      atMostMemo.set(leftIdentity, memoForLeft)
+    }
+    memoForLeft.set(rightIdentity, false)
 
-    const leftProducer = context.instructionByValue[left]
-    const rightProducer = context.instructionByValue[right]
+    const leftProducer = left.context.instructionByValue[left.value]
+    const rightProducer = right.context.instructionByValue[right.value]
     let answer = false
 
     // The defining operand is the cheapest and most common selection proof:
     // min(x, y) <= x and x <= max(x, y). Try exact identity before recursive rules.
     if (leftProducer?.kind === 'minimum') {
-      answer = leftProducer.values.some(operand => same(operand, right))
+      answer = leftProducer.values.some(value =>
+        sameReferences(operand(left, value), right))
     }
     if (!answer && rightProducer?.kind === 'maximum') {
-      answer = rightProducer.values.some(operand => same(left, operand))
+      answer = rightProducer.values.some(value =>
+        sameReferences(left, operand(right, value)))
     }
 
     // Math.min and Math.max are monotone in corresponding operands. Keeping the written
@@ -1557,18 +2025,25 @@ function createComparisonProof(
     // clamps instead of asking the checker to search permutations.
     if (leftProducer?.kind === 'minimum' && rightProducer?.kind === 'minimum'
       && leftProducer.values.length === rightProducer.values.length) {
-      answer = leftProducer.values.every((operand, index) =>
-        atMost(operand, rightProducer.values[index]!))
+      answer = leftProducer.values.every((value, index) =>
+        atMostReferences(
+          operand(left, value),
+          operand(right, rightProducer.values[index]!),
+        ))
     }
 
     if (!answer && leftProducer?.kind === 'binary'
       && leftProducer.operator === 'subtract'
-      && nonnegative(leftProducer.right)) {
-      answer = atMost(leftProducer.left, right)
+      && nonnegative(operand(left, leftProducer.right))) {
+      answer = atMostReferences(operand(left, leftProducer.left), right)
     }
     if (!answer && rightProducer?.kind === 'binary' && rightProducer.operator === 'add') {
-      if (nonnegative(rightProducer.right)) answer = atMost(left, rightProducer.left)
-      if (!answer && nonnegative(rightProducer.left)) answer = atMost(left, rightProducer.right)
+      if (nonnegative(operand(right, rightProducer.right))) {
+        answer = atMostReferences(left, operand(right, rightProducer.left))
+      }
+      if (!answer && nonnegative(operand(right, rightProducer.left))) {
+        answer = atMostReferences(left, operand(right, rightProducer.right))
+      }
     }
     if (!answer && leftProducer?.kind === 'binary' && leftProducer.operator === 'multiply'
       && rightProducer?.kind === 'binary' && rightProducer.operator === 'multiply') {
@@ -1576,9 +2051,14 @@ function createComparisonProof(
       const rightForms = [[rightProducer.left, rightProducer.right], [rightProducer.right, rightProducer.left]] as const
       for (const [leftBase, leftFactor] of leftForms) {
         for (const [rightBase, rightFactor] of rightForms) {
-          if (same(leftFactor, rightFactor)
-            && nonnegative(leftFactor)
-            && atMost(leftBase, rightBase)) answer = true
+          const leftFactorReference = operand(left, leftFactor)
+          const rightFactorReference = operand(right, rightFactor)
+          if (sameReferences(leftFactorReference, rightFactorReference)
+            && nonnegative(leftFactorReference)
+            && atMostReferences(
+              operand(left, leftBase),
+              operand(right, rightBase),
+            )) answer = true
         }
       }
     }
@@ -1587,7 +2067,6 @@ function createComparisonProof(
     // quadratically with user-written operands, so aggregate selection proofs compose on
     // only one side. Bind and assert the relevant component relationship instead.
     if (!answer && leftProducer?.kind === 'maximum' && rightProducer?.kind === 'minimum') {
-      atMostMemo.set(key, false)
       return false
     }
 
@@ -1595,39 +2074,51 @@ function createComparisonProof(
     // Direct add/subtract and common-factor proofs above usually identify the written
     // relationship before the broader selection rules need to inspect every operand.
     if (!answer && leftProducer?.kind === 'maximum') {
-      answer = leftProducer.values.every(operand => atMost(operand, right))
+      answer = leftProducer.values.every(value =>
+        atMostReferences(operand(left, value), right))
     }
     if (!answer && rightProducer?.kind === 'maximum') {
-      answer = rightProducer.values.some(operand => atMost(left, operand))
+      answer = rightProducer.values.some(value =>
+        atMostReferences(left, operand(right, value)))
     }
     if (!answer && leftProducer?.kind === 'minimum') {
-      answer = leftProducer.values.some(operand => atMost(operand, right))
+      answer = leftProducer.values.some(value =>
+        atMostReferences(operand(left, value), right))
     }
     if (!answer && rightProducer?.kind === 'minimum') {
-      answer = rightProducer.values.every(operand => atMost(left, operand))
+      answer = rightProducer.values.every(value =>
+        atMostReferences(left, operand(right, value)))
     }
 
-    atMostMemo.set(key, answer)
+    memoForLeft.set(rightIdentity, answer)
     return answer
   }
 
-  const strictlyBelow = (rawLeft: ValueID, rawRight: ValueID): boolean => {
-    const left = resolveStoredValue(rawLeft, context)
-    const right = resolveStoredValue(rawRight, context)
+  const strictlyBelowReferences = (
+    rawLeft: ValueReference,
+    rawRight: ValueReference,
+  ): boolean => {
+    const left = resolveValueReference(rawLeft)
+    const right = resolveValueReference(rawRight)
     const leftNumber = heldNumber(left)
     const rightNumber = heldNumber(right)
     if (leftNumber != null && rightNumber != null
       && !leftNumber.mayBeNaN && !rightNumber.mayBeNaN
       && leftNumber.upper < rightNumber.lower) return true
 
-    const producer = context.instructionByValue[left]
+    const producer = left.context.instructionByValue[left.value]
     if (producer?.kind !== 'binary' || producer.operator !== 'remainder'
-      || !same(producer.right, right)) return false
-    const divisor = heldNumber(producer.right)
+      || !sameReferences(operand(left, producer.right), right)) return false
+    const divisor = heldNumber(operand(left, producer.right))
     return divisor != null && !divisor.mayBeNaN && divisor.lower > 0
   }
 
-  return {same, atMost, strictlyBelow}
+  return {
+    atMost: (left, right) =>
+      atMostReferences(rootReference(left), rootReference(right)),
+    strictlyBelow: (left, right) =>
+      strictlyBelowReferences(rootReference(left), rootReference(right)),
+  }
 }
 
 function compareNumbers(left: AbstractNumber, right: AbstractNumber, operator: ComparisonOperator): AbstractBoolean {

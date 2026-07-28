@@ -64,14 +64,17 @@ describe('requirements and numeric checks', () => {
     expect(requirementsBesidesInputFiniteness(nestedRequirement)).toHaveLength(1)
     expect(nestedRequirement.assumptions.filter(line => line.includes('divisor at'))).toHaveLength(0)
 
-    for (const name of ['sameArgument', 'sameStoredResult', 'sameProperty', 'sameThroughWrapper']) {
+    for (const name of [
+      'sameArgument',
+      'sameStoredResult',
+      'sameProperty',
+      'sameThroughWrapper',
+      'separateCalls',
+    ]) {
       const fn = report.functions.find(candidate => candidate.name === name)
       if (fn?.kind !== 'partial') throw new Error(`expected ${name} to reject the impossible call`)
       expect(fn.partialReasons[0]).toContain('violates its nonzero divisor requirement')
     }
-    // Matching source text is not identity: these calls are evaluated separately.
-    expect(analyzedFunction(report, 'separateCalls').assumptions)
-      .toContain('the divisor at same-value.ts:4:16 is nonzero')
   })
 
   test('same-value comparisons preserve JavaScript NaN behavior', () => {
