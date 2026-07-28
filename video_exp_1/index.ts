@@ -1354,8 +1354,9 @@ function processCropKey(input: Extract<RawInput, {kind: 'key'}>): void {
       case 'ArrowDown':
         state.crop = cropAfterDrag(state.crop, 's', 0, cropStep)
         return
+      default:
+        return
     }
-    return
   }
 
   switch (input.key) {
@@ -1370,6 +1371,9 @@ function processCropKey(input: Extract<RawInput, {kind: 'key'}>): void {
       return
     case 'ArrowDown':
       state.crop = cropAfterDrag(state.crop, 'move', 0, cropStep)
+      return
+    default:
+      return
   }
 }
 
@@ -1524,6 +1528,8 @@ function processKey(layout: EditorLayout, input: Extract<RawInput, {kind: 'key'}
       return
     case 'Escape':
       state.drag = null
+      return
+    default:
       return
   }
 }
