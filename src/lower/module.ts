@@ -247,7 +247,12 @@ export function lowerModuleInitializer(
     }
   }
   if (context.currentBlock.terminator == null) {
-    terminate(context.currentBlock, {kind: 'return', value: null, site: addSite(context, sourceFile)})
+    terminate(context.currentBlock, {
+      kind: 'return',
+      value: null,
+      conditionOutcome: null,
+      site: addSite(context, sourceFile),
+    })
   }
   return {
     initializer: {

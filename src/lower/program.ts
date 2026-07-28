@@ -229,7 +229,12 @@ function lowerFunction(
       // reachable fall-out reports as a stop with the returning paths' evidence kept.
       terminate(context.currentBlock, {kind: 'stop', site: addSite(context, declaration), reason: {kind: 'missingReturn'}})
     } else {
-      terminate(context.currentBlock, {kind: 'return', value: null, site: addSite(context, declaration)})
+      terminate(context.currentBlock, {
+        kind: 'return',
+        value: null,
+        conditionOutcome: null,
+        site: addSite(context, declaration),
+      })
     }
   }
   return {

@@ -1,7 +1,7 @@
 import {constantNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
 import type {ValueIdentity, ValueIdentityOwner} from '../domain/value-identity.ts'
-import type {BlockID, FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
+import type {BlockID, FunctionID, ModuleBindingID, SiteID, ValueID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import {finiteInputExpression, finiteInputs} from '../ir/finite-inputs.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
@@ -11,6 +11,9 @@ import {
   constantRequirementStatus,
   createExpressionContext,
   staticRequirement,
+  type ConditionBranch,
+  type ConditionReference,
+  type ValueReference,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {
@@ -34,10 +37,9 @@ import {
   type ValueFact,
 } from './state.ts'
 import {
-  asRefinableCheck,
   branchConditionOutcome,
   evaluateInstruction,
-  refineCheck,
+  refineConditionBranches,
   requiredValue,
 } from './transfer.ts'
 
@@ -286,7 +288,13 @@ type BlockRun = {
   // The latest return recorded from the block; overwritten on re-visits (incoming states
   // grow monotonically, so the last visit supersedes earlier ones) and joined only after
   // the worklist drains.
-  pendingReturn: {value: AbstractValue; shared: SharedState; valueFacts: ValueFact[]} | null
+  pendingReturn: {
+    value: AbstractValue
+    valueID: ValueID | null
+    conditionOutcome: boolean | null
+    site: SiteID
+    state: ExecutionState
+  } | null
 }
 
 type AssertionObservation = {
@@ -312,7 +320,32 @@ type EvaluationSeed = {
   boundsAssumptions?: BoundsAssumption[]
   valueFacts?: ValueFact[]
   parameterIdentities?: ValueIdentity[]
+  parameterOrigins?: Array<ValueReference | null>
   identityOwner?: ValueIdentityOwner
+}
+
+function conditionBranch(
+  fn: FunctionIR,
+  state: ExecutionState,
+): ConditionBranch {
+  return {
+    parameterValues: fn.parameters.map(parameter =>
+      requiredValue(state, parameter.value)),
+    valueFacts: state.valueFacts,
+  }
+}
+
+function joinOptionalConditionBranch(
+  previous: ConditionBranch | null,
+  candidate: ConditionBranch,
+): ConditionBranch {
+  return previous == null
+    ? candidate
+    : {
+        parameterValues: previous.parameterValues.map((value, index) =>
+          joinValues(value, candidate.parameterValues[index]!)),
+        valueFacts: intersectValueFacts(previous.valueFacts, candidate.valueFacts),
+      }
 }
 
 function runEvaluation(
@@ -340,6 +373,7 @@ function runEvaluation(
     argumentExpressions,
     seed.parameterIdentities,
     seed.identityOwner,
+    seed.parameterOrigins,
   )
   const preconditions: InferredPrecondition[] = []
   const boundsAssumptions: BoundsAssumption[] = [...(seed.boundsAssumptions ?? [])]
@@ -370,6 +404,7 @@ function runEvaluation(
       stack: FunctionID[],
       valueFacts: ValueFact[],
       parameterIdentities: ValueIdentity[],
+      parameterOrigins: Array<ValueReference | null>,
       identityOwner: ValueIdentityOwner,
     ) => {
       const calleeFn = program.functions[callee]
@@ -384,7 +419,7 @@ function runEvaluation(
         calleeState,
         program,
         stack,
-        {valueFacts, parameterIdentities, identityOwner},
+        {valueFacts, parameterIdentities, parameterOrigins, identityOwner},
       ).evaluation
     },
   }
@@ -436,8 +471,10 @@ function runEvaluation(
           : requiredValue(state, block.terminator.value)
         run.blocks[blockID]!.pendingReturn = {
           value,
-          shared: cloneSharedState(state.shared),
-          valueFacts: state.valueFacts.slice(),
+          valueID: block.terminator.value,
+          conditionOutcome: block.terminator.conditionOutcome,
+          site: block.terminator.site,
+          state,
         }
         break
       }
@@ -479,21 +516,20 @@ function runEvaluation(
           break
         }
         const condition = conditionOutcome.value
-        // expressionContext.instructionByValue is the one which-instruction-produced-this
-        // table; a condition refines only when that instruction is a check (refineCheck
-        // dispatches over the check kinds in one place).
-        const check = asRefinableCheck(expressionContext.instructionByValue[block.terminator.condition])
+        const refinements = refineConditionBranches(
+          state,
+          block.terminator.condition,
+          expressionContext,
+        )
         if (condition.canBeTrue) {
-          // refineCheck clones internally; the bare-condition arm clones only when the
-          // other arm still needs the working state.
-          const branch = check != null
-            ? refineCheck(state, check, true, expressionContext)
+          const branch = refinements.kind === 'refined'
+            ? refinements.whenTrue
             : condition.canBeFalse ? cloneState(state) : state
           if (branch != null) propagate(branch, blockID, block.terminator.whenTrue, run)
         }
         if (condition.canBeFalse) {
-          const branch = check != null
-            ? refineCheck(state, check, false, expressionContext)
+          const branch = refinements.kind === 'refined'
+            ? refinements.whenFalse
             : state
           if (branch != null) propagate(branch, blockID, block.terminator.whenFalse, run)
         }
@@ -535,17 +571,84 @@ function runEvaluation(
   }
 
   let normal: FunctionEvaluation['normal'] = null
+  let conditionSite: SiteID | null = null
   for (let blockID = 0; blockID < fn.blocks.length; blockID++) {
     const pending = run.blocks[blockID]!.pendingReturn
     if (pending == null || suppressed[blockID] === true) continue
     if (normal == null) {
-      normal = {returnValue: pending.value, sharedState: pending.shared, valueFacts: pending.valueFacts}
+      const origin: ValueReference | null = pending.valueID == null
+        ? null
+        : {
+            value: pending.valueID,
+            context: expressionContext,
+            state: pending.state,
+          }
+      conditionSite = pending.conditionOutcome == null ? null : pending.site
+      normal = {
+        returnValue: pending.value,
+        returnOrigin: origin,
+        returnCondition: pending.conditionOutcome == null
+          ? null
+          : {
+              context: expressionContext,
+              whenTrue: pending.conditionOutcome
+                ? conditionBranch(fn, pending.state)
+                : null,
+              whenFalse: pending.conditionOutcome
+                ? null
+                : conditionBranch(fn, pending.state),
+            },
+        parameterValues: fn.parameters.map(parameter =>
+          requiredValue(pending.state, parameter.value)),
+        sharedState: pending.state.shared,
+        valueFacts: pending.state.valueFacts,
+      }
       continue
     }
+    const returnCondition: ConditionReference | null = conditionSite != null
+      && conditionSite === pending.site
+      && pending.conditionOutcome != null
+      && normal.returnCondition != null
+      ? {
+          context: expressionContext,
+          whenTrue: pending.conditionOutcome
+            ? joinOptionalConditionBranch(
+                normal.returnCondition.whenTrue,
+                conditionBranch(fn, pending.state),
+              )
+            : normal.returnCondition.whenTrue,
+          whenFalse: pending.conditionOutcome
+            ? normal.returnCondition.whenFalse
+            : joinOptionalConditionBranch(
+                normal.returnCondition.whenFalse,
+                conditionBranch(fn, pending.state),
+              ),
+        }
+      : null
+    if (returnCondition == null) conditionSite = null
+    const returnOrigin: ValueReference | null = normal.returnOrigin != null
+      && pending.valueID != null
+      && normal.returnOrigin.context === expressionContext
+      && normal.returnOrigin.value === pending.valueID
+      && normal.returnOrigin.state != null
+      ? {
+          value: pending.valueID,
+          context: expressionContext,
+          state: mergeStates(
+            normal.returnOrigin.state,
+            pending.state,
+            false,
+          ).state,
+        }
+      : null
     normal = {
       returnValue: joinValues(normal.returnValue, pending.value),
-      sharedState: joinModuleSlots(normal.sharedState, pending.shared),
-      valueFacts: intersectValueFacts(normal.valueFacts, pending.valueFacts),
+      returnOrigin,
+      returnCondition,
+      parameterValues: normal.parameterValues.map((value, index) =>
+        joinValues(value, requiredValue(pending.state, fn.parameters[index]!.value))),
+      sharedState: joinModuleSlots(normal.sharedState, pending.state.shared),
+      valueFacts: intersectValueFacts(normal.valueFacts, pending.state.valueFacts),
     }
   }
 

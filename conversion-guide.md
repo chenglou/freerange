@@ -187,9 +187,9 @@ export function reservedCodeRatio(code: number): number {
 
 Freerange does not retain arbitrary sets such as "every number except 240 and 300."
 
-## Same-file calls keep the result range, not how the result was calculated
+## Supported same-file helpers keep the calculation
 
-Freerange follows supported calls in the same file and keeps the returned value's numeric range. It does not currently retain that a returned number was exactly a calculation over the caller's inputs:
+Freerange follows one returned calculation through supported calls in the same file. Requirements created inside the helper are written using the caller's values:
 
 ```ts
 function span(start: number, end: number): number {
@@ -201,21 +201,17 @@ export function progressBar(value: number, start: number, end: number): number {
 }
 ```
 
-If later code needs to check that calculation, calculate and check it in the caller, then pass the checked value to a helper:
+Here `progressBar` requires `end - start` to be nonzero. A caller can handle the zero case without moving the subtraction out of `span`:
 
 ```ts
-function progressFromSpan(value: number, start: number, span: number): number {
-  return (value - start) / span
-}
-
 export function progressBar(value: number, start: number, end: number): number {
-  const calculatedSpan = end - start
-  if (!Number.isFinite(calculatedSpan) || calculatedSpan === 0) return 0
-  return progressFromSpan(value, start, calculatedSpan)
+  const calculatedSpan = span(start, end)
+  if (calculatedSpan === 0) return 0
+  return (value - start) / calculatedSpan
 }
 ```
 
-The example treats a non-finite or zero span as `0`; use a throw or a caller requirement when that better matches the application. There is no need to move a calculation out of a helper when only the returned range matters.
+The example treats a zero span as `0`; use a throw or a caller requirement when that better matches the application. If a helper can return several different calculations, Freerange combines their possible values just as it does for the equivalent inline branches. It does not invent a relationship that the inline form would also lose.
 
 ## No cross-module contracts; only supported calls in the same file are followed
 
@@ -267,9 +263,9 @@ export function totalWidth(widths: number[]): number {
 
 Freerange still does not support growing or modifying an output array inside the loop. A loop is therefore not a general replacement for `map` or `filter`.
 
-## No boolean-helper summaries
+## Return boolean checks directly
 
-Freerange can analyze this helper's boolean result, but the returned `true` does not tell the caller which checks made it true:
+Freerange carries the meaning of a directly returned condition through supported same-file calls:
 
 ```ts
 function isValidIndex(values: number[], index: number): boolean {
@@ -282,12 +278,12 @@ export function valueAt(values: number[], index: number): number {
 }
 ```
 
-Write the checks directly in the control flow that protects the array read:
+The guard proves that the array read is safe. Keep a compound condition in the return expression. Storing it first loses the connection between the boolean and its checks, just as the equivalent stored boolean does when written inline:
 
 ```ts
-export function valueAt(values: number[], index: number): number {
-  if (!Number.isInteger(index) || index < 0 || index >= values.length) return 0
-  return values[index]!
+function isValidIndex(values: number[], index: number): boolean {
+  const valid = Number.isInteger(index) && index >= 0 && index < values.length
+  return valid
 }
 ```
 

@@ -193,9 +193,10 @@ describe('finite number input contracts', () => {
       ])
     }
 
-    const unnameable = report.functions.find(fn => fn.name === 'fromCalculation')
-    if (unnameable?.kind !== 'partial') throw new Error('Expected fromCalculation to be partial')
-    expect(unnameable.partialReasons[0]).toContain("could not verify width's number input")
+    expect(analyzedFunction(report, 'fromCalculation').requires.map(line => line.split(' (input at')[0])).toEqual([
+      'Number.isFinite(value)',
+      'Number.isFinite((value * 2))',
+    ])
   })
 
   test('written checks deduplicate with the automatic contract', () => {

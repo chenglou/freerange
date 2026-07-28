@@ -13,7 +13,15 @@ import {
   type FunctionContext,
   type MutableBlock,
 } from './context.ts'
-import {taggedUnionTagRead, identifierAssignment, lowerBranchingCondition, lowerExpression, lowerStatementExpression, requireBooleanCondition, valueKind} from './expression.ts'
+import {
+  taggedUnionTagRead,
+  identifierAssignment,
+  lowerBranchingCondition,
+  lowerExpression,
+  lowerStatementExpression,
+  requireBooleanCondition,
+  valueKind,
+} from './expression.ts'
 import {declaredOnlyInDeclarationFiles} from './platform.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
@@ -29,6 +37,47 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
     return
   }
   if (ts.isReturnStatement(statement)) {
+    const site = addSite(context, statement)
+    if (statement.expression != null
+      && hasShortCircuitCondition(statement.expression)
+      && valueKind(
+        context.checker.getTypeAtLocation(statement.expression),
+        context.checker,
+      ) === 'boolean') {
+      const whenTrue = createBlock(context)
+      const whenFalse = createBlock(context)
+      lowerBranchingCondition(
+        statement.expression,
+        whenTrue,
+        whenFalse,
+        context,
+      )
+      context.currentBlock = context.blocks[whenTrue]!
+      const trueValue = addInstruction(
+        context,
+        statement.expression,
+        {kind: 'booleanConstant', value: true},
+      )
+      terminate(context.currentBlock, {
+        kind: 'return',
+        value: trueValue,
+        conditionOutcome: true,
+        site,
+      })
+      context.currentBlock = context.blocks[whenFalse]!
+      const falseValue = addInstruction(
+        context,
+        statement.expression,
+        {kind: 'booleanConstant', value: false},
+      )
+      terminate(context.currentBlock, {
+        kind: 'return',
+        value: falseValue,
+        conditionOutcome: false,
+        site,
+      })
+      return
+    }
     let value = statement.expression == null ? null : lowerExpression(statement.expression, context)
     // A bare `return` in a function that returns a value IS `return undefined` — the
     // common early exit in a `T | undefined` function. In void functions (and the module
@@ -42,7 +91,12 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
         value = addInstruction(context, statement, {kind: 'nullishConstant', sentinel: 'undefined'})
       }
     }
-    terminate(context.currentBlock, {kind: 'return', value, site: addSite(context, statement)})
+    terminate(context.currentBlock, {
+      kind: 'return',
+      value,
+      conditionOutcome: null,
+      site,
+    })
     return
   }
   if (ts.isExpressionStatement(statement)) {
@@ -84,6 +138,20 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
     return
   }
   throw unsupported(statement, {kind: 'statementForm', syntax: ts.SyntaxKind[statement.kind]})
+}
+
+function hasShortCircuitCondition(expression: ts.Expression): boolean {
+  let current = expression
+  while (ts.isParenthesizedExpression(current)
+    || (ts.isPrefixUnaryExpression(current)
+      && current.operator === ts.SyntaxKind.ExclamationToken)) {
+    current = ts.isParenthesizedExpression(current)
+      ? current.expression
+      : current.operand
+  }
+  return ts.isBinaryExpression(current)
+    && (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+      || current.operatorToken.kind === ts.SyntaxKind.BarBarToken)
 }
 
 function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): void {

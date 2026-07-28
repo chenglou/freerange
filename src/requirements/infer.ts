@@ -1,13 +1,32 @@
-import type {SiteID, ValueID} from '../ir/ids.ts'
-import type {InstructionIR} from '../ir/instructions.ts'
-import type {FunctionIR} from '../ir/program.ts'
+import type {AbstractValue} from '../domain/value.ts'
 import {
   createValueIdentityOwner,
   sameValueIdentity,
   type ValueIdentity,
   type ValueIdentityOwner,
 } from '../domain/value-identity.ts'
+import type {ExecutionState, ValueFact} from '../engine/state.ts'
+import type {SiteID, ValueID} from '../ir/ids.ts'
+import type {InstructionIR} from '../ir/instructions.ts'
+import type {FunctionIR} from '../ir/program.ts'
 import type {InferredPrecondition, NumericExpression} from './model.ts'
+
+export type ValueReference = {
+  value: ValueID
+  context: ExpressionContext
+  state: ExecutionState | undefined
+}
+
+export type ConditionBranch = {
+  parameterValues: AbstractValue[]
+  valueFacts: ValueFact[]
+}
+
+export type ConditionReference = {
+  context: ExpressionContext
+  whenTrue: ConditionBranch | null
+  whenFalse: ConditionBranch | null
+}
 
 export type ExpressionContext = {
   parameterExpressions: Array<NumericExpression | null>
@@ -15,9 +34,16 @@ export type ExpressionContext = {
   // in a callee refer to the same stored value. Local identities use the evaluation's
   // owner token, which distinguishes separate calls without encoding the call path.
   parameterIdentities: ValueIdentity[]
+  parameterOrigins: Array<ValueReference | null>
+  // Only calls with one reachable return calculation receive a return reference. A joined
+  // return value has no single calculation that source inlining could expose.
+  callReturns: Array<ValueReference | undefined>
+  callConditions: Array<ConditionReference | undefined>
   identityOwner: ValueIdentityOwner
   identityByValue: Array<ValueIdentity | undefined>
+  parameterValueIDs: ValueID[]
   parameterIndexByValue: Array<number | undefined>
+  parameterAliasesByValue: Array<ValueID[] | undefined>
   instructionByValue: Array<InstructionIR | undefined>
   instructionCount: number
 }
@@ -27,13 +53,19 @@ export function createExpressionContext(
   parameterExpressions: Array<NumericExpression | null>,
   parameterIdentities?: ValueIdentity[],
   identityOwner = createValueIdentityOwner(),
+  parameterOrigins?: Array<ValueReference | null>,
 ): ExpressionContext {
   const context: ExpressionContext = {
     parameterExpressions,
     parameterIdentities: [],
+    parameterOrigins: parameterOrigins ?? fn.parameters.map(() => null),
+    callReturns: [],
+    callConditions: [],
     identityOwner,
     identityByValue: [],
+    parameterValueIDs: fn.parameters.map(parameter => parameter.value),
     parameterIndexByValue: [],
+    parameterAliasesByValue: [],
     instructionByValue: [],
     instructionCount: 0,
   }
@@ -49,6 +81,21 @@ export function createExpressionContext(
   for (let index = 0; index < fn.parameters.length; index++) {
     context.parameterIndexByValue[fn.parameters[index]!.value] = index
   }
+  const parameterGroups: Array<{identity: ValueIdentity; values: ValueID[]}> = []
+  for (let index = 0; index < fn.parameters.length; index++) {
+    const identity = context.parameterIdentities[index]!
+    const existing = parameterGroups.find(group =>
+      sameValueIdentity(group.identity, identity))
+    if (existing == null) {
+      parameterGroups.push({identity, values: [fn.parameters[index]!.value]})
+    } else {
+      existing.values.push(fn.parameters[index]!.value)
+    }
+  }
+  for (const {values} of parameterGroups) {
+    if (values.length < 2) continue
+    for (const value of values) context.parameterAliasesByValue[value] = values
+  }
   for (const block of fn.blocks) {
     for (const instruction of block.instructions) {
       context.instructionByValue[instruction.result] = instruction
@@ -56,6 +103,101 @@ export function createExpressionContext(
     }
   }
   return context
+}
+
+// Follow the source operations that survive extracting an expression into a helper.
+// Block parameters and joined returns remain boundaries because neither has one producer.
+export function resolveValueReference(reference: ValueReference): ValueReference {
+  return resolveReference(reference, true)
+}
+
+// Projection may enter completed callees, but changes outside the direct caller flow back
+// when that caller itself completes. Stop at its parameters instead of walking the entire
+// outer call chain on every inner call.
+export function resolveProjectedValueReference(
+  reference: ValueReference,
+  caller: ExpressionContext,
+): ValueReference {
+  return resolveReference(reference, true, new Map(), caller)
+}
+
+// Numeric expressions and identity keys have already substituted each parameter at the
+// call boundary, so their walk stops at parameters. A record property still follows the
+// record argument itself, allowing `{value}` to expose the value actually stored.
+function resolveSubstitutedReference(reference: ValueReference): ValueReference {
+  return resolveReference(reference, false)
+}
+
+function resolveReference(
+  reference: ValueReference,
+  followParameterOrigins: boolean,
+  statesByContext = new Map<ExpressionContext, ExecutionState>(),
+  stopAtParametersIn: ExpressionContext | null = null,
+): ValueReference {
+  const initialState = statesByContext.get(reference.context)
+    ?? reference.state
+  if (initialState != null) statesByContext.set(reference.context, initialState)
+  let current = initialState == null
+    ? reference
+    : {...reference, state: initialState}
+  const visited = new Map<ExpressionContext, Set<ValueID>>()
+  while (true) {
+    const stored = resolveStoredValue(current.value, current.context)
+    if (stored !== current.value) {
+      current = {...current, value: stored}
+      continue
+    }
+
+    const parameterIndex = current.context.parameterIndexByValue[current.value]
+    if (parameterIndex != null
+      && (!followParameterOrigins || current.context === stopAtParametersIn)) {
+      return current
+    }
+
+    const visitedValues = visited.get(current.context) ?? new Set<ValueID>()
+    if (visitedValues.has(current.value)) return current
+    visitedValues.add(current.value)
+    visited.set(current.context, visitedValues)
+
+    if (parameterIndex != null) {
+      const parameterOrigin = current.context.parameterOrigins[parameterIndex]
+      if (parameterOrigin != null) {
+        const state = statesByContext.get(parameterOrigin.context)
+          ?? parameterOrigin.state
+        if (state != null) statesByContext.set(parameterOrigin.context, state)
+        current = state == null
+          ? parameterOrigin
+          : {...parameterOrigin, state}
+        continue
+      }
+    }
+
+    const returned = current.context.callReturns[current.value]
+    if (returned != null) {
+      const state = statesByContext.get(returned.context) ?? returned.state
+      if (state != null) statesByContext.set(returned.context, state)
+      current = state == null ? returned : {...returned, state}
+      continue
+    }
+
+    const producer = current.context.instructionByValue[current.value]
+    if (producer?.kind !== 'property') return current
+    const object = resolveReference({
+      value: producer.object,
+      context: current.context,
+      state: current.state,
+    }, true, statesByContext, stopAtParametersIn)
+    const objectProducer = object.context.instructionByValue[object.value]
+    if (objectProducer?.kind !== 'object') return current
+    const property = objectProducer.properties.find(candidate =>
+      candidate.name === producer.property)
+    if (property == null) return current
+    current = {
+      value: property.value,
+      context: object.context,
+      state: object.state,
+    }
+  }
 }
 
 // Follow assignments and reads through records built in this function. The returned IR
@@ -85,12 +227,18 @@ export function resolveStoredValue(value: ValueID, context: ExpressionContext): 
 // going either way.
 export function numericExpression(value: ValueID, context: ExpressionContext): NumericExpression | null {
   let remainingVisits = context.instructionCount
-  const walk = (current: ValueID): NumericExpression | null => {
-    const stored = resolveStoredValue(current, context)
-    if (stored !== current) return walk(stored)
-    const parameterIndex = context.parameterIndexByValue[current]
-    if (parameterIndex != null) return context.parameterExpressions[parameterIndex] ?? null
-    const instruction = context.instructionByValue[current]
+  const creditedContexts = new Set<ExpressionContext>([context])
+  const walk = (raw: ValueReference): NumericExpression | null => {
+    const current = resolveSubstitutedReference(raw)
+    if (!creditedContexts.has(current.context)) {
+      creditedContexts.add(current.context)
+      remainingVisits += current.context.instructionCount
+    }
+    const parameterIndex = current.context.parameterIndexByValue[current.value]
+    if (parameterIndex != null) {
+      return current.context.parameterExpressions[parameterIndex] ?? null
+    }
+    const instruction = current.context.instructionByValue[current.value]
     if (instruction == null) return null
     // Only an instruction expansion is charged — re-expanding the same instruction is
     // exactly what the duplication blowup repeats, while parameter and constant leaves are
@@ -100,18 +248,34 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
     switch (instruction.kind) {
       case 'constant': return {kind: 'constant', value: instruction.value}
       case 'binary': {
-        const left = walk(instruction.left)
-        const right = walk(instruction.right)
+        const left = walk({
+          value: instruction.left,
+          context: current.context,
+          state: current.state,
+        })
+        const right = walk({
+          value: instruction.right,
+          context: current.context,
+          state: current.state,
+        })
         return left == null || right == null
           ? null
           : {kind: 'binary', operator: instruction.operator, left, right}
       }
       case 'floor': {
-        const operand = walk(instruction.value)
+        const operand = walk({
+          value: instruction.value,
+          context: current.context,
+          state: current.state,
+        })
         return operand == null ? null : {kind: 'floor', operand}
       }
       // A module write's result is the assigned value, so the written expression carries over.
-      case 'moduleWrite': return walk(instruction.value)
+      case 'moduleWrite': return walk({
+        value: instruction.value,
+        context: current.context,
+        state: current.state,
+      })
       // Requirement expressions name only the function's own parameters; a module binding is
       // not caller-visible, so a requirement cannot name it.
       case 'moduleRead':
@@ -142,12 +306,16 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       // read over a nameable array could join the expression language later; not yet.
       case 'arrayLength': return null
       case 'property': {
-        const base = walk(instruction.object)
+        const base = walk({
+          value: instruction.object,
+          context: current.context,
+          state: current.state,
+        })
         return base == null ? null : {kind: 'property', base, name: instruction.property}
       }
     }
   }
-  return walk(value)
+  return walk({value, context, state: undefined})
 }
 
 export function staticRequirement(
@@ -180,51 +348,74 @@ export function canonicalValueIdentity(
   value: ValueID,
   context: ExpressionContext,
 ): ValueIdentity {
-  const cached = context.identityByValue[value]
+  return canonicalReferenceIdentity({value, context, state: undefined})
+}
+
+function canonicalReferenceIdentity(reference: ValueReference): ValueIdentity {
+  const resolved = resolveSubstitutedReference(reference)
+  const cached = resolved.context.identityByValue[resolved.value]
   if (cached != null) return cached
-  const stored = resolveStoredValue(value, context)
-  if (stored !== value) {
-    const identity = canonicalValueIdentity(stored, context)
-    context.identityByValue[value] = identity
-    return identity
-  }
-  const parameterIndex = context.parameterIndexByValue[value]
+  const parameterIndex = resolved.context.parameterIndexByValue[resolved.value]
   if (parameterIndex != null) {
-    const identity = context.parameterIdentities[parameterIndex]
+    const identity = resolved.context.parameterIdentities[parameterIndex]
     if (identity == null) throw new Error(`Missing identity for parameter ${parameterIndex}`)
-    context.identityByValue[value] = identity
+    resolved.context.identityByValue[resolved.value] = identity
     return identity
   }
-  const producer = context.instructionByValue[value]
+  const producer = resolved.context.instructionByValue[resolved.value]
   let identity: ValueIdentity
   if (producer?.kind === 'property') {
     identity = {
       kind: 'property',
-      object: canonicalValueIdentity(producer.object, context),
+      object: canonicalReferenceIdentity({
+        value: producer.object,
+        context: resolved.context,
+        state: resolved.state,
+      }),
       property: producer.property,
     }
   } else if (producer?.kind === 'arrayLength') {
     identity = {
       kind: 'property',
-      object: canonicalValueIdentity(producer.array, context),
+      object: canonicalReferenceIdentity({
+        value: producer.array,
+        context: resolved.context,
+        state: resolved.state,
+      }),
       property: 'length',
     }
   } else if (producer?.kind === 'stringLength') {
     identity = {
       kind: 'property',
-      object: canonicalValueIdentity(producer.value, context),
+      object: canonicalReferenceIdentity({
+        value: producer.value,
+        context: resolved.context,
+        state: resolved.state,
+      }),
       property: 'length',
     }
   } else if (producer?.kind === 'arrayIndex') {
     identity = {
       kind: 'arrayIndex',
-      array: canonicalValueIdentity(producer.array, context),
-      index: canonicalValueIdentity(producer.index, context),
+      array: canonicalReferenceIdentity({
+        value: producer.array,
+        context: resolved.context,
+        state: resolved.state,
+      }),
+      index: canonicalReferenceIdentity({
+        value: producer.index,
+        context: resolved.context,
+        state: resolved.state,
+      }),
     }
   } else {
-    identity = {kind: 'local', owner: context.identityOwner, value}
+    identity = {
+      kind: 'local',
+      owner: resolved.context.identityOwner,
+      value: resolved.value,
+    }
   }
-  context.identityByValue[value] = identity
+  resolved.context.identityByValue[resolved.value] = identity
   return identity
 }
 

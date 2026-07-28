@@ -210,7 +210,9 @@ Freerange does not search for arbitrary relationships between different values o
 
 ### Function calls
 
-Freerange analyzes supported function calls in the same file using what it knows at each call. It does not analyze imported functions. It reads an imported constant only when the constant resolves to a numeric literal such as `export const GAP = 24`. Literal default parameters work in supported calls; object and calculated defaults do not. Passing more arguments than the implementation declares is also unsupported.
+Freerange analyzes supported function calls in the same file using what it knows at each call. Moving supported code into a same-file helper keeps the returned calculation, requirements created inside the helper, and what a directly returned boolean condition proves about the helper's arguments. Several different return calculations are combined in the same way as the equivalent inline branches.
+
+Freerange does not analyze imported functions. It reads an imported constant only when the constant resolves to a numeric literal such as `export const GAP = 24`. Literal default parameters work in supported calls; object and calculated defaults do not. Passing more arguments than the implementation declares is also unsupported.
 
 Freerange does not guess what an unknown function does, when a callback runs, which exceptions are caught, how another reference might change an object, or how a framework schedules work.
 
