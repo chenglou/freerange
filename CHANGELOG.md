@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+## 0.0.3 - 2026-07-28
+
 - Analyze arrow functions and function expressions assigned directly to top-level `const` names.
+- Preserve type narrowing through `&&` and `||` expressions.
+- Analyze each `Math.random()` call as a fresh number from zero up to, but not including, one.
+- Avoid quadratic work when tracking values through deep chains of same-file function calls.
+- Consolidate analysis limits and practical refactoring examples in the README.
 
 ## 0.0.2 - 2026-07-21
 

@@ -1,6 +1,6 @@
 {
   "name": "@chenglou/freerange",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Static numeric range analysis for TypeScript",
   "license": "MIT",
   "repository": {
@@ -15,7 +15,6 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
-    "analysis-guide.md",
     "dist",
     "fr.ts",
     "src"

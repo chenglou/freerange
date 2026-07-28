@@ -117,7 +117,8 @@ Every plain `number` parameter, including a number field in a fixed-shape object
 
 ## Writing Analyzable TypeScript
 
-Freerange supports a subset of TS:
+Freerange deliberately analyzes a restricted part of TypeScript. When code leaves that scope, `fr --audit` says so instead of guessing what the code does. Freerange currently supports:
+
 - Named, synchronous top-level functions. Both `function size(...) {}` and direct `const size = (...) => ...` declarations work. Freerange follows calls between functions in the same file
 - Numbers, booleans, strings, nullable values, plain objects, tagged unions, dense arrays, and fixed tuples
 - `if`/`else`, ternaries, non-fallthrough `switch`, `&&`, `||`, `!`, `??`, `for`, `while`, and `for...of` loops
@@ -125,39 +126,238 @@ Freerange supports a subset of TS:
 
 Freerange could theoretically support a much larger subset of TS, and did before its public release. Those patterns often made numeric inference and proofs much harder and slower, however, and some questions are undecidable in general. Now that AI agents write code, we strongly recommend asking agents to refactor important calculations into shapes that Freerange analyzes well, guided by `fr --audit`. Code that is easy to analyze tends to resemble functional programming: immutable data, explicit inputs and outputs, and clean, direct control flow.
 
-See the [Freerange Analysis Guide](analysis-guide.md) for worked examples of analysis boundaries and useful refactors.
+Use precise TypeScript types. Avoid `any`, casts, and suppression comments, and parse external data before passing it to a numeric helper. A file containing `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, or `eval` is rejected because its declared types cannot be trusted.
 
-- **Put important calculations in small named functions.** A React component, callback, or async function can call a plain synchronous helper. Keep any helper functions that Freerange needs to inspect in the same file.
-  ```tsx
-  export function fittedImageHeight(frameWidth: number, imageWidth: number, imageHeight: number): number {
-    const width = Math.max(1, imageWidth)
-    const height = Math.max(1, imageHeight)
-    return (frameWidth * height) / width
+Before changing an input rule, decide what the application should do. If `columnCount` must be a positive integer, either require that with leading `console.assert` calls or normalize it with `Math.max(1, Math.floor(columnCount))`. Only normalize when the application wants that runtime behavior. Audit code: `[encode-input-rule]`.
+
+### Numeric Analysis
+
+For each `number`, Freerange remembers its lowest and highest possible values, whether it is an integer, whether it may be `NaN` or infinite, and at most one exact value that has been ruled out. It reasons about JavaScript floating-point numbers rather than ideal real numbers and does not use a general-purpose theorem prover.
+
+#### No common-subexpression elimination
+
+Freerange does not replace repeated calculations with one stored result, even when their source code is identical. This function checks one subtraction, then divides by a newly evaluated subtraction:
+
+```ts
+export function progressBar(value: number, start: number, end: number): number {
+  if (end - start === 0) return 0
+  return (value - start) / (end - start)
+}
+```
+
+Calculate the subtraction once when the check and division must use the same result:
+
+```ts
+export function progressBar(value: number, start: number, end: number): number {
+  const span = end - start
+  if (span === 0) return 0
+  return (value - start) / span
+}
+```
+
+Freerange recognizes aliases, repeated reads of the same immutable field or array position, and the same argument passed to multiple parameters. A newly evaluated calculation or function call is a new value. Audit code: `[guard-derived-value]`.
+
+#### Ranges use inclusive endpoints
+
+Freerange stores every range using its lowest and highest included values. JavaScript numbers are discrete, so the neighboring representable number can often express a strict endpoint: `Math.random()` is stored as `0..0.9999999999999999` and reported as `at least 0 and less than 1`. This needs no rewrite.
+
+#### Branches merge into one continuous range
+
+Freerange combines both branch results into one continuous range. Here `width` becomes `240..480`, which includes `300` even though neither branch returns it:
+
+```ts
+export function previewRatio(compact: boolean): number {
+  const width = compact ? 240 : 480
+  return 100 / (width - 300)
+}
+```
+
+Keep a calculation inside each branch when it depends on the separate alternatives:
+
+```ts
+export function previewRatio(compact: boolean): number {
+  if (compact) return 100 / (240 - 300)
+  return 100 / (480 - 300)
+}
+```
+
+A broad but safe range may need no rewrite.
+
+#### A number remembers at most one excluded value
+
+After `code !== 240` and `code !== 300`, Freerange may remember only the later exclusion. When an operation depends on a particular exclusion, check the value that the operation uses:
+
+```ts
+const divisor = code - 240
+if (divisor === 0) return 0
+return 100 / divisor
+```
+
+Freerange does not retain arbitrary sets such as "every number except 240 and 300."
+
+#### No transitive reasoning between comparisons
+
+Freerange does not combine `left <= middle` and `middle <= right` to prove `left <= right`:
+
+```ts
+if (left > middle) throw new Error('out of order')
+if (middle > right) throw new Error('out of order')
+console.assert(left <= right) // unproven
+```
+
+When one value is built from another, keep the relationship visible in that calculation:
+
+```ts
+const gap = Math.max(0, requestedGap)
+const left = navRight + gap
+console.assert(navRight <= left)
+```
+
+If the values arrive independently, Freerange may leave the relationship unproven.
+
+#### No algebraic inversion of conditions
+
+Freerange narrows the direct operands of a comparison but does not rearrange `width * 2 > 10` to derive `width > 5`. Check the value used by the later operation:
+
+```ts
+export function previewScale(width: number): number {
+  if (width <= 5) return 1
+  return 100 / width
+}
+```
+
+#### No algebraic normalization
+
+Freerange does not rewrite expressions using associativity, commutativity, or distributivity. Those rules do not always preserve JavaScript floating-point results:
+
+```ts
+const amount = 9_007_199_254_740_992
+const first = 3 + amount + 2 // 9007199254740998
+const second = 1 + amount + 4 // 9007199254740996
+```
+
+Choose the operation order whose floating-point behavior the application wants. For example, `frameWidth / (imageWidth / imageHeight)` introduces a ratio that can round to zero; `(frameWidth * imageHeight) / imageWidth` avoids that particular problem, although the two expressions can still round differently. Audit code: `[use-direct-operands]`.
+
+#### Numeric truthiness is unsupported
+
+Freerange does not guess what a number used as a condition means. Write `width === 0` instead of relying on a truthy or falsy number such as `width || 1`. Audit code: `[write-explicit-condition]`.
+
+### Functions
+
+Put important calculations in named synchronous functions. A React component, callback, or async function can call a plain helper:
+
+```tsx
+export function fittedImageHeight(frameWidth: number, imageWidth: number, imageHeight: number): number {
+  return (frameWidth * Math.max(1, imageHeight)) / Math.max(1, imageWidth)
+}
+
+function ImageCard(props: {frameWidth: number; imageWidth: number; imageHeight: number}) {
+  const height = fittedImageHeight(props.frameWidth, props.imageWidth, props.imageHeight)
+  return <img style={{height}} />
+}
+```
+
+Literal default parameters and omitted optional parameters work in supported same-file calls. Object and calculated defaults do not. Passing more arguments than the implementation declares is unsupported.
+
+#### A function return does not include how the value was calculated
+
+Freerange evaluates supported same-file helpers using what the caller knows. It keeps what the helper may return, including numeric ranges and object fields, but not an equation such as "this result is exactly `end - start`":
+
+```ts
+function span(start: number, end: number): number {
+  return end - start
+}
+
+export function progressBar(value: number, start: number, end: number): number {
+  return (value - start) / span(start, end)
+}
+```
+
+When the caller needs that exact calculation, calculate and check it in the caller, then pass the result to a helper. The same limitation applies to booleans: `true` from `isValidIndex(values, index)` does not tell the caller which checks made it true, so write those checks where they protect the array read.
+
+#### Imported function bodies are not analyzed
+
+Freerange does not follow imported functions. Keep a numeric rule that needs analysis in a supported helper with explicit inputs:
+
+```ts
+export function labelWidthFromMeasurement(measuredWidth: number): number {
+  return Math.max(120, measuredWidth + 32)
+}
+```
+
+An unsupported caller can pass `measureText(text)` into this helper, allowing Freerange to verify the rule but not the imported measurement. Imported constants work when their initializer resolves to a numeric literal such as `export const GAP = 24`.
+
+#### No higher-order function analysis
+
+Freerange does not analyze callbacks passed to higher-order functions such as `reduce`, `map`, or `filter`. For a simple scalar aggregation, write the loop directly:
+
+```ts
+export function totalWidth(widths: number[]): number {
+  let total = 0
+  for (let index = 0; index < widths.length; index += 1) {
+    total += widths[index]!
   }
+  return total
+}
+```
 
-  function ImageCard(props: {frameWidth: number; imageWidth: number; imageHeight: number}) {
-    const height = fittedImageHeight(props.frameWidth, props.imageWidth, props.imageHeight)
-    return <img style={{height}} />
+This is not a general replacement for `map` or `filter`: object and array writes remain unsupported, and callback arguments, effects, and result allocation may matter. Audit code: `[use-loop-for-aggregation]`.
+
+### Objects, Arrays, and Changing State
+
+Freerange reads plain objects, fixed tuples, dense arrays, and tagged unions declared in the project through at most eight nested levels. Give each union case a tag, use an exhaustive non-fallthrough `switch`, and keep deeply nested or unclassifiable data outside important numeric helpers.
+
+Freerange assumes that property reads are stable and perform no work during one analyzed synchronous call. A getter or Proxy that changes its answer or performs work is outside the scope.
+
+#### No object and array writes
+
+Freerange allows local variables to be reassigned but does not track writes through an object or array. Return a new value when the application does not require mutation or stable object identity:
+
+```ts
+export function moveRight(point: {x: number; y: number}, distance: number): {x: number; y: number} {
+  return {x: point.x + distance, y: point.y}
+}
+```
+
+Object spread is also unsupported because JavaScript copies only an object's own enumerable properties, which may not match the fields declared by its TypeScript type. List the fields explicitly. Rebuilding an object is not equivalent to mutation when other code observes its identity or the mutation.
+
+#### Reads of changing state are not referentially transparent
+
+Referential transparency means that evaluating the same expression again is equivalent to reusing its previous result. Freerange does not make that assumption for a clock, viewport, scroll position, or mutable module binding. Store one read when the check and later use should observe the same value:
+
+```ts
+export function viewportScale(): number {
+  const viewportWidth = window.innerWidth
+  if (viewportWidth === 0) return 0
+  return 100 / viewportWidth
+}
+```
+
+Keep separate reads when two observations are intentional, such as two clock reads used to measure elapsed time.
+
+#### Array reads require dense arrays and valid indexes
+
+Use `values[index] ?? fallback` only when the application wants a fallback. Otherwise, prove that `index` is an integer from zero through `values.length - 1` before using `values[index]!`. A bounds check cannot detect a hole in a sparse array, so Freerange expects arrays to be dense. Audit codes: `[handle-missing-element]`, `[guard-array-index]`.
+
+### Loops
+
+#### Loops find stable ranges, not exact formulas
+
+Freerange checks a loop until the possible values at the start of an iteration stop changing. It does not simulate the exact runtime iteration count or derive a formula for the final value:
+
+```ts
+export function fixedTotal(): number {
+  let total = 0
+  for (let index = 0; index < 3; index += 1) {
+    total += 2
   }
-  ```
+  return total
+}
+```
 
-- **Name a calculation before checking it.** If the divisor is `oldMax - oldMin`, write `const oldSpan = oldMax - oldMin`, check `oldSpan === 0`, and divide by `oldSpan`. Checking `oldMin === oldMax` does not tell Freerange about the separately calculated `oldSpan`. Audit code: `[guard-derived-value]`.
+Freerange knows that the result is a nonnegative integer but does not derive that it is exactly `6`. Ordinary counting loops usually settle after two or three checks. If a range still changes after 16 checks, Freerange stops analyzing that path. Write a formula directly when it is the intended implementation, but do not replace repeated floating-point arithmetic with multiplication unless the different rounding behavior is acceptable.
 
-- **Decide how invalid inputs should be handled before using them.** If `columnCount` must be a positive integer, either require that with leading `console.assert` calls or normalize it with `Math.max(1, Math.floor(columnCount))`. Only normalize when the application actually wants that runtime behavior. Audit code: `[encode-input-rule]`.
-
-- **Choose the order of arithmetic deliberately.** Formulas that are equivalent on paper can round, overflow, or underflow differently with JavaScript numbers. For example, `frameWidth / (imageWidth / imageHeight)` introduces a ratio that can round to zero; `(frameWidth * imageHeight) / imageWidth` avoids that particular problem. The two expressions can still round differently. Audit code: `[use-direct-operands]`.
-
-- **Decide what a missing array element means.** Use `values[index] ?? fallback` only when the application really wants a fallback. Otherwise, prove that `index` is an integer from zero through `values.length - 1` before using `values[index]!`. A bounds check cannot detect a hole in a sparse array, so Freerange expects arrays to be dense. Audit codes: `[handle-missing-element]`, `[guard-array-index]`.
-
-- **Write the condition and loop directly.** Prefer `width === 0` over using a number as a condition, such as `width || 1`. Use a regular loop for a simple dense-array calculation when callback arguments, callback effects, and a newly allocated result array do not matter. Audit codes: `[write-explicit-condition]`, `[use-loop-for-aggregation]`.
-
-- **Write object copies explicitly.** Use `{width: layout.width, height: layout.height}` instead of `{...layout}`. Use dense arrays and fixed-length tuples, and do not modify objects or arrays after creating them. Rebuilding an object is not equivalent to mutation when other code observes its identity or the mutation.
-
-- **Give each union case a tag and switch on it.** Use a tagged union when different cases carry different fields. Make the `switch` exhaustive and do not use fallthrough.
-
-- **Check and use the same local value.** When a value comes from module, class, or reactive state, store it in a local first. For example, write `const currentScale = scale; if (currentScale !== null) return currentScale` instead of checking one read of `scale` and returning another.
-
-- **Use precise TypeScript types.** Avoid `any`, casts, and suppression comments. Parse external data before passing it to a numeric helper, give the helper typed parameters, and pass only the fields it uses. A file containing `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, or `eval` is rejected because its declared types cannot be trusted.
+Code outside this scope may make a result less precise or stop analysis. Freerange does not publish a stronger guarantee by pretending that unsupported code was understood. If an unsupported pattern is important and cannot be reasonably refactored, please file an issue.
 
 ## Recommended TypeScript Config
 
@@ -188,55 +388,17 @@ Freerange uses a few terms consistently:
 - `partially supported`: Freerange can analyze some, but not all, of the function.
 - `skipped`: some top-level statements in the modules weren't analyzed.
 
+### Caller Requirements
+
+Every plain `number` parameter must be finite and not `NaN`. The same rule applies to numeric fields in fixed-shape object parameters, even when the function does not read them. Numeric literal types such as `1 | 2` already satisfy the rule. Nullable numbers, arrays, tuples, and tagged unions use more specific `assumes` lines instead. A supported literal default can satisfy the requirement when a caller omits an argument.
+
+Division and array reads can create additional requirements. Freerange tries to express them using the function's parameters so that supported same-file callers can prove them, pass them to their own callers, or report a definitely invalid argument. If a condition cannot be expressed that way, `fr --audit` prints a local `assumes` line instead.
+
 A caller requirement is not automatically a bug. For example, `requires: columns >= 1` means the function is safe under that condition; it does not mean Freerange found a caller passing zero. Freerange checks supported same-file calls, but it is not a repository-wide call-site verifier. Imported calls and unsupported callers may remain unchecked.
 
 An `ensures` line assumes its `requires` and `assumes`. A requirement may be a real API rule, or it may expose a relationship Freerange cannot currently prove. An assumption may identify a real input boundary or an analysis limitation. Decide what the program should do before changing code to remove either one.
 
 Always read the coverage line. No findings does not mean an unsupported file is safe. A derived guarantee becoming weaker, for example `at least 54` becoming `at least 0`, appears in the audit rather than the shorter findings output.
-
-## Analysis Scope
-
-Freerange deliberately analyzes a restricted part of TypeScript. When code leaves that scope, `fr --audit` says so instead of guessing what the code does. If an unsupported pattern is important in production code and cannot be reasonably refactored, please file an issue. We're open to expanding the scope when the added complexity proves worthwhile.
-
-### Numbers
-
-Freerange's numeric analysis is designed for layouts and other everyday application code. For each TypeScript `number`, Freerange remembers its lowest and highest possible values, whether it is an integer, whether it may be `NaN` or infinite, and at most one exact value that has been ruled out. For example, after `value !== 0`, Freerange remembers that `value` cannot be `0`.
-
-Freerange does not keep gaps or arbitrary sets of possible numbers. If one branch produces `1..2` and another produces `10..11`, Freerange keeps the combined range `1..11`. A later check that rules out a different exact value may replace the value remembered from an earlier check.
-
-Freerange recognizes repeated uses of the same stored value, including local aliases, stable property and array reads, lengths, and the same argument passed to multiple parameters of a function in the same file. For example, `const span = right - left; span - span` is exactly `0` unless `span` is infinite or `NaN`. Two separately evaluated expressions are not assumed to produce the same value just because their source code looks alike. Store the result in a local when the equality matters.
-
-Freerange does not search for arbitrary relationships between different values or use a general-purpose theorem prover. Those approaches made earlier versions less predictable without proving much more real code. Freerange also reasons about JavaScript floating-point numbers rather than ideal real numbers. Real-number algebra would produce false guarantees because JavaScript arithmetic rounds and can overflow or underflow.
-
-### Function calls
-
-Freerange analyzes supported function calls in the same file using what it knows at each call. It does not analyze imported functions. It reads an imported constant only when the constant resolves to a numeric literal such as `export const GAP = 24`. Literal default parameters work in supported calls; object and calculated defaults do not. Passing more arguments than the implementation declares is also unsupported.
-
-Freerange does not guess what an unknown function does, when a callback runs, which exceptions are caught, how another reference might change an object, or how a framework schedules work.
-
-### Static assertions
-
-Inside a `console.assert`, Freerange can prove several common UI calculations through named values: `Math.min` and `Math.max`, adding or subtracting a nonnegative value, multiplying both sides of a comparison by the same nonnegative value, `index % columnCount < columnCount` when `columnCount` is positive, and fields read from a newly created object. Freerange does not chain arbitrary comparisons: `left <= middle` and `middle <= right` do not by themselves prove `left <= right`.
-
-### Loops
-
-Freerange checks a loop repeatedly until the possible values at the start of an iteration stop changing. It does not simulate every runtime iteration or try to derive a formula for the final value. Ordinary counting loops usually settle after two or three checks. If the possible values still change after 16 checks, Freerange stops analyzing that path.
-
-### Objects and arrays
-
-Freerange reads plain objects, tuples, arrays, and tagged unions declared in your project through at most eight nested levels. A deeper property becomes unknown. A function is unsupported when one of its parameter types cannot be represented within this scope.
-
-Freerange assumes that reading a property returns the same value and performs no work during one analyzed function call. A getter or Proxy that changes its answer or performs work is outside the scope. Property writes, including assignments that invoke setters, are unsupported. Object spread is also unsupported because JavaScript copies only an object's own enumerable properties, which may not match the fields declared by its TypeScript type.
-
-### Caller requirements
-
-Every plain `number` parameter must be finite and not `NaN`. The same rule applies to numeric fields in fixed-shape object parameters, even when the function does not read them. Numeric literal types such as `1 | 2` already satisfy the rule. Nullable numbers, arrays, tuples, and tagged unions use more specific `assumes` lines instead. When a caller omits an argument with a supported literal default, the default can satisfy the requirement automatically.
-
-Calls to supported functions in the same file either prove these requirements, require their own callers to satisfy them, or report a definitely invalid argument. After a call proves that an argument is finite, later uses of that same stored value can reuse the result. Writing `console.assert(Number.isFinite(value))` at the start of a function is allowed but normally redundant. `Number.isInteger(value)` is stronger and replaces the finite requirement.
-
-Division and array reads can create additional requirements. Freerange tries to express each requirement using the function's parameters so that callers can be checked. Later operations can reuse the requirement only when they use the same stored value in the same branch. Assigning a new value or repeating the calculation starts over. Freerange traces each intermediate value at most once; if it cannot express the condition using the parameters, `fr --audit` prints a local `assumes` condition instead.
-
-Code outside this scope may make a result less precise or stop analysis. Freerange does not publish a stronger guarantee by pretending that unsupported code was understood.
 
 ## Development
 
