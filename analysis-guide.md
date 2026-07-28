@@ -1,10 +1,12 @@
-# Converting Code for Freerange
+# Freerange Analysis Guide
 
-These examples cover the analysis limits most likely to affect a refactor. Each rewrite makes the program's intended behavior easier for Freerange to follow. Preserve the application's behavior; do not add a fallback or change a calculation merely to silence a report.
+Freerange deliberately remembers a small, predictable set of information about a program. Each section below starts with something Freerange does not track or analyze, then shows a simple way to write the code that Freerange can follow.
 
-## No automatic common-subexpression matching
+Preserve the application's behavior when refactoring. Do not add a fallback, throw, or normalization merely to silence a report.
 
-Freerange does not match two calculations merely because their source code is identical. This code checks one subtraction, then divides by a newly evaluated subtraction:
+## No common-subexpression elimination
+
+Common-subexpression elimination replaces repeated calculations with one stored result when doing so is safe. Freerange does not do that automatically: two calculations remain separate even when their source code is identical. This function checks one subtraction, then divides by a newly evaluated subtraction:
 
 ```ts
 export function progressBar(value: number, start: number, end: number): number {
@@ -13,7 +15,7 @@ export function progressBar(value: number, start: number, end: number): number {
 }
 ```
 
-Name the value that must remain the same:
+Calculate the subtraction once when the check and division must use the same result:
 
 ```ts
 export function progressBar(value: number, start: number, end: number): number {
@@ -23,11 +25,11 @@ export function progressBar(value: number, start: number, end: number): number {
 }
 ```
 
-Freerange recognizes aliases, repeated reads of the same immutable field or array position, and the same argument passed to multiple parameters. A newly evaluated calculation or function call starts over.
+Freerange recognizes aliases, repeated reads of the same immutable field or array position, and the same argument passed to multiple parameters. A newly evaluated calculation or function call is a new value.
 
-## Objects and arrays are immutable
+## No object and array writes
 
-Freerange allows local variables to be reassigned, but rejects writes through an object or array:
+Freerange allows local variables to be reassigned, but does not track writes through an object or array:
 
 ```ts
 export function moveRight(point: {x: number; y: number}, distance: number): {x: number; y: number} {
@@ -36,7 +38,7 @@ export function moveRight(point: {x: number; y: number}, distance: number): {x: 
 }
 ```
 
-Return a new value and list the fields explicitly:
+Return a new value when the application does not require mutation or stable object identity:
 
 ```ts
 export function moveRight(point: {x: number; y: number}, distance: number): {x: number; y: number} {
@@ -47,9 +49,11 @@ export function moveRight(point: {x: number; y: number}, distance: number): {x: 
 }
 ```
 
-## Read changing state once when one observation is intended
+Object spread is also unsupported. List the fields explicitly so the runtime object and its analyzed fields cannot differ because of inherited or non-enumerable properties.
 
-Each clock, viewport, scroll, or mutable module read may produce a fresh value:
+## Reads of changing state are not referentially transparent
+
+Referential transparency means that evaluating the same expression again is equivalent to reusing its previous result. Freerange does not make that assumption for a clock, viewport, scroll position, or mutable module binding. Each read may produce a different value:
 
 ```ts
 export function viewportScale(): number {
@@ -58,7 +62,7 @@ export function viewportScale(): number {
 }
 ```
 
-Store one read when the program intends to check and reuse one observation:
+Store one read when the check and later use are meant to observe the same value:
 
 ```ts
 export function viewportScale(): number {
@@ -70,9 +74,9 @@ export function viewportScale(): number {
 
 Keep separate reads when the difference between two observations is intentional, such as two clock reads used to measure elapsed time.
 
-## No open-interval representation; exact neighboring floats can represent some strict bounds
+## Ranges use inclusive endpoints
 
-Freerange does not store open intervals. JavaScript numbers are discrete, so an exact neighboring float can sometimes express a strict limit. For example:
+Freerange stores every numeric range using its lowest and highest included values. It does not directly store an open endpoint such as "less than 1." JavaScript numbers are discrete, so the neighboring representable number can often express the same range. For example:
 
 ```ts
 export function randomOpacity(): number {
@@ -82,9 +86,9 @@ export function randomOpacity(): number {
 
 Freerange stores the range as `0` through `0.9999999999999999` and reports it as `at least 0 and less than 1`. This needs no user rewrite.
 
-## No transitivity between separate comparisons
+## No transitive reasoning between comparisons
 
-Freerange does not combine `left <= middle` and `middle <= right` to prove `left <= right`:
+Transitive reasoning would combine `left <= middle` and `middle <= right` to prove `left <= right`. Freerange does not make that inference:
 
 ```ts
 export function checkOrder(left: number, middle: number, right: number): number {
@@ -95,7 +99,7 @@ export function checkOrder(left: number, middle: number, right: number): number 
 }
 ```
 
-Keep an important relationship visible in the calculation when it is true by construction:
+When one value is built from another, keep the important relationship visible in that calculation:
 
 ```ts
 export function panelLeft(navRight: number, requestedGap: number): number {
@@ -108,9 +112,9 @@ export function panelLeft(navRight: number, requestedGap: number): number {
 
 If the values arrive independently, Freerange may correctly leave the relationship unproven.
 
-## No backward algebraic solving
+## No backward propagation through arithmetic
 
-A person can see that reaching this division means `width * 2 > 10`, and therefore `width > 5`. Freerange does not work backward through the multiplication:
+Backward propagation would use a condition on a calculation to narrow its inputs. A person can see that reaching this division means `width * 2 > 10`, and therefore `width > 5`. Freerange does not propagate that condition backward through the multiplication:
 
 ```ts
 export function previewScale(width: number): number {
@@ -119,7 +123,7 @@ export function previewScale(width: number): number {
 }
 ```
 
-Write the condition directly:
+Check the value that the later operation uses:
 
 ```ts
 export function previewScale(width: number): number {
@@ -128,9 +132,9 @@ export function previewScale(width: number): number {
 }
 ```
 
-## No algebraic rearrangement; Freerange follows JavaScript's written evaluation order
+## No algebraic normalization
 
-Expressions that are equal in ordinary algebra can produce different JavaScript numbers:
+Algebraic normalization rewrites expressions using rules such as associativity, commutativity, or distributivity. Those rules do not always preserve JavaScript floating-point results:
 
 ```ts
 const amount = 9_007_199_254_740_992
@@ -138,9 +142,9 @@ const first = 3 + amount + 2 // 9007199254740998
 const second = 1 + amount + 4 // 9007199254740996
 ```
 
-Freerange does not rearrange either expression into `amount + 5`. Choose the calculation order whose floating-point behavior the application wants. If both uses must be identical, calculate the value once and reuse it.
+Freerange follows JavaScript's written evaluation order and does not rearrange either expression into `amount + 5`. Choose the calculation order whose floating-point behavior the application wants. If both uses must be identical, calculate the value once and reuse it.
 
-## Branches keep one continuous range, not separate alternatives
+## Branches merge into one continuous range
 
 Freerange combines both branch results into one continuous range. Here `width` becomes `240..480`, which includes `300` even though neither branch returns it:
 
@@ -162,7 +166,7 @@ export function previewRatio(compact: boolean): number {
 
 This matters only when later code depends on a gap in the possible values. A broad but safe return range may need no rewrite.
 
-## At most one exact excluded number is remembered
+## A number remembers at most one excluded value
 
 After these checks, Freerange may remember that `code` is not `300` and forget the earlier exclusion of `240`:
 
@@ -187,9 +191,9 @@ export function reservedCodeRatio(code: number): number {
 
 Freerange does not retain arbitrary sets such as "every number except 240 and 300."
 
-## Same-file calls keep the result range, not how the result was calculated
+## A function return does not include how the value was calculated
 
-Freerange follows supported calls in the same file and keeps the returned value's numeric range. It does not currently retain that a returned number was exactly a calculation over the caller's inputs:
+Freerange evaluates supported same-file helpers using what the caller knows. It keeps what the helper may return, including numeric ranges and object fields, but not an equation such as "this result is exactly `end - start`":
 
 ```ts
 function span(start: number, end: number): number {
@@ -201,7 +205,7 @@ export function progressBar(value: number, start: number, end: number): number {
 }
 ```
 
-If later code needs to check that calculation, calculate and check it in the caller, then pass the checked value to a helper:
+When the caller needs to check that exact calculation, calculate and check it in the caller, then pass the checked result to a helper:
 
 ```ts
 function progressFromSpan(value: number, start: number, span: number): number {
@@ -217,7 +221,29 @@ export function progressBar(value: number, start: number, end: number): number {
 
 The example treats a non-finite or zero span as `0`; use a throw or a caller requirement when that better matches the application. There is no need to move a calculation out of a helper when only the returned range matters.
 
-## No cross-module contracts; only supported calls in the same file are followed
+Booleans follow the same rule. A function that returns `true` does not also tell the caller what its arguments must have been:
+
+```ts
+function isValidIndex(values: number[], index: number): boolean {
+  return Number.isInteger(index) && index >= 0 && index < values.length
+}
+
+export function valueAt(values: number[], index: number): number {
+  if (!isValidIndex(values, index)) return 0
+  return values[index]!
+}
+```
+
+Write the checks directly where they protect the array read:
+
+```ts
+export function valueAt(values: number[], index: number): number {
+  if (!Number.isInteger(index) || index < 0 || index >= values.length) return 0
+  return values[index]!
+}
+```
+
+## Imported function bodies are not analyzed
 
 Freerange does not follow a function imported from another module:
 
@@ -229,7 +255,7 @@ export function labelWidth(text: string): number {
 }
 ```
 
-Put the numeric work in a supported helper with explicit inputs:
+Keep the numeric work that needs analysis in a supported helper with explicit inputs:
 
 ```ts
 export function labelWidthFromMeasurement(measuredWidth: number): number {
@@ -243,9 +269,9 @@ export function labelWidth(text: string): number {
 
 Freerange can prove `labelWidthFromMeasurement`, but not the imported measurement. Imported constants still work when their initializer ultimately resolves to a numeric literal.
 
-## No collection callbacks such as `map` or `filter`. Loops are read-only with respect to arrays
+## No higher-order function analysis
 
-Freerange does not run callbacks passed to `reduce`, `map`, or `filter`:
+Higher-order functions such as `reduce`, `map`, and `filter` receive another function as an argument. Freerange does not analyze those callbacks:
 
 ```ts
 export function totalWidth(widths: number[]): number {
@@ -253,7 +279,7 @@ export function totalWidth(widths: number[]): number {
 }
 ```
 
-An explicit loop can read the array and update a local scalar:
+For a simple aggregation, an explicit loop can read the array and update a local number:
 
 ```ts
 export function totalWidth(widths: number[]): number {
@@ -265,56 +291,9 @@ export function totalWidth(widths: number[]): number {
 }
 ```
 
-Freerange still does not support growing or modifying an output array inside the loop. A loop is therefore not a general replacement for `map` or `filter`.
+This rewrite works for a scalar aggregation. Because object and array writes are unsupported, an explicit loop still cannot build an output array and is not a general replacement for `map` or `filter`.
 
-## No boolean-helper summaries
-
-Freerange can analyze this helper's boolean result, but the returned `true` does not tell the caller which checks made it true:
-
-```ts
-function isValidIndex(values: number[], index: number): boolean {
-  return Number.isInteger(index) && index >= 0 && index < values.length
-}
-
-export function valueAt(values: number[], index: number): number {
-  if (!isValidIndex(values, index)) return 0
-  return values[index]!
-}
-```
-
-Write the checks directly in the control flow that protects the array read:
-
-```ts
-export function valueAt(values: number[], index: number): number {
-  if (!Number.isInteger(index) || index < 0 || index >= values.length) return 0
-  return values[index]!
-}
-```
-
-## Interior `console.assert` does not narrow
-
-An interior assertion asks Freerange to prove a claim. It does not make the following division trust that claim:
-
-```ts
-export function ratio(total: number, divisor: number): number {
-  const checkedDivisor = divisor
-  console.assert(checkedDivisor !== 0)
-  return total / checkedDivisor
-}
-```
-
-Use control flow when execution must stop or choose a fallback:
-
-```ts
-export function ratio(total: number, divisor: number): number {
-  if (divisor === 0) return 0
-  return total / divisor
-}
-```
-
-Leading `console.assert` calls are different. A consecutive group at the beginning of a function describes what callers must provide and does narrow the function body.
-
-## Loops try to find a stable range after a few iterations; they do not derive formulas or general loop invariants
+## Loops find stable ranges, not exact formulas
 
 Freerange does not simulate the exact iteration count, even when the bound is a literal:
 
