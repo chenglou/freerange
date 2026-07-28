@@ -118,7 +118,7 @@ Every plain `number` parameter, including a number field in a fixed-shape object
 ## Writing Analyzable TypeScript
 
 Freerange supports a subset of TS:
-- Named, synchronous top-level functions in a file; Freerange follows calls between functions in the same file
+- Named, synchronous top-level functions. Both `function size(...) {}` and direct `const size = (...) => ...` declarations work. Freerange follows calls between functions in the same file
 - Numbers, booleans, strings, nullable values, plain objects, tagged unions, dense arrays, and fixed tuples
 - `if`/`else`, ternaries, non-fallthrough `switch`, `&&`, `||`, `!`, `??`, `for`, `while`, and `for...of` loops
 - Arithmetic, comparisons, object field and array reads, selected `Math` operations, and `Number.isInteger`, `Number.isFinite`, and `Number.isNaN`

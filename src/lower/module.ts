@@ -18,6 +18,7 @@ import {numericLiteralValue} from './literals.ts'
 import {declaredOnlyInDeclarationFiles} from './platform.ts'
 import {addInstruction, addSite, createFunctionContext, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type TopLevelFunction} from './context.ts'
 import {lowerExpression, nonMissingUnionMembers, tagLiteralValues, taggedUnionProperty, valueKind} from './expression.ts'
+import {directFunctionExpression} from './function-unit.ts'
 import {lowerStatement} from './statements.ts'
 
 export type ModuleScan = {
@@ -45,9 +46,16 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
       // the statement itself is skipped when the initializer reaches it, and functions
       // reading the name are rejected as unknown identifiers.
       if ((statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) continue
+      const isConst = (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
       for (const declarator of statement.declarationList.declarations) {
         if (ts.isIdentifier(declarator.name)) {
-          register(declarator.name, declaredCategory(declarator.name, checker))
+          register(
+            declarator.name,
+            isConst && declarator.initializer != null
+              && directFunctionExpression(declarator.initializer) != null
+              ? {kind: 'function'}
+              : declaredCategory(declarator.name, checker),
+          )
           continue
         }
         // `const {cols} = gridSize` at the top level: each destructured name is its own
@@ -206,7 +214,7 @@ export function lowerModuleInitializer(
     if (skippedAtTopLevel(statement)) continue
     const recovery = snapshotLowering(context)
     try {
-      assertAccepted(statement)
+      assertAccepted(statement, true)
       if (ts.isVariableStatement(statement)) {
         lowerTopLevelDeclarations(statement, context, scan)
         continue
@@ -354,6 +362,12 @@ function lowerTopLevelDeclarations(statement: ts.VariableStatement, context: Fun
     const symbol = context.checker.getSymbolAtLocation(declarator.name)
     const binding = symbol == null ? undefined : scan.bindingsBySymbol.get(symbol)
     if (binding == null) throw new LoweringStop(declarator, {kind: 'variableDeclarationShape'})
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+      && directFunctionExpression(declarator.initializer) != null) {
+      const marker = addInstruction(context, declarator.initializer, {kind: 'opaqueConstant'})
+      addInstruction(context, declarator, {kind: 'moduleWrite', binding, value: marker})
+      continue
+    }
     const value = lowerExpression(declarator.initializer, context)
     addInstruction(context, declarator, {kind: 'moduleWrite', binding, value})
   }
@@ -361,8 +375,9 @@ function lowerTopLevelDeclarations(statement: ts.VariableStatement, context: Fun
 
 function skippedAtTopLevel(statement: ts.Statement): boolean {
   // `export {alreadyDeclaredName}` and import declarations create bindings but run nothing.
-  // Only NAMED function declarations pass: those become program.functions entries, so
-  // unsupported code inside them keeps the fully-analyzed publish gate honest. An
+  // Named declarations pass here: those become program.functions entries, so unsupported
+  // code inside them keeps the fully-analyzed publish gate honest. Const-bound functions
+  // remain variable statements and lower above as function-initialization markers. An
   // anonymous `export default function` has no name to collect under, so it falls through
   // to ordinary statement lowering, which records it as an initializer skip — otherwise
   // its body would be runtime code invisible to every gate.
@@ -741,6 +756,7 @@ function demote(bindings: ModuleBindingIR[], binding: ModuleBindingID): void {
       break
     }
     case 'kind':
+    case 'function':
     case 'import':
     case 'opaque':
       break

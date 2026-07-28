@@ -357,9 +357,9 @@ function evaluateInstructionKinded(
       // An opaque binding's declared type spans value kinds (e.g. `unknown`), so two paths
       // could put a number and a boolean in one slot and meet at a join, which only handles
       // matching kinds. Reads of opaque bindings stop regardless, so the slot stays
-      // uninitialized instead of holding a value nothing may consume. Every other writable
-      // category is single-kind: value/kind writes are type-checked against the declared
-      // number, boolean, or record shape.
+      // uninitialized instead of holding a value nothing may consume. Every other value
+      // category is single-kind; a function binding stores only the internal marker that
+      // its top-level initializer has run.
       if (binding.category.kind !== 'opaque') {
         state.shared[instruction.binding] = assigned
       }
@@ -552,6 +552,15 @@ function evaluateInstructionKinded(
       return computedNumber(maximumNumbers(operands), operands, instruction.site)
     }
     case 'call': {
+      if (instruction.binding != null && state.shared[instruction.binding] == null) {
+        return {
+          kind: 'stop',
+          stop: {
+            site: instruction.site,
+            reason: {kind: 'moduleRead', binding: instruction.binding},
+          },
+        }
+      }
       const callee = context.program.functions[instruction.function]
       if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
       if (callee.kind === 'unsupported') {

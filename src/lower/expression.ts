@@ -420,7 +420,10 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
             arguments_.push(lowerParameterDefault(default_, parameter.initializer, context))
             continue
           }
-          if (parameter.questionToken != null) {
+          const callableParameter = callee.signature?.declaration?.parameters[index]
+          if (callableParameter != null
+            && ts.isParameter(callableParameter)
+            && callableParameter.questionToken != null) {
             arguments_.push(addInstruction(context, parameter, {kind: 'nullishConstant', sentinel: 'undefined'}))
             continue
           }
@@ -452,7 +455,12 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           context,
         ))
       }
-      return addInstruction(context, current, {kind: 'call', function: callee.id, arguments: arguments_})
+      return addInstruction(context, current, {
+        kind: 'call',
+        function: callee.id,
+        arguments: arguments_,
+        binding: callee.binding,
+      })
     }
     if (ts.isPropertyAccessExpression(current.expression)) {
       const platformCall = current.arguments.length === 0 ? platformFact(current.expression, true, context.checker) : null

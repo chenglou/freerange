@@ -94,7 +94,13 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'staticRequire'; value: ValueID; purpose?: 'finiteInput'})
   | (InstructionBase & {kind: 'staticAssert'; value: ValueID; assertion: number})
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})
-  | (InstructionBase & {kind: 'call'; function: FunctionID; arguments: ValueID[]})
+  | (InstructionBase & {
+      kind: 'call'
+      function: FunctionID
+      arguments: ValueID[]
+      // A const-bound function is unavailable until its top-level initializer runs.
+      binding: ModuleBindingID | null
+    })
   // tag is set when the literal's contextual type is a tagged union and the literal names
   // its tag with a string literal — the engine then builds a single-variant union, so
   // branches building different variants join per tag instead of dropping properties.

@@ -1,4 +1,5 @@
 import * as ts from 'typescript'
+import type {TopLevelFunctionUnit} from './function-unit.ts'
 
 type StaticAnnotationRole = 'requirement' | 'assertion'
 
@@ -19,19 +20,19 @@ type StaticAnnotationScan = {
 
 export function scanStaticAnnotations(
   sourceFile: ts.SourceFile,
-  declarations: ts.FunctionDeclaration[],
+  functions: TopLevelFunctionUnit[],
   checker: ts.TypeChecker,
 ): StaticAnnotationScan {
-  const ownerIndex = new Map<ts.FunctionDeclaration, number>(
-    declarations.map((declaration, index) => [declaration, index]),
+  const ownerIndex = new Map<ts.SignatureDeclaration, number>(
+    functions.map((unit, index) => [unit.declaration, index]),
   )
-  const callsByFunction = declarations.map(() => [] as ts.CallExpression[])
+  const callsByFunction = functions.map(() => [] as ts.CallExpression[])
   const outsideTopLevelFunctions: ts.CallExpression[] = []
 
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && isStaticIntent(node, checker)) {
       const owner = ts.findAncestor(node, ts.isFunctionLike)
-      const index = owner != null && ts.isFunctionDeclaration(owner) ? ownerIndex.get(owner) : undefined
+      const index = owner == null ? undefined : ownerIndex.get(owner)
       if (index == null) outsideTopLevelFunctions.push(node)
       else callsByFunction[index]!.push(node)
     }
@@ -40,12 +41,12 @@ export function scanStaticAnnotations(
   visit(sourceFile)
 
   return {
-    functions: declarations.map((declaration, index) => {
+    functions: functions.map((unit, index) => {
       const calls = callsByFunction[index]!
       const callSet = new Set(calls)
       const leading = new Set<ts.CallExpression>()
-      if (declaration.body != null) {
-        for (const statement of declaration.body.statements) {
+      if (unit.declaration.body != null && ts.isBlock(unit.declaration.body)) {
+        for (const statement of unit.declaration.body.statements) {
           if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)
             || !callSet.has(statement.expression)) break
           leading.add(statement.expression)

@@ -9,6 +9,7 @@ import type {
 import type {InstructionIR, TerminatorIR} from '../ir/instructions.ts'
 import {nodeSpan, type BlockIR, type FunctionIR, type SourceSpan, type UnsupportedReason} from '../ir/program.ts'
 import type {StaticAnnotation} from './static-intrinsics.ts'
+import type {TopLevelFunctionUnit} from './function-unit.ts'
 
 export type MutableBlock = {
   loopHeader: SiteID | null
@@ -17,12 +18,14 @@ export type MutableBlock = {
   terminator: TerminatorIR | null
 }
 
-// A top-level function declaration and its index in ProgramIR.functions. The call arm
-// keeps the declaration so omitted optional and literal-defaulted arguments can be filled
-// before emitting the fixed-arity call instruction.
-export type TopLevelFunction = {
+// A top-level function and its index in ProgramIR.functions. The call arm keeps the
+// declaration so omitted optional and literal-defaulted arguments can be filled before
+// emitting the fixed-arity call instruction. binding is present for a const-bound
+// function, whose initializer must run before the function can be called.
+export type TopLevelFunction = TopLevelFunctionUnit & {
   id: FunctionID
-  declaration: ts.FunctionDeclaration
+  binding: ModuleBindingID | null
+  signature: ts.Signature | null
 }
 
 export type FunctionContext = {
@@ -40,6 +43,7 @@ export type FunctionContext = {
   bindings: Map<ts.Symbol, ValueID>
   parameters: FunctionIR['parameters']
   assertions: FunctionIR['assertions']
+  returnsVoid: boolean
   // Innermost-last stack of enclosing loops, consulted by `continue`. A continue runs the
   // loop's advance step (a for loop's incrementor, the for-of counter bump; nothing for
   // while), then jumps to the header carrying the loop's carried bindings plus whatever
@@ -60,6 +64,7 @@ export function createFunctionContext(
   moduleBindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
   sites: SourceSpan[],
   staticAnnotations: StaticAnnotation[] = [],
+  returnsVoid: boolean = true,
 ): FunctionContext {
   const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}
   return {
@@ -75,6 +80,7 @@ export function createFunctionContext(
     bindings: new Map(),
     parameters: [],
     assertions: [],
+    returnsVoid,
     loops: [],
   }
 }

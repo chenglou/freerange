@@ -837,6 +837,7 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
         // read of one can only happen in the initializer's own top-level code.
         case 'value':
         case 'kind':
+        case 'function':
           return `reads ${binding.name} before it is initialized (read at ${formatSite(program, stop.site)})`
       }
     }
@@ -905,6 +906,7 @@ export function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'unknownIdentifier': return `unknown identifier ${reason.name}`
     case 'missingSymbol': return 'node without a TypeScript symbol'
     case 'functionWithoutSignature': return 'function without a TypeScript signature'
+    case 'constFunctionSignature': return 'a top-level const function whose declared call shape differs from its implementation'
     case 'functionWithoutBody': return 'function declarations need bodies'
     case 'destructuredParameter': return 'destructured parameters (take a named parameter and destructure it in the body)'
     case 'parameterType': return reason.optionalOrRestTuple

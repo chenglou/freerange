@@ -349,14 +349,19 @@ test('guide routing requires the exact supported operation and value kind', () =
   expect(divisorAssumption?.guideIDs).toEqual(['guard-derived-value'])
 })
 
-test('zero function coverage does not claim skipped callable forms are absent', () => {
+test('top-level const arrows are analysis units rather than initializer skips', () => {
   const audit = auditSource('arrow.ts', `
     export const width = (value: number): number => value
   `)
-  expect(audit.coverage).toMatchObject({functions: 0, initializerSkips: 1})
+  expect(audit.coverage).toMatchObject({
+    functions: 1,
+    analyzed: 1,
+    unsupported: 0,
+    initializerSkips: 0,
+  })
   const output = formatFileAuditUnit(audit)
-  expect(output).toStartWith('# arrow.ts (no named function declarations')
-  expect(output).toContain('1 module statement skipped')
+  expect(output).toStartWith('# arrow.ts (1/1 functions fully analyzed')
+  expect(output).not.toContain('module statement skipped')
   expect(output).not.toContain('## Refactoring suggestions')
 
   const constantsOnly = formatFileAuditUnit(auditSource('constants.ts', 'export const width = 24'))

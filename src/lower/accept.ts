@@ -6,10 +6,14 @@ import {unsupported} from './context.ts'
 // immutable after construction) and `var` — checked before lowering ever sees the code.
 // (`any`-typed values and type assertions used to be rejected here too; both are carried
 // claim-free now — see valueKind's opaque arm and unwrap's assertion peeling.) Called once
-// per function declaration and once per top-level statement of the module initializer; a
+// per analyzed top-level function and once per top-level statement of the module initializer; a
 // violation throws LoweringStop and is caught like any other rejection.
-export function assertAccepted(root: ts.Node): void {
+export function assertAccepted(root: ts.Node, deferFunctionBodies: boolean = false): void {
   const visit = (node: ts.Node): void => {
+    // Creating a nested function does not execute its body. The function gets its own
+    // acceptance check if it is a supported top-level unit; all other function values are
+    // rejected later where the surrounding lowering encounters them.
+    if (deferFunctionBodies && node !== root && ts.isFunctionLike(node)) return
     // Type annotations hold no runtime values, so there is nothing to check inside them.
     if (ts.isTypeNode(node)) return
     // JSX never lowers (the expression catch-all names it), but its tag names and

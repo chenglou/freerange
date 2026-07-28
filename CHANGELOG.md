@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Analyze arrow functions and function expressions assigned directly to top-level `const` names.
+
 ## 0.0.2 - 2026-07-21
 
 - Add node support (#2)

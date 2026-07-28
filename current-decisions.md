@@ -85,7 +85,7 @@ The array-ness of an external array is itself printed trust, like the declared-k
 
 ## How should module initialization be modeled?
 
-Lower each file's top-level runtime code into a synthetic initializer function and execute it with the same control-flow evaluator used for ordinary functions. Function declarations do not run during initialization unless top-level code calls them. Module slots distinguish uninitialized from initialized values, so a read before a local declaration stops honestly.
+Lower each file's top-level runtime code into a synthetic initializer function and execute it with the same control-flow evaluator used for ordinary functions. Function declarations do not run during initialization unless top-level code calls them. A function assigned directly to a top-level `const` becomes callable when execution reaches its declaration; creating the function does not run its body. Module slots distinguish uninitialized from initialized values, so a read before a local declaration stops honestly.
 
 Freerange does not build or execute a runtime module-dependency graph. Runtime import cycles and top-level `await` are not modeled, and there is no project-wide cycle rejection. Type-only import cycles do not matter. Imported values normally remain unknown, apart from the numeric-literal constant case described below.
 

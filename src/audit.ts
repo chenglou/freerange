@@ -286,7 +286,7 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
 
 function formatAuditCoverage(coverage: AuditCoverage): string {
   const parts = coverage.functions === 0
-    ? ['no named function declarations']
+    ? ['no named top-level functions']
     : [`${coverage.analyzed}/${coverage.functions} functions fully analyzed`]
   if (coverage.partial > 0) parts.push(`${coverage.partial} partially supported`)
   if (coverage.unsupported > 0) parts.push(`${coverage.unsupported} unsupported`)
@@ -405,6 +405,7 @@ function guidesForUnsupportedReason(reason: UnsupportedReason): RefactorGuideID[
     case 'unknownIdentifier':
     case 'missingSymbol':
     case 'functionWithoutSignature':
+    case 'constFunctionSignature':
     case 'functionWithoutBody':
     case 'destructuredParameter':
     case 'parameterType':

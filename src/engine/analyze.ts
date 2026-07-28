@@ -256,10 +256,13 @@ function publishedModuleValues(
     && program.functions.every(lowered => lowered.kind === 'lowered')
 
   return program.moduleBindings.map((binding, index) => {
-    if (binding.category.kind !== 'value' || demoted.has(index)) return null
+    if ((binding.category.kind !== 'value' && binding.category.kind !== 'function')
+      || demoted.has(index)) return null
     // holdsMutableStructure, not a top-level tag check: a `number[] | null` binding is
     // nullish at the top level yet the array inside is exactly as alias-mutable.
-    if (holdsMutableStructure(binding.category.declaredKind) && !fullyAnalyzed) return null
+    if (binding.category.kind === 'value'
+      && holdsMutableStructure(binding.category.declaredKind)
+      && !fullyAnalyzed) return null
     const slot = end?.[index]
     return slot ?? null
   })

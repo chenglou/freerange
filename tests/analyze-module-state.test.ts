@@ -3,6 +3,55 @@ import {analyzeSource, formatReport} from '../src/index.ts'
 import {analyzedFunction} from './analyze-helpers.ts'
 
 describe('module state and nullability', () => {
+  test('const-bound functions become callable only after their initializer runs', () => {
+    const beforeInitialization = analyzeSource('function-before-initialization.ts', `
+      function invoke(value: number): number {
+        return later(value)
+      }
+      const before = invoke(4)
+      const later = (value: number): number => value * 2
+    `)
+    expect(beforeInitialization.functions.map(fn => `${fn.name}:${fn.kind}`)).toEqual([
+      'module initialization:partial',
+      'invoke:partial',
+      'later:analyzed',
+    ])
+
+    const report = analyzeSource('function-after-initialization.ts', `
+      const later = (value: number): number => value * 2
+      function invoke(value: number): number {
+        return later(value)
+      }
+      const after = invoke(5)
+      export function readAfter(): number {
+        return after
+      }
+    `)
+    expect(report.functions.map(fn => `${fn.name}:${fn.kind}`)).toEqual([
+      'later:analyzed',
+      'invoke:analyzed',
+      'readAfter:analyzed',
+    ])
+    expect(analyzedFunction(report, 'readAfter').ensures)
+      .toEqual(['return is a finite integer number from 10 through 10'])
+  })
+
+  test('creating a rejected const function still completes module initialization', () => {
+    const report = analyzeSource('rejected-const-function.ts', `
+      const target = {value: 0}
+      export const rejected = (): void => {
+        target.value = 1
+      }
+      export const supported = (value: number): number => value + 1
+    `)
+
+    expect(report.functions.map(fn => `${fn.name}:${fn.kind}`)).toEqual([
+      'rejected:unsupported',
+      'supported:analyzed',
+    ])
+    expect(formatReport(report)).toContain('unsupported: a write into an object')
+  })
+
   test('flows exact module constants into functions', () => {
     const report = analyzeSource('module-constants.ts', `
       const boxesGapX = 24

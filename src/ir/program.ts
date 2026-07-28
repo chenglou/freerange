@@ -74,6 +74,9 @@ export type UnsupportedReason =
   // user source is a shaky boundary, so the case is recorded rather than crashed on.
   | {kind: 'missingSymbol'}
   | {kind: 'functionWithoutSignature'}
+  // A const-bound function's public type is overloaded, has a rest/this parameter, or has
+  // a different parameter count from the arrow or function expression.
+  | {kind: 'constFunctionSignature'}
   // Overload signatures and ambient declarations have no body to lower.
   | {kind: 'functionWithoutBody'}
   | {kind: 'destructuredParameter'}
@@ -234,6 +237,9 @@ export type ModuleBindingCategory =
   // literal is trusted exactly, without analyzing the exporting module; the soundness
   // argument sits on importedCategory in src/lower/module.ts.
   | {kind: 'importedConstant'; value: number}
+  // A directly assigned const arrow or function expression. Its slot carries only whether
+  // module initialization has reached the declaration; calls use the FunctionIR itself.
+  | {kind: 'function'}
   // Every other declared type (unions with null, arrays, strings, functions, records with
   // optional or unrepresentable properties). Reads stop.
   | {kind: 'opaque'}
@@ -249,6 +255,7 @@ export function declaredKindOf(category: ModuleBindingCategory): DeclaredKind | 
     // An imported constant needs no declared-kind hedge: its slot is always seeded with
     // the exact literal, so no assumes line and no havoc reset value apply.
     case 'importedConstant':
+    case 'function':
     case 'import':
     case 'opaque':
       return null

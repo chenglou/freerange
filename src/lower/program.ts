@@ -4,7 +4,8 @@ import {moduleInitializerName, nodeSpan, type DeclaredKind, type FunctionIR, typ
 import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
 import {addInstructionAtSite, addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type MutableBlock, type TopLevelFunction} from './context.ts'
-import {valueKind} from './expression.ts'
+import {lowerExpression, valueKind} from './expression.ts'
+import {callableSignature, topLevelFunctionUnits} from './function-unit.ts'
 import {parameterDefaultFits, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
 import {declaredKind, lowerModuleInitializer, scanModuleBindings, tupleHasOptionalOrRestPositions, type ModuleScan} from './module.ts'
 import {scanStaticAnnotations, type StaticAnnotation} from './static-intrinsics.ts'
@@ -12,10 +13,7 @@ import {lowerStatements} from './statements.ts'
 
 export function lowerSource(checked: CheckedSource, baseDirectory: string = process.cwd()): ProgramIR {
   const {sourceFile, checker} = checked
-  const declarations: ts.FunctionDeclaration[] = []
-  for (const statement of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.name != null) declarations.push(statement)
-  }
+  const declarations = topLevelFunctionUnits(sourceFile)
   const staticScan = scanStaticAnnotations(sourceFile, declarations, checker)
   const recordStaticAnnotationIssues = (sites: SourceSpan[]): ProgramIR['staticAnnotationIssues'] =>
     staticScan.outsideTopLevelFunctions.map(call => {
@@ -34,9 +32,9 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
       baseDirectory,
       lineStarts: [...sourceFile.getLineStarts()],
       sites,
-      functions: declarations.map((declaration, index) => ({
+      functions: declarations.map((unit, index) => ({
         kind: 'unsupported',
-        name: declaration.name!.text,
+        name: unit.name.text,
         hasStaticAnnotations: staticScan.functions[index]!.length > 0,
         site: 0,
         reason,
@@ -62,21 +60,33 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
     return rejectFile(nodeSpan(sourceFile, evalNode), {kind: 'evalInFile'})
   }
   const functionsBySymbol = new Map<ts.Symbol, TopLevelFunction>()
+  const scan = scanModuleBindings(sourceFile, checker)
+  const topLevelFunctions: TopLevelFunction[] = []
   for (let index = 0; index < declarations.length; index++) {
-    const declaration = declarations[index]!
+    const unit = declarations[index]!
     // This loop runs outside the per-function catch below, so a missing symbol here is an
     // invariant crash, not a recorded reason: a declaration name that type-checked always
     // has a symbol.
-    const symbol = checker.getSymbolAtLocation(declaration.name!)
-    if (symbol == null) throw new Error(`Function declaration ${declaration.name!.text} has no TypeScript symbol`)
-    functionsBySymbol.set(symbol, {id: index, declaration})
+    const symbol = checker.getSymbolAtLocation(unit.name)
+    if (symbol == null) throw new Error(`Function ${unit.name.text} has no TypeScript symbol`)
+    const binding = scan.bindingsBySymbol.get(symbol)
+    if (unit.initializer != null && binding == null) {
+      throw new Error(`Const-bound function ${unit.name.text} has no module binding`)
+    }
+    const fn: TopLevelFunction = {
+      ...unit,
+      id: index,
+      binding: unit.initializer == null ? null : binding!,
+      signature: callableSignature(unit, checker),
+    }
+    topLevelFunctions.push(fn)
+    functionsBySymbol.set(symbol, fn)
   }
-  const scan = scanModuleBindings(sourceFile, checker)
   const sites: SourceSpan[] = []
   const staticAnnotationIssues = recordStaticAnnotationIssues(sites)
   const functions: FunctionLowering[] = []
-  for (let index = 0; index < declarations.length; index++) {
-    const declaration = declarations[index]!
+  for (let index = 0; index < topLevelFunctions.length; index++) {
+    const declaration = topLevelFunctions[index]!
     const staticAnnotations = staticScan.functions[index]!
     // A failed function lowering discards the half-built FunctionContext wholesale; only
     // the name, annotation presence, offending node's site, and tagged reason survive.
@@ -87,7 +97,7 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
       sites.push(nodeSpan(sourceFile, error.node))
       functions.push({
         kind: 'unsupported',
-        name: declaration.name!.text,
+        name: declaration.name.text,
         hasStaticAnnotations: staticAnnotations.length > 0,
         site: sites.length - 1,
         reason: error.reason,
@@ -109,7 +119,7 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
 }
 
 function lowerFunction(
-  declaration: ts.FunctionDeclaration,
+  unit: TopLevelFunction,
   staticAnnotations: StaticAnnotation[],
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
@@ -117,6 +127,7 @@ function lowerFunction(
   scan: ModuleScan,
   sites: SourceSpan[],
 ): FunctionIR {
+  const {declaration} = unit
   for (const annotation of staticAnnotations) {
     if (annotation.kind === 'invalid') {
       throw unsupported(annotation.node, {kind: 'staticAssertionForm', problem: annotation.problem})
@@ -126,18 +137,24 @@ function lowerFunction(
   // An async body returns a Promise and a generator returns an iterator; lowering either
   // as if it ran synchronously would publish the body's values as the caller-visible
   // result. Rejected wholesale.
-  if (declaration.asteriskToken != null || declaration.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true) {
+  if ((!ts.isArrowFunction(declaration) && declaration.asteriskToken != null)
+    || declaration.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true) {
     throw unsupported(declaration, {kind: 'asyncOrGeneratorFunction'})
   }
   assertAccepted(declaration)
-  const signature = checker.getSignatureFromDeclaration(declaration)
+  const signature = unit.signature
+  if (signature == null) {
+    throw unsupported(unit.name, {
+      kind: unit.initializer == null ? 'functionWithoutSignature' : 'constFunctionSignature',
+    })
+  }
   // A type predicate (`shape is Circle`, `asserts x`) is the checker taking the author's
   // word: callers' narrowing then exposes properties the analysis cannot confirm the
   // value carries. Rejecting the declaring function stops every caller at the call.
-  if (signature != null && checker.getTypePredicateOfSignature(signature) != null) {
+  if (checker.getTypePredicateOfSignature(signature) != null) {
     throw unsupported(declaration, {kind: 'typePredicate'})
   }
-  const returnType = functionReturnType(declaration, checker)
+  const returnType = checker.getReturnTypeOfSignature(signature)
   // `never` counts as returning nothing: the idiomatic annotation for an always-throwing
   // helper (`function fail(code: number): never`), whose paths all end in throw — the
   // always-throws analysis and the calleeAlwaysThrows caller stop handle the rest.
@@ -154,16 +171,21 @@ function lowerFunction(
     scan.bindingsBySymbol,
     sites,
     staticAnnotations,
+    returnsVoid,
   )
   const entry = context.currentBlock
-  for (const parameter of declaration.parameters) {
+  for (let parameterIndex = 0; parameterIndex < declaration.parameters.length; parameterIndex++) {
+    const parameter = declaration.parameters[parameterIndex]!
+    const parameterType = unit.initializer == null
+      ? checker.getTypeAtLocation(parameter)
+      : checker.getTypeOfSymbolAtLocation(signature.parameters[parameterIndex]!, signature.declaration!)
     // `function area({width, height}: Size)` lowers as a synthetic record parameter plus
     // one property read per name — the same classification named parameters use, the
     // same reads body destructuring uses. The report metadata below keeps the local
     // names, so a condition says `width` rather than `{width, height}.width`. Defaults
     // and rest inside the pattern stay out, like the body form.
     if (ts.isObjectBindingPattern(parameter.name)) {
-      const type = lowerParameterType(parameter, checker)
+      const type = lowerParameterType(parameter, parameterType, checker)
       // The pattern text becomes the parameter's report name; a pattern the author wrapped
       // across source lines would otherwise break the one-fact-per-line report format
       // (`assumes: {` and orphan fragments — a corpus census caught eight of these).
@@ -201,7 +223,7 @@ function lowerFunction(
     if (parameter.dotDotDotToken != null) {
       throw unsupported(parameter, {kind: 'parameterType', typeText: `...${checker.typeToString(checker.getTypeAtLocation(parameter))}`, optionalOrRestTuple: false})
     }
-    let type = lowerParameterType(parameter, checker)
+    let type = lowerParameterType(parameter, parameterType, checker)
     // A default value applies whenever a caller omits the argument. Literal defaults can
     // be represented exactly and checked against the declared assumptions: `zoom: number
     // = 5` supplies a finite number. Anything else — `= Infinity`, `= readConfig()` —
@@ -218,7 +240,16 @@ function lowerFunction(
     context.parameters.push({value, name: parameter.name.text, type, site: addSite(context, parameter), bindings: null})
   }
   lowerFiniteInputRequirements(context)
-  lowerStatements(declaration.body.statements, context)
+  if (ts.isBlock(declaration.body)) {
+    lowerStatements(declaration.body.statements, context)
+  } else {
+    const value = lowerExpression(declaration.body, context)
+    terminate(context.currentBlock, {
+      kind: 'return',
+      value: returnsVoid ? null : value,
+      site: addSite(context, declaration.body),
+    })
+  }
   if (context.currentBlock.terminator == null) {
     if (!returnsVoid) {
       // A non-void path reaching the end without a return is a per-path STOP, not a
@@ -234,12 +265,12 @@ function lowerFunction(
   }
   return {
     kind: 'lowered',
-    name: declaration.name!.text,
+    name: unit.name.text,
     assertions: context.assertions,
     parameters: context.parameters,
     returnPropertyNames: declaredRecordReturnNames(returnType, checker),
     entry: 0,
-    blocks: sealBlocks(context.blocks, declaration.name!.text),
+    blocks: sealBlocks(context.blocks, unit.name.text),
   }
 }
 
@@ -287,11 +318,14 @@ function declaredRecordReturnNames(returnType: ts.Type, checker: ts.TypeChecker)
   return null
 }
 
-function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): DeclaredKind {
+function lowerParameterType(
+  parameter: ts.ParameterDeclaration,
+  type: ts.Type,
+  checker: ts.TypeChecker,
+): DeclaredKind {
   // The same recursive classification module bindings use: numbers, booleans, records
   // (opaque leaves included — an id: string property is carried, not rejected), nullable
   // wrappers, arrays, tuples, and bare opaque (a plain string parameter).
-  const type = checker.getTypeAtLocation(parameter)
   const declared = declaredKind(type, checker, [])
   if (declared == null) {
     throw unsupported(parameter, {
@@ -301,10 +335,4 @@ function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.Type
     })
   }
   return declared
-}
-
-function functionReturnType(declaration: ts.FunctionDeclaration, checker: ts.TypeChecker): ts.Type {
-  const signature = checker.getSignatureFromDeclaration(declaration)
-  if (signature == null) throw unsupported(declaration, {kind: 'functionWithoutSignature'})
-  return checker.getReturnTypeOfSignature(signature)
 }

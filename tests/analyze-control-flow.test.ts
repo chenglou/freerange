@@ -12,6 +12,105 @@ const preconditionsFixture = new URL('./fixtures/preconditions.ts', import.meta.
 const preconditionsReportPath = 'tests/fixtures/preconditions.ts'
 
 describe('control flow and contracts', () => {
+  test('top-level const arrows and function expressions analyze and call like declarations', () => {
+    const report = analyzeSource('const-functions.ts', `
+      export const concise = (value: number): number => Math.max(0, value)
+      export const block = (value: number): number => {
+        console.assert(value >= 0)
+        return concise(value) + 1
+      }
+      export const expression = function (value: number): number {
+        return block(value)
+      }
+      export function declared(value: number): number {
+        return expression(value)
+      }
+      export const maybe = (value: number): number | undefined => {
+        if (value > 0) return 1
+        return
+      }
+    `)
+
+    expect(report.functions.map(fn => `${fn.name}:${fn.kind}`)).toEqual([
+      'concise:analyzed',
+      'block:analyzed',
+      'expression:analyzed',
+      'declared:analyzed',
+      'maybe:analyzed',
+    ])
+    expect(analyzedFunction(report, 'concise').ensures)
+      .toEqual(['return is a finite number at least 0'])
+    expect(analyzedFunction(report, 'block').ensures)
+      .toEqual(['return is a finite number at least 1'])
+    expect(analyzedFunction(report, 'declared').ensures)
+      .toEqual(['return is a finite number at least 1'])
+    expect(analyzedFunction(report, 'maybe').ensures)
+      .toEqual(['return is undefined or a finite integer number from 1 through 1'])
+  })
+
+  test('const functions follow their public optional, parameter, and void types', () => {
+    const report = analyzeSource('contextual-const-functions.ts', `
+      type OptionalNumber = (value?: number) => number
+      export const withFallback: OptionalNumber = value => value ?? 4
+
+      type SmallNumber = (value: 1 | 2) => number
+      export const keepSmall: SmallNumber = (value: number) => value
+
+      type DividingSink = (divisor: number) => void
+      export const divideAndIgnore: DividingSink = divisor => {
+        return 1 / divisor
+      }
+
+      type MaybeNumber = (value: number) => number | undefined
+      export const maybeNumber: MaybeNumber = value => {
+        if (value > 0) return 1
+        return
+      }
+
+      export function callWithoutArgument(): number {
+        return withFallback()
+      }
+    `)
+
+    expect(analyzedFunction(report, 'withFallback').ensures)
+      .toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'keepSmall').ensures)
+      .toEqual(['return is a finite integer number from 1 through 2'])
+    const divideAndIgnore = analyzedFunction(report, 'divideAndIgnore')
+    expect(divideAndIgnore.ensures).toEqual([])
+    expect(divideAndIgnore.requires.map(requirement => requirement.split(' (')[0])).toEqual([
+      'Number.isFinite(divisor)',
+      'divisor is nonzero',
+    ])
+    expect(analyzedFunction(report, 'maybeNumber').ensures)
+      .toEqual(['return is undefined or a finite integer number from 1 through 1'])
+    expect(analyzedFunction(report, 'callWithoutArgument').ensures)
+      .toEqual(['return is a finite integer number from 4 through 4'])
+  })
+
+  test('const functions reject callable types outside the fixed parameter model', () => {
+    const report = analyzeSource('const-function-call-shapes.ts', `
+      interface Overloaded {
+        (value: number): number
+        (value: string): string
+      }
+      export const overloaded: Overloaded = (value: any): any => value
+      export const ignoresSecond: (left: number, right: number) => number =
+        left => left
+      export const variadic: (...values: number[]) => number =
+        (...values) => values.length
+    `)
+
+    expect(formatReport(report)).toContain(
+      'unsupported: a top-level const function whose declared call shape differs from its implementation',
+    )
+    expect(report.functions.map(fn => `${fn.name}:${fn.kind}`)).toEqual([
+      'overloaded:unsupported',
+      'ignoresSecond:unsupported',
+      'variadic:unsupported',
+    ])
+  })
+
   test('number refinements keep existing facts consistent', () => {
     const report = analyzeSource('refinement-consistency.ts', `
       export function exactIndex(values: [number, number], index: number): number {
