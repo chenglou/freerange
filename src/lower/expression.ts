@@ -1133,6 +1133,68 @@ type ValueKindResult = 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 
 // taggedUnionProperty gain theirs here.)
 const valueKindCache = new WeakMap<ts.Type, ValueKindResult[]>()
 
+function propertyIsReadonly(property: ts.Symbol): boolean {
+  const declarations = property.getDeclarations()
+  return declarations != null && declarations.length > 0 && declarations.every(declaration =>
+    (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Readonly) !== 0)
+}
+
+function isClassType(type: ts.Type): boolean {
+  return type.getSymbol()?.getDeclarations()?.some(declaration => ts.isClassDeclaration(declaration)) === true
+}
+
+function isMetadataValue(type: ts.Type, checker: ts.TypeChecker, depth: number): boolean {
+  if (depth > 8) return false
+  // `unknown` grants no operations to the phantom field. `any` stays out because it can
+  // hide callable, indexed, or other runtime-significant structure from this validation.
+  if ((type.flags & ts.TypeFlags.Unknown) !== 0) return true
+  const literalFlags = ts.TypeFlags.StringLiteral
+    | ts.TypeFlags.NumberLiteral
+    | ts.TypeFlags.BooleanLiteral
+    | ts.TypeFlags.BigIntLiteral
+    | ts.TypeFlags.UniqueESSymbol
+  if ((type.flags & literalFlags) !== 0) return true
+  if (type.isUnion()) {
+    return type.types.every(member =>
+      (member.flags & ts.TypeFlags.Undefined) !== 0
+      || isMetadataValue(member, checker, depth + 1))
+  }
+  if ((type.flags & ts.TypeFlags.Object) === 0) return false
+  if (checker.isArrayType(type) || checker.isTupleType(type)) return false
+  if (isClassType(type)) return false
+  if (checker.getIndexInfosOfType(type).length > 0) return false
+  if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return false
+  const properties = checker.getPropertiesOfType(type)
+  return properties.length > 0 && properties.every(property =>
+    propertyIsReadonly(property)
+    && isMetadataValue(checker.getTypeOfSymbol(property), checker, depth + 1))
+}
+
+function isPhantomMetadataObject(type: ts.Type, checker: ts.TypeChecker, depth: number): boolean {
+  if ((type.flags & ts.TypeFlags.Object) === 0) return false
+  if (checker.isArrayType(type) || checker.isTupleType(type)) return false
+  if (isClassType(type)) return false
+  if (checker.getIndexInfosOfType(type).length > 0) return false
+  if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return false
+  const properties = checker.getPropertiesOfType(type)
+  return properties.length > 0 && properties.every(property =>
+    (property.flags & ts.SymbolFlags.Optional) !== 0
+    && propertyIsReadonly(property)
+    && isMetadataValue(checker.getTypeOfSymbol(property), checker, depth + 1))
+}
+
+function isTransparentNumberIntersection(type: ts.IntersectionType, checker: ts.TypeChecker, depth: number): boolean {
+  let numberMembers = 0
+  for (const member of type.types) {
+    if ((member.flags & ts.TypeFlags.NumberLike) !== 0) {
+      numberMembers++
+      continue
+    }
+    if (!isPhantomMetadataObject(member, checker, depth + 1)) return false
+  }
+  return numberMembers === 1
+}
+
 export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): ValueKindResult {
   // The depth guard bounds recursion into element types (a recursive `type T = T[]` would
   // otherwise loop); past it, nothing classifies.
@@ -1151,6 +1213,7 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): Va
 
 function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number): ValueKindResult {
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
+  if (type.isIntersection() && isTransparentNumberIntersection(type, checker, depth)) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
   // Strings are carried without claims: a label or id must not reject the numeric
   // contract of the function around it.
