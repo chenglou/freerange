@@ -134,6 +134,8 @@ Before changing an input rule, decide what the application should do. If `column
 
 For each `number`, Freerange remembers its lowest and highest possible values, whether it is an integer, whether it may be `NaN` or infinite, and at most one exact value that has been ruled out. It reasons about JavaScript floating-point numbers rather than ideal real numbers and does not use a general-purpose theorem prover.
 
+Freerange also supports numeric phantom types, e.g. `type Pixels = number & {readonly __brand: 'pixels'}`.
+
 #### No common-subexpression elimination
 
 Freerange does not replace repeated calculations with one stored result, even when their source code is identical. This function checks one subtraction, then divides by a newly evaluated subtraction:

@@ -19,6 +19,7 @@ import {declaredOnlyInDeclarationFiles} from './platform.ts'
 import {addInstruction, addSite, createFunctionContext, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type TopLevelFunction} from './context.ts'
 import {lowerExpression, nonMissingUnionMembers, tagLiteralValues, taggedUnionProperty, valueKind} from './expression.ts'
 import {directFunctionExpression} from './function-unit.ts'
+import {numberConstituent} from './numeric-intersection.ts'
 import {lowerStatement} from './statements.ts'
 
 export type ModuleScan = {
@@ -682,14 +683,15 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
 
 function numericLiteralInterval(type: ts.Type): DeclaredNumberInterval | 'nonFinite' | null {
   const members = type.isUnion() ? type.types : [type]
-  if (!members.every(member =>
-    (member.flags & ts.TypeFlags.NumberLiteral) !== 0
-    && (member.flags & ts.TypeFlags.EnumLiteral) === 0)) return null
   let lower = Infinity
   let upper = -Infinity
   let integer = true
   for (const member of members) {
-    const value = (member as ts.NumberLiteralType).value
+    const number = numberConstituent(member)
+    if (number == null
+      || (number.flags & ts.TypeFlags.NumberLiteral) === 0
+      || (number.flags & ts.TypeFlags.EnumLiteral) !== 0) return null
+    const value = (number as ts.NumberLiteralType).value
     if (!Number.isFinite(value)) return 'nonFinite'
     lower = Math.min(lower, value)
     upper = Math.max(upper, value)

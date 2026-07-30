@@ -2,6 +2,7 @@ import * as ts from 'typescript'
 import type {ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import type {StaticAssertionProblem} from '../ir/program.ts'
+import {numberConstituent} from './numeric-intersection.ts'
 import {declaredOnlyInDeclarationFiles, platformFact} from './platform.ts'
 import {
   addInstruction,
@@ -1150,7 +1151,7 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): Va
 }
 
 function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number): ValueKindResult {
-  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
+  if (numberConstituent(type) != null) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
   // Strings are carried without claims: a label or id must not reject the numeric
   // contract of the function around it.
@@ -1620,7 +1621,10 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
     const missing = ts.TypeFlags.Null | ts.TypeFlags.Undefined
     const members = operandType.isUnion() ? operandType.types : [operandType]
     const restMatches = members.every(member =>
-      (member.flags & missing) !== 0 || (member.flags & typeofSide.flags) !== 0)
+      (member.flags & missing) !== 0
+      || (typeofSide.flags === ts.TypeFlags.NumberLike
+        ? valueKind(member, context.checker) === 'number'
+        : (member.flags & typeofSide.flags) !== 0))
     && members.some(member => (member.flags & missing) === 0)
     const value = lowerExpression(typeofSide.operand.expression, context)
     if (restMatches) {

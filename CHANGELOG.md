@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Allow `Date.now()` to represent dates before the Unix epoch.
+- Support numeric phantom types.
 
 ## 0.0.3 - 2026-07-28
 
