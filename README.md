@@ -285,7 +285,7 @@ export function labelWidthFromMeasurement(measuredWidth: number): number {
 }
 ```
 
-An unsupported caller can pass `measureText(text)` into this helper, allowing Freerange to verify the rule but not the imported measurement. Imported constants work when their initializer resolves to a numeric literal such as `export const GAP = 24`.
+An unsupported caller can pass `measureText(text)` into this helper, allowing Freerange to verify the rule but not the imported measurement. Imported constants work when their initializer resolves to a numeric literal such as `export const GAP = 24`. Runtime import cycles are outside Freerange's scope: an imported module must finish initializing before analyzed code reads its values. Type-only import cycles are fine.
 
 #### No higher-order function analysis
 
