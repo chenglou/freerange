@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow `Date.now()` to represent dates before the Unix epoch.
+
 ## 0.0.3 - 2026-07-28
 
 - Analyze arrow functions and function expressions assigned directly to top-level `const` names.

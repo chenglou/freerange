@@ -543,6 +543,12 @@ describe('acceptance and module safety', () => {
       export function frameBudgetUsed(startMs: number): number {
         return Math.max(0, performance.now() - startMs)
       }
+      export function currentTime(): number {
+        return Date.now()
+      }
+      export function currentTimeMayPrecedeEpoch(): number {
+        return Date.now() >= 0 ? 1 : 0
+      }
       export function randomUnit(): number {
         return Math.random()
       }
@@ -559,6 +565,10 @@ describe('acceptance and module safety', () => {
       .toEqual(['return is a finite integer number from 1 through 7'])
     expect(analyzedFunction(report, 'frameBudgetUsed').ensures)
       .toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${'platform.ts'}:7:28)`])
+    expect(analyzedFunction(report, 'currentTime').ensures)
+      .toEqual(['return is a finite integer number from -8640000000000000 through 8640000000000000'])
+    expect(analyzedFunction(report, 'currentTimeMayPrecedeEpoch').ensures)
+      .toEqual(['return is a finite integer number from 0 through 1'])
     expect(analyzedFunction(report, 'randomUnit').ensures)
       .toEqual(['return is a finite number at least 0 and less than 1'])
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'reciprocalRandomGap')))

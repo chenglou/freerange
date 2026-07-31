@@ -29,6 +29,7 @@ type PlatformEntry = {
 }
 
 const anyFinite = {lower: -Number.MAX_VALUE, upper: Number.MAX_VALUE}
+const maximumDateTime = 8_640_000_000_000_000
 
 const catalog: PlatformEntry[] = [
   // Element layout sizes are nonnegative integers (the spec rounds them).
@@ -43,10 +44,10 @@ const catalog: PlatformEntry[] = [
   {path: ['window', 'scrollY'], call: false, fact: {...anyFinite, integer: false}},
   {path: ['document', 'body', 'scrollTop'], call: false, fact: {...anyFinite, integer: false}},
   {path: ['document', 'body', 'scrollLeft'], call: false, fact: {...anyFinite, integer: false}},
-  // Monotonic clocks: finite, nonnegative, fractional (performance.now has sub-millisecond
-  // resolution); Date.now is an integer count of milliseconds.
+  // performance.now is monotonic, finite, nonnegative, and fractional. Date.now is an
+  // integer UTC time value and may be negative for a clock set before the Unix epoch.
   {path: ['performance', 'now'], call: true, fact: {lower: 0, upper: Number.MAX_VALUE, integer: false}},
-  {path: ['Date', 'now'], call: true, fact: {lower: 0, upper: Number.MAX_VALUE, integer: true}},
+  {path: ['Date', 'now'], call: true, fact: {lower: -maximumDateTime, upper: maximumDateTime, integer: true}},
   // Math.random returns one of JavaScript's discrete floating-point numbers below 1.
   // Writing the predecessor of 1 keeps the exact closed range without adding open bounds.
   {path: ['Math', 'random'], call: true, fact: {lower: 0, upper: 0.9999999999999999, integer: false}},
