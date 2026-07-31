@@ -1440,22 +1440,6 @@ export function requireBooleanCondition(node: ts.Node, checker: ts.TypeChecker):
 }
 
 function requireAccessedPropertyKind(access: ts.PropertyAccessExpression, checker: ts.TypeChecker): void {
-  // An optional property reads as its maybe-undefined value: declared kinds wrap it in
-  // the undefined sentinel and object literals fill omitted ones explicitly, so a record
-  // value always carries every property its static type declares — there is always
-  // something honest to read.
-  const receiverType = checker.getTypeAtLocation(access.expression)
-  // For an optional read the receiver includes the missing sentinels; the property lives
-  // on the non-missing part, which getNonNullableType strips to.
-  const presentType = access.questionDotToken != null ? checker.getNonNullableType(receiverType) : receiverType
-  const property = checker.getPropertyOfType(presentType, access.name.text)
-  // point.toString type-checks on every object literal, but the record value carries only
-  // its own properties — an inherited prototype member has no honest answer. The
-  // ownership test is the .d.ts rule: a property symbol declared only in declaration
-  // files was not written by the project, and on a project record that means prototype.
-  if (valueKind(presentType, checker) === 'object' && property != null && declaredOnlyInDeclarationFiles(property)) {
-    throw unsupported(access, {kind: 'prototypeMemberRead', property: access.name.text})
-  }
   const type = checker.getTypeAtLocation(access)
   if (valueKind(type, checker) != null) return
   throw unsupported(access, {kind: 'valueType', typeText: checker.typeToString(type)})

@@ -97,11 +97,8 @@ export type UnsupportedReason =
   | {kind: 'computedPropertyName'}
   | {kind: 'objectSpread'}
   | {kind: 'asyncOrGeneratorFunction'}
-  | {kind: 'typePredicate'}
   | {kind: 'protoProperty'}
   | {kind: 'enumMemberRead'}
-  // point.toString and friends: a prototype member the record value cannot answer.
-  | {kind: 'prototypeMemberRead'; property: string}
   // e.g. '**', '>>', 'instanceof' in value position — the operators arithmetic and
   // comparison lowering do not claim ('%' and '??' lower now and no longer land here)
   | {kind: 'binaryOperator'; operator: string}

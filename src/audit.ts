@@ -415,10 +415,8 @@ function guidesForUnsupportedReason(reason: UnsupportedReason): RefactorGuideID[
     case 'computedPropertyName':
     case 'objectSpread':
     case 'asyncOrGeneratorFunction':
-    case 'typePredicate':
     case 'protoProperty':
     case 'enumMemberRead':
-    case 'prototypeMemberRead':
     case 'binaryOperator':
     case 'callWithFewerArguments':
     case 'callWithMoreArguments':

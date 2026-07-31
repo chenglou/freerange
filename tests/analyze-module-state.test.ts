@@ -425,9 +425,9 @@ describe('module state and nullability', () => {
       .toEqual(['return is null or a finite integer number from 0 through 4294967294'])
   })
 
-  test('rejects reads of inherited prototype members', () => {
-    // toString type-checks on every object literal, but the record value carries only its
-    // own properties; the callable type fails the value-kind gate.
+  test('stops when a record cannot supply an additional TypeScript property', () => {
+    // TypeScript exposes toString on every object. The modeled record carries only x, so
+    // the read stops without guessing whether the runtime property is inherited or own.
     const report = analyzeSource('prototype-member.ts', `
       export function labelledX(x: number): number {
         const point = {x}
@@ -437,9 +437,13 @@ describe('module state and nullability', () => {
     `)
     const file = 'prototype-member.ts'
     expect(report.functions).toEqual([{
-      kind: 'unsupported',
+      kind: 'partial',
       name: 'labelledX',
-      unsupported: `read of the inherited prototype member toString (records carry only their own data properties) at ${file}:4:27`,
+      assumptions: ['x is finite and not NaN'],
+      observed: [],
+      partialReasons: [
+        `uses a value whose runtime kind the analysis cannot establish (at ${file}:4:27)`,
+      ],
     }])
   })
 
@@ -462,12 +466,10 @@ describe('module state and nullability', () => {
     expect(reader.ensures).toEqual(['return is a finite number'])
   })
 
-  test('rejects the constructs whose checker word the analysis cannot confirm', () => {
-    // Four gates from one review round: a type predicate is the checker taking the
-    // author's word (a lying one exposes properties the value never carries); an async
-    // body's runtime result is a Promise, not its return value; `{}` is inhabited by
-    // every non-null value, numbers included, so it is not a record shape; and __proto__
-    // in a literal sets the prototype rather than creating a property.
+  test('rejects unsupported runtime shapes rather than TypeScript-only declarations', () => {
+    // An async body's runtime result is a Promise, not its return value; `{}` is inhabited
+    // by every non-null value, numbers included, so it is not a record shape; and
+    // __proto__ in a literal sets the prototype rather than creating a property.
     const report = analyzeSource('checker-word.ts', `
       type Circle = {kind: number; radius: number}
       export function isCircle(shape: {kind: number}): shape is Circle {
@@ -486,10 +488,39 @@ describe('module state and nullability', () => {
       }
     `)
     const formatted = formatReport(report)
-    expect(formatted).toContain('a type predicate (the checker takes the predicate on faith; return a plain boolean and check properties where they are read)')
+    expect(analyzedFunction(report, 'isCircle').ensures).toEqual(['return is boolean'])
     expect(formatted).toContain("an async or generator function (the runtime result is a Promise or iterator, not the body's return value)")
     expect(formatted).toContain('value of type {}')
     expect(formatted).toContain('a property named __proto__ (prototype-setting syntax at runtime, not a data property)')
+  })
+
+  test('a type predicate does not add properties to the analyzed value', () => {
+    // TypeScript trusts the predicate signature, but the analysis follows the returned
+    // boolean and the record it actually carries. A lying predicate cannot invent radius.
+    const report = analyzeSource('lying-predicate.ts', `
+      type Circle = {kind: number; radius: number}
+      function isCircle(shape: {kind: number}): shape is Circle {
+        return true
+      }
+      function assertCircle(shape: {kind: number}): asserts shape is Circle {}
+      export function area(shape: {kind: number}): number {
+        if (!isCircle(shape)) return 0
+        return shape.radius * shape.radius
+      }
+      export function assertedArea(shape: {kind: number}): number {
+        assertCircle(shape)
+        return shape.radius * shape.radius
+      }
+    `)
+    expect(analyzedFunction(report, 'isCircle').ensures).toEqual(['return is true'])
+    for (const name of ['area', 'assertedArea']) {
+      const result = report.functions.find(functionResult => functionResult.name === name)
+      expect(result?.kind).toBe('partial')
+      if (result?.kind === 'partial') {
+        expect(result.partialReasons[0])
+          .toContain('uses a value whose runtime kind the analysis cannot establish')
+      }
+    }
   })
 
   test('the parameter gate classifies through valueKind', () => {

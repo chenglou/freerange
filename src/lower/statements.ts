@@ -14,7 +14,6 @@ import {
   type MutableBlock,
 } from './context.ts'
 import {taggedUnionTagRead, identifierAssignment, lowerBranchingCondition, lowerExpression, lowerStatementExpression, requireBooleanCondition, valueKind} from './expression.ts'
-import {declaredOnlyInDeclarationFiles} from './platform.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
   for (const statement of statements) {
@@ -489,15 +488,8 @@ function lowerVariableDeclarationList(declarations: ts.VariableDeclarationList, 
             : null
         if (property == null) throw unsupported(element, {kind: 'variableDeclarationShape'})
         const elementType = context.checker.getTypeAtLocation(element.name)
-        const sourceType = context.checker.getTypeAtLocation(declaration.initializer)
-        const propertySymbol = context.checker.getPropertyOfType(sourceType, property)
-        // Optional properties destructure like any other read now that the filling
-        // invariant guarantees the record value carries them as maybe-undefined (the old
-        // gate here predated the optionals milestone). Prototype members stay out via
-        // the same ownership rule property reads use.
-        if (propertySymbol != null && declaredOnlyInDeclarationFiles(propertySymbol)) {
-          throw unsupported(element, {kind: 'prototypeMemberRead', property})
-        }
+        // Optional properties destructure like other reads because the record carries
+        // omitted properties as maybe-undefined values.
         if (valueKind(elementType, context.checker) == null) {
           throw unsupported(element, {kind: 'valueType', typeText: context.checker.typeToString(elementType)})
         }

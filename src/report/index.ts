@@ -918,10 +918,8 @@ export function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'computedPropertyName': return 'computed object property name'
     case 'objectSpread': return 'object spread (list every field explicitly, e.g. {gain: config.gain})'
     case 'asyncOrGeneratorFunction': return 'an async or generator function (the runtime result is a Promise or iterator, not the body\'s return value)'
-    case 'typePredicate': return 'a type predicate (the checker takes the predicate on faith; return a plain boolean and check properties where they are read)'
     case 'protoProperty': return 'a property named __proto__ (prototype-setting syntax at runtime, not a data property)'
     case 'enumMemberRead': return 'an enum member read (replace the enum with plain module consts, e.g. const directionUp = 1)'
-    case 'prototypeMemberRead': return `read of the inherited prototype member ${reason.property} (records carry only their own data properties)`
     case 'binaryOperator': return reason.operator === 'in'
       ? 'the `in` operator (use a distinct string or boolean tag when property presence distinguishes union variants)'
       : `binary operator ${reason.operator} (supported: + - * / %, comparisons, and boolean && || !)`

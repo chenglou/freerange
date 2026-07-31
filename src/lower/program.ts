@@ -148,12 +148,6 @@ function lowerFunction(
       kind: unit.initializer == null ? 'functionWithoutSignature' : 'constFunctionSignature',
     })
   }
-  // A type predicate (`shape is Circle`, `asserts x`) is the checker taking the author's
-  // word: callers' narrowing then exposes properties the analysis cannot confirm the
-  // value carries. Rejecting the declaring function stops every caller at the call.
-  if (checker.getTypePredicateOfSignature(signature) != null) {
-    throw unsupported(declaration, {kind: 'typePredicate'})
-  }
   const returnType = checker.getReturnTypeOfSignature(signature)
   // `never` counts as returning nothing: the idiomatic annotation for an always-throwing
   // helper (`function fail(code: number): never`), whose paths all end in throw — the
