@@ -4,7 +4,7 @@ import {TypeScriptDiagnosticsError} from './diagnostics.ts'
 
 export type CheckedSource = {
   sourceFile: ts.SourceFile
-  checker: ts.TypeChecker
+  program: ts.Program
 }
 
 // When no tsconfig is in scope, single-file analysis gets the recommended authoring
@@ -52,5 +52,5 @@ function checkedSource(program: ts.Program, file: string, options: ts.CompilerOp
   }
   const sourceFile = program.getSourceFile(file)
   if (sourceFile == null) throw new Error(`TypeScript did not load ${file}`)
-  return {sourceFile, checker: program.getTypeChecker()}
+  return {sourceFile, program}
 }

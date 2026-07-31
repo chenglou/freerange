@@ -31,6 +31,7 @@ export type TopLevelFunction = TopLevelFunctionUnit & {
 export type FunctionContext = {
   sourceFile: ts.SourceFile
   checker: ts.TypeChecker
+  program: ts.Program
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>
   moduleBindingsBySymbol: Map<ts.Symbol, ModuleBindingID>
   staticAnnotations: Map<ts.CallExpression, StaticAnnotation>
@@ -60,6 +61,7 @@ export type LoopTarget = {
 export function createFunctionContext(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
+  program: ts.Program,
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
   moduleBindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
   sites: SourceSpan[],
@@ -70,6 +72,7 @@ export function createFunctionContext(
   return {
     sourceFile,
     checker,
+    program,
     functionsBySymbol,
     moduleBindingsBySymbol,
     staticAnnotations: new Map(staticAnnotations.map(annotation => [annotation.call, annotation])),

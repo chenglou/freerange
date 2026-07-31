@@ -128,7 +128,7 @@ describe('static console.assert contracts', () => {
     })
     const sourceFile = program.getSourceFile(fixture)
     if (sourceFile == null) throw new Error('TypeScript did not load the assertion fixture')
-    const detailed = analyzeCheckedSource({sourceFile, checker: program.getTypeChecker()})
+    const detailed = analyzeCheckedSource({sourceFile, program})
     const report = createReport(detailed.program, detailed.analysis)
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'requiredNonnegative'))[0]).toContain('value >= 0')
   })

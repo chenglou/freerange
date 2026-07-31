@@ -198,11 +198,12 @@ function demoteModuleWritesInNode(
 export function lowerModuleInitializer(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
+  program: ts.Program,
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
   scan: ModuleScan,
   sites: SourceSpan[],
 ): {initializer: FunctionIR; skips: InitializerSkip[]} {
-  const context = createFunctionContext(sourceFile, checker, functionsBySymbol, scan.bindingsBySymbol, sites)
+  const context = createFunctionContext(sourceFile, checker, program, functionsBySymbol, scan.bindingsBySymbol, sites)
   const skips: InitializerSkip[] = []
   const statements = sourceFile.statements
   // Each statement gets its own catch: an unsupported one is skipped — its half-lowered

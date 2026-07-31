@@ -57,6 +57,77 @@ test('TypeScript diagnostics use its plain and colored formats', () => {
     .toContain('\u001B[91merror\u001B[0m')
 })
 
+test('trusted globals must come from TypeScript standard libraries', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-custom-globals-'))
+  try {
+    writeProject(projectDirectory, {
+      'globals.d.ts': `
+interface Array<T> {}
+interface Boolean {}
+interface CallableFunction extends Function {}
+interface Function {}
+interface IArguments {}
+interface NewableFunction extends Function {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+declare const Infinity: number
+declare const Math: {
+  min(...values: number[]): number
+  random(): number
+}
+declare const Number: {
+  (value?: unknown): number
+  isFinite(value: number): boolean
+  parseFloat(value: string): number
+  parseInt(value: string): number
+}
+declare function parseFloat(value: string): number
+declare function parseInt(value: string): number
+declare const window: {innerWidth: number}
+declare const performance: {now(): number}
+`,
+      'index.ts': `
+export function fakeWindow(): number { return window.innerWidth }
+export function fakeMath(): number { return Math.min(10, 20) }
+export function fakeRandom(): number { return Math.random() }
+export function fakeNumber(text: string): number { return Number(text) }
+export function fakeNumberCheck(value: number): boolean { return Number.isFinite(value) }
+export function fakeNumberParseFloat(text: string): number { return Number.parseFloat(text) }
+export function fakeNumberParseInt(text: string): number { return Number.parseInt(text) }
+export function fakeParseFloat(text: string): number { return parseFloat(text) }
+export function fakeParseInt(text: string): number { return parseInt(text) }
+export function fakeInfinity(): number { return Infinity }
+export function runtimePerformance(): number { return performance.now() }
+`,
+    }, {noLib: true, types: []})
+
+    const result = runCli(projectDirectory, '--audit', 'index.ts')
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('index.ts (0/11 functions fully analyzed; 11 unsupported)')
+    for (const name of [
+      'fakeWindow',
+      'fakeMath',
+      'fakeRandom',
+      'fakeNumber',
+      'fakeNumberCheck',
+      'fakeNumberParseFloat',
+      'fakeNumberParseInt',
+      'fakeParseFloat',
+      'fakeParseInt',
+      'fakeInfinity',
+      'runtimePerformance',
+    ]) {
+      expect(result.stdout).toContain(`${name}\n  unsupported:`)
+    }
+  } finally {
+    rmSync(projectDirectory, {recursive: true, force: true})
+  }
+})
+
 test('bare fr prints known problems while audit retains caller requirements', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-lint-'))
   try {

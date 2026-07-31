@@ -53,10 +53,14 @@ const catalog: PlatformEntry[] = [
   {path: ['Math', 'random'], call: true, fact: {lower: 0, upper: 0.9999999999999999, integer: false}},
 ]
 
-// Matches a property chain rooted at a global whose symbol resolves into a declaration
-// file — the same shadowing defense the Math dispatch uses, so a local variable named
-// `document` never matches.
-export function platformFact(expression: ts.Expression, call: boolean, checker: ts.TypeChecker): PlatformFact | null {
+// Matches a property chain rooted at a global from TypeScript's standard library. A local
+// variable or a project-supplied ambient declaration with the same name never matches.
+export function platformFact(
+  expression: ts.Expression,
+  call: boolean,
+  checker: ts.TypeChecker,
+  program: ts.Program,
+): PlatformFact | null {
   const parts: string[] = []
   let current: ts.Expression = expression
   while (ts.isPropertyAccessExpression(current)) {
@@ -70,14 +74,22 @@ export function platformFact(expression: ts.Expression, call: boolean, checker: 
     && candidate.path.length === parts.length
     && candidate.path.every((segment, index) => segment === parts[index]))
   if (entry == null) return null
-  if (!declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(current))) return null
+  if (!hasDefaultLibraryDeclaration(checker.getSymbolAtLocation(current), program)) return null
   return entry.fact
 }
 
-// The shadowing defense shared by every trusted-global dispatch (this catalog, `Math`,
-// `Infinity`): the identifier counts as the real global only when every declaration of its
-// symbol lives in a declaration file, so a local or module binding of the same name never
-// matches.
+// A standard-library declaration anchors the symbol to the real JavaScript or browser
+// global. Additional project declarations may augment that symbol; a lookalike symbol
+// declared only by the project does not receive Freerange's built-in behavior.
+export function hasDefaultLibraryDeclaration(
+  symbol: ts.Symbol | undefined,
+  program: ts.Program,
+): boolean {
+  const declarations = symbol?.declarations
+  if (declarations == null || declarations.length === 0) return false
+  return declarations.some(declaration => program.isSourceFileDefaultLibrary(declaration.getSourceFile()))
+}
+
 export function declaredOnlyInDeclarationFiles(symbol: ts.Symbol | undefined): boolean {
   const declarations = symbol?.declarations
   if (declarations == null || declarations.length === 0) return false

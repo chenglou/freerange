@@ -3,7 +3,11 @@ import type {ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import type {StaticAssertionProblem} from '../ir/program.ts'
 import {numberConstituent} from './numeric-intersection.ts'
-import {declaredOnlyInDeclarationFiles, platformFact} from './platform.ts'
+import {
+  declaredOnlyInDeclarationFiles,
+  hasDefaultLibraryDeclaration,
+  platformFact,
+} from './platform.ts'
 import {
   addInstruction,
   addInstructionAtSite,
@@ -153,7 +157,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if (ts.isNumericLiteral(negated)) {
       return addInstruction(context, current, {kind: 'constant', value: -Number(negated.text)})
     }
-    if (isGlobalInfinity(negated, context.checker)) {
+    if (isStandardGlobal(negated, 'Infinity', context)) {
       return addInstruction(context, current, {kind: 'constant', value: Number.NEGATIVE_INFINITY})
     }
     const zero = addInstruction(context, current, {kind: 'constant', value: 0})
@@ -347,7 +351,8 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     // `el instanceof HTMLDivElement` on a carried value: no narrowing (the analyzer does
     // not model classes), but the check itself is an effect-free operator, so it answers
     // unknown and both branches analyze — the function's other paths survive. The
-    // declaration-file check is the same shadowing defense Math uses.
+    // A declaration-file constructor is opaque but safe to test; a local constructor is
+    // runtime code outside the accepted subset.
     if (current.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
       && ts.isIdentifier(current.right)
       && declaredOnlyInDeclarationFiles(context.checker.getSymbolAtLocation(current.right))) {
@@ -395,10 +400,11 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if (staticAnnotation != null) return lowerStaticAnnotation(staticAnnotation, context)
     if (ts.isIdentifier(current.expression)) {
       // Global parseFloat / parseInt / Number(x): honest NaN-carrying results, like their
-      // Number.* spellings below (the declaration-file check defends against shadowing).
+      // Number.* spellings below. Standard-library identity defends against shadows and
+      // project declarations that merely reuse a built-in name.
       const globalName = current.expression.text
       if ((globalName === 'parseFloat' || globalName === 'parseInt' || globalName === 'Number')
-        && declaredOnlyInDeclarationFiles(context.checker.getSymbolAtLocation(current.expression))) {
+        && isStandardGlobal(current.expression, globalName, context)) {
         for (const argument of current.arguments) lowerExpression(argument, context)
         return addInstruction(context, current, {kind: 'parsedNumber', integer: globalName === 'parseInt'})
       }
@@ -464,12 +470,14 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       })
     }
     if (ts.isPropertyAccessExpression(current.expression)) {
-      const platformCall = current.arguments.length === 0 ? platformFact(current.expression, true, context.checker) : null
+      const platformCall = current.arguments.length === 0
+        ? platformFact(current.expression, true, context.checker, context.program)
+        : null
       if (platformCall != null) {
         return addInstruction(context, current, {kind: 'platformValue', ...platformCall})
       }
       const method = current.expression.name.text
-      const standardMath = isStandardMathObject(current.expression.expression, context.checker)
+      const standardMath = isStandardGlobal(current.expression.expression, 'Math', context)
       if (standardMath && method === 'floor' && current.arguments.length === 1) {
         requireNumberType(current.arguments[0]!, context.checker)
         const value = lowerExpression(current.arguments[0]!, context)
@@ -494,7 +502,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       // Number.isInteger / Number.isFinite: predicate checks whose branches narrow — the
       // missing halves of the bounds-check idiom (`i >= 0 && i < arr.length` proves the
       // range; Number.isInteger(i) proves the read hits an element rather than arr[1.5]).
-      const standardNumber = isStandardNumberObject(current.expression.expression, context.checker)
+      const standardNumber = isStandardGlobal(current.expression.expression, 'Number', context)
       // Number.parseFloat / Number.parseInt: honest NaN sources — the result is any
       // number including NaN, and the isFinite/isNaN/isInteger narrowing downstream is
       // exactly what launders it. Arguments still lower (opaque strings carry).
@@ -523,7 +531,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     }
   }
   if (ts.isPropertyAccessExpression(current)) {
-    const platform = platformFact(current, false, context.checker)
+    const platform = platformFact(current, false, context.checker, context.program)
     if (platform != null) {
       return addInstruction(context, current, {kind: 'platformValue', ...platform})
     }
@@ -598,15 +606,15 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
     if (requirement == null) {
       throw unsupported(condition, {
         kind: 'staticAssertionForm',
-        problem: staticAssertionProblem(condition, context.checker, 'callerRequirement'),
+        problem: staticAssertionProblem(condition, context, 'callerRequirement'),
       })
     }
     value = lowerWrittenRequirement(requirement, condition, context)
   } else {
-    if (!supportedWrittenAssertion(condition, context.checker)) {
+    if (!supportedWrittenAssertion(condition, context)) {
       throw unsupported(condition, {
         kind: 'staticAssertionForm',
-        problem: staticAssertionProblem(condition, context.checker, 'directCheck'),
+        problem: staticAssertionProblem(condition, context, 'directCheck'),
       })
     }
     value = lowerExpression(condition, context)
@@ -643,7 +651,7 @@ function writtenRequirement(condition: ts.Expression, context: FunctionContext):
   if (ts.isCallExpression(current) && current.questionDotToken == null
     && current.arguments.length === 1 && ts.isPropertyAccessExpression(current.expression)
     && current.expression.questionDotToken == null
-    && isStandardNumberObject(current.expression.expression, context.checker)
+    && isStandardGlobal(current.expression.expression, 'Number', context)
     && (current.expression.name.text === 'isInteger' || current.expression.name.text === 'isFinite')) {
     const argument = current.arguments[0]!
     const value = staticRequirementParameterPathValue(argument, context)
@@ -745,13 +753,14 @@ function lowerWrittenRequirement(
 // calculation is written and checked as normal code, then the assertion names its result.
 // This gives agents one syntax boundary instead of exposing whichever instructions happen
 // to be removable after general expression lowering.
-function supportedWrittenAssertion(condition: ts.Expression, checker: ts.TypeChecker): boolean {
+function supportedWrittenAssertion(condition: ts.Expression, context: FunctionContext): boolean {
   const current = unwrapParentheses(condition)
   if (ts.isBinaryExpression(current) && staticAssertionComparison(current.operatorToken.kind)) {
-    return staticAssertionNumericAtom(current.left, checker) && staticAssertionNumericAtom(current.right, checker)
+    return staticAssertionNumericAtom(current.left, context.checker)
+      && staticAssertionNumericAtom(current.right, context.checker)
   }
-  const operand = staticNumberCheckOperand(current, checker)
-  return operand != null && staticAssertionNumericAtom(operand, checker)
+  const operand = staticNumberCheckOperand(current, context)
+  return operand != null && staticAssertionNumericAtom(operand, context.checker)
 }
 
 function staticAssertionNumericAtom(expression: ts.Expression, checker: ts.TypeChecker): boolean {
@@ -803,25 +812,25 @@ function staticAssertionAtom(expression: ts.Expression): boolean {
 
 function staticAssertionProblem(
   condition: ts.Expression,
-  checker: ts.TypeChecker,
+  context: FunctionContext,
   fallback: 'directCheck' | 'callerRequirement',
 ): StaticAssertionProblem {
   const current = unwrapParentheses(condition)
   if (ts.isBinaryExpression(current) && staticAssertionComparison(current.operatorToken.kind)) {
     return staticAssertionAtomProblem(current.left) ?? staticAssertionAtomProblem(current.right) ?? fallback
   }
-  const operand = staticNumberCheckOperand(current, checker)
+  const operand = staticNumberCheckOperand(current, context)
   if (operand != null) return staticAssertionAtomProblem(operand) ?? fallback
   if (ts.isCallExpression(current)) return 'functionCall'
   return 'directCheck'
 }
 
-function staticNumberCheckOperand(expression: ts.Expression, checker: ts.TypeChecker): ts.Expression | null {
+function staticNumberCheckOperand(expression: ts.Expression, context: FunctionContext): ts.Expression | null {
   if (!ts.isCallExpression(expression) || expression.questionDotToken != null
     || expression.arguments.length !== 1 || !ts.isPropertyAccessExpression(expression.expression)
     || expression.expression.questionDotToken != null) return null
   const callee = expression.expression
-  return isStandardNumberObject(callee.expression, checker)
+  return isStandardGlobal(callee.expression, 'Number', context)
     && (callee.name.text === 'isInteger' || callee.name.text === 'isFinite' || callee.name.text === 'isNaN')
     ? expression.arguments[0]!
     : null
@@ -1451,14 +1460,12 @@ function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker):
   return (symbol.flags & ts.SymbolFlags.Alias) === 0 ? symbol : checker.getAliasedSymbol(symbol)
 }
 
-function isStandardMathObject(expression: ts.Expression, checker: ts.TypeChecker): boolean {
-  if (!ts.isIdentifier(expression) || expression.text !== 'Math') return false
-  return declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(expression))
-}
-
-function isStandardNumberObject(expression: ts.Expression, checker: ts.TypeChecker): boolean {
-  if (!ts.isIdentifier(expression) || expression.text !== 'Number') return false
-  return declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(expression))
+function isStandardGlobal(expression: ts.Expression, name: string, context: FunctionContext): boolean {
+  if (!ts.isIdentifier(expression) || expression.text !== name) return false
+  return hasDefaultLibraryDeclaration(
+    context.checker.getSymbolAtLocation(expression),
+    context.program,
+  )
 }
 
 function lowerElementAccess(access: ts.ElementAccessExpression, asserted: boolean, context: FunctionContext): ValueID {
@@ -1658,22 +1665,17 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
   })
 }
 
-function isGlobalInfinity(expression: ts.Expression, checker: ts.TypeChecker): boolean {
-  if (!ts.isIdentifier(expression) || expression.text !== 'Infinity') return false
-  return declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(expression))
-}
-
 // Resolves an identifier read: a function-local binding first, then a module binding
 // (which reads the binding's slot), then the global `Infinity` as an exact constant,
 // else the identifier is unknown. A local or module binding named Infinity has a
-// different symbol and wins above; the global check is the same declaration-file
-// defense the Math and platform dispatches use.
+// different symbol and wins above; only TypeScript's standard Infinity receives the
+// exact constant.
 function identifierValue(symbol: ts.Symbol, node: ts.Identifier, context: FunctionContext): ValueID {
   const local = context.bindings.get(symbol)
   if (local != null) return local
   const binding = context.moduleBindingsBySymbol.get(symbol)
   if (binding != null) return addInstruction(context, node, {kind: 'moduleRead', binding})
-  if (isGlobalInfinity(node, context.checker)) {
+  if (isStandardGlobal(node, 'Infinity', context)) {
     return addInstruction(context, node, {kind: 'constant', value: Number.POSITIVE_INFINITY})
   }
   if (isUndefinedGlobal(node, context.checker)) {

@@ -461,7 +461,7 @@ function analyzeProjectSource(
 ): DetailedAnalysis {
   return analyzeCheckedSource({
     sourceFile: source.sourceFile,
-    checker: source.project.program.getTypeChecker(),
+    program: source.project.program,
   }, reportBaseDirectory)
 }
 

@@ -12,7 +12,8 @@ import {scanStaticAnnotations, type StaticAnnotation} from './static-intrinsics.
 import {lowerStatements} from './statements.ts'
 
 export function lowerSource(checked: CheckedSource, baseDirectory: string = process.cwd()): ProgramIR {
-  const {sourceFile, checker} = checked
+  const {sourceFile, program} = checked
+  const checker = program.getTypeChecker()
   const declarations = topLevelFunctionUnits(sourceFile)
   const staticScan = scanStaticAnnotations(sourceFile, declarations, checker)
   const recordStaticAnnotationIssues = (sites: SourceSpan[]): ProgramIR['staticAnnotationIssues'] =>
@@ -91,7 +92,7 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
     // A failed function lowering discards the half-built FunctionContext wholesale; only
     // the name, annotation presence, offending node's site, and tagged reason survive.
     try {
-      functions.push(lowerFunction(declaration, staticAnnotations, sourceFile, checker, functionsBySymbol, scan, sites))
+      functions.push(lowerFunction(declaration, staticAnnotations, sourceFile, checker, program, functionsBySymbol, scan, sites))
     } catch (error) {
       if (!(error instanceof LoweringStop)) throw error
       sites.push(nodeSpan(sourceFile, error.node))
@@ -104,7 +105,7 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
       })
     }
   }
-  const {initializer, skips} = lowerModuleInitializer(sourceFile, checker, functionsBySymbol, scan, sites)
+  const {initializer, skips} = lowerModuleInitializer(sourceFile, checker, program, functionsBySymbol, scan, sites)
   return {
     file: sourceFile.fileName,
     baseDirectory,
@@ -123,6 +124,7 @@ function lowerFunction(
   staticAnnotations: StaticAnnotation[],
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
+  program: ts.Program,
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
   scan: ModuleScan,
   sites: SourceSpan[],
@@ -161,6 +163,7 @@ function lowerFunction(
   const context = createFunctionContext(
     sourceFile,
     checker,
+    program,
     functionsBySymbol,
     scan.bindingsBySymbol,
     sites,
