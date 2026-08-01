@@ -2,15 +2,18 @@
 
 ## Unreleased
 
+## 0.0.4 - 2026-07-31
+
 - Allow `Date.now()` to represent dates before the Unix epoch.
-- Support numeric phantom types.
+- Support numeric phantom types (#6).
+- Only recognize `Math`, `Number`, `Infinity`, parser functions, and browser globals when they resolve to TypeScript's standard libraries.
 
 ## 0.0.3 - 2026-07-28
 
 - Analyze arrow functions and function expressions assigned directly to top-level `const` names.
 - Preserve type narrowing through `&&` and `||` expressions.
 - Analyze each `Math.random()` call as a fresh number from zero up to, but not including, one.
-- Avoid quadratic work when tracking values through deep chains of same-file function calls.
+- Avoid quadratic work when tracking values through deep chains of same-file function calls (#3).
 - Consolidate analysis limits and practical refactoring examples in the README.
 
 ## 0.0.2 - 2026-07-21
