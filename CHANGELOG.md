@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Allow leading `console.assert` calls to require an ordered relationship between two numeric inputs and preserve it through corresponding arithmetic.
+- Allow leading `console.assert` calls to require an ordered relationship between numeric inputs, e.g. `console.assert(minimum <= maximum)`.
+- Preserve proven numeric order through branches, same-file helper calls, and matching calculations, e.g. proving `left + offset <= right + offset` from `left <= right`.
 
 ## 0.0.4 - 2026-07-31
 
