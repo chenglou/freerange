@@ -218,7 +218,7 @@ if (middle > right) throw new Error('out of order')
 console.assert(left <= right) // unproven
 ```
 
-Equality follows these same comparison rules in both directions. For example, `left === right` can prove `left - right === 0`, but Freerange does not replace one name with the other inside every calculation: separately calculating `left * left` and `right * right` does not prove that the results are equal.
+From `left === right`, Freerange can prove `left - right === 0` and preserve equality when both sides add or subtract the same value. It also works when both sides multiply or divide by the same value whose sign is known. Freerange does not otherwise replace `left` with `right` inside larger calculations.
 
 Multiplying both sides by the same nonnegative value preserves order; multiplying by the same nonpositive value reverses it. Division has the corresponding rule but excludes zero: a positive divisor preserves order and a negative divisor reverses it. An unknown sign or different factors remain unproven:
 
