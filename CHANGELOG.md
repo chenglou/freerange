@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Allow leading `console.assert` calls to compare numeric inputs, e.g. `console.assert(minimum <= maximum)` or `console.assert(left === right)`.
-- Preserve proven numeric order through branches, same-file helper calls, and matching calculations, e.g. proving `left + offset <= right + offset` from `left <= right`.
+- Allow leading `console.assert` calls to compare numeric inputs with `===`, `<`, `<=`, `>`, or `>=`.
+- Preserve direct numeric comparisons through branches, same-file helper calls, and matching calculations, e.g. proving `left + offset <= right + offset` from `left <= right`.
 
 ## 0.0.4 - 2026-07-31
 

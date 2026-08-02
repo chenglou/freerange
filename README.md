@@ -76,7 +76,7 @@ In the example above, calling `itemColumn(0, 2.2)` produces an error (`columnCou
 `console.assert` calls at the very beginning of a function, before any other statement, are caller requirements. Like parameter types, every caller must satisfy them.
 Any `console.assert` later in the function will be proven by Freerange for the function itself. Otherwise, Freerange reports an error.
 
-Leading assertions can compare two inputs with `===`, `<`, `<=`, `>`, or `>=`. `!==` still needs one fixed finite number. A caller with known bounds satisfies the requirement immediately; otherwise the same requirement passes to its caller:
+Leading assertions can compare two inputs with `===`, `<`, `<=`, `>`, or `>=`. `!==` still needs one fixed finite number. A caller that proves the comparison satisfies the requirement immediately; otherwise the same requirement passes to its caller:
 
 ```ts
 function clamp(minimum: number, value: number, maximum: number): number {
@@ -217,6 +217,8 @@ if (left > middle) throw new Error('out of order')
 if (middle > right) throw new Error('out of order')
 console.assert(left <= right) // unproven
 ```
+
+Equality follows these same comparison rules in both directions. For example, `left === right` can prove `left - right === 0`, but Freerange does not replace one name with the other inside every calculation: separately calculating `left * left` and `right * right` does not prove that the results are equal.
 
 Multiplying both sides by the same nonnegative value preserves order; multiplying by the same nonpositive value reverses it. Division has the corresponding rule but excludes zero: a positive divisor preserves order and a negative divisor reverses it. An unknown sign or different factors remain unproven:
 
