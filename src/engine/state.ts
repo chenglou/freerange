@@ -14,14 +14,17 @@ export type ExecutionState = {
   values: Array<AbstractValue | undefined>
   shared: SharedState
   // Conditions established by a guard or by a requirement/assumption already recorded
-  // on this path. Value keys name immutable runtime values, so assignment naturally uses
-  // a new key. Joins intersect the list. This is deliberately a closed set of three facts,
-  // with no transitivity or arithmetic, stored as a small deduplicated array.
+  // on this path. Ordinary value keys name immutable runtime values, so assignment uses a
+  // new key. Block-parameter keys are reused at CFG edges, but facts are never translated
+  // onto them: the first incoming state cannot mention a not-yet-entered block's parameters,
+  // so intersection drops facts introduced during a cycle before a replacement is observed.
+  // Joins otherwise keep only shared facts. The set is direct, with no transitive closure.
   valueFacts: ValueFact[]
 }
 
 export type ValueFact =
   | {kind: 'nonzero'; value: ValueIdentity}
+  | {kind: 'order'; left: ValueIdentity; right: ValueIdentity; strict: boolean}
   // The strict `index < array.length` half of a bounds guard. The index's own abstract
   // number must still prove integer, non-NaN, and nonnegative.
   | {kind: 'belowLength'; index: ValueIdentity; array: ValueIdentity}
@@ -31,6 +34,19 @@ export type ValueFact =
 export function hasNonzeroFact(facts: ValueFact[], value: ValueIdentity): boolean {
   return facts.some(fact =>
     fact.kind === 'nonzero' && sameValueIdentity(fact.value, value))
+}
+
+export function hasOrderFact(
+  facts: ValueFact[],
+  left: ValueIdentity,
+  right: ValueIdentity,
+  strict: boolean,
+): boolean {
+  return facts.some(fact =>
+    fact.kind === 'order'
+    && (!strict || fact.strict)
+    && sameValueIdentity(fact.left, left)
+    && sameValueIdentity(fact.right, right))
 }
 
 export function hasIndexFact(
@@ -46,6 +62,18 @@ export function hasIndexFact(
 }
 
 export function addValueFact(facts: ValueFact[], candidate: ValueFact): void {
+  if (candidate.kind === 'order') {
+    const existingIndex = facts.findIndex(fact =>
+      fact.kind === 'order'
+      && sameValueIdentity(fact.left, candidate.left)
+      && sameValueIdentity(fact.right, candidate.right))
+    if (existingIndex < 0) {
+      facts.push(candidate)
+    } else if (candidate.strict && facts[existingIndex]?.kind === 'order') {
+      facts[existingIndex] = candidate
+    }
+    return
+  }
   if (!facts.some(fact => sameValueFact(fact, candidate))) facts.push(candidate)
 }
 
@@ -62,6 +90,12 @@ export function intersectValueFacts(left: ValueFact[], right: ValueFact[]): Valu
 
 function intersectValueFact(left: ValueFact, right: ValueFact): ValueFact | null {
   if (sameValueFact(left, right)) return left
+  if (left.kind === 'order' || right.kind === 'order') {
+    if (left.kind !== 'order' || right.kind !== 'order'
+      || !sameValueIdentity(left.left, right.left)
+      || !sameValueIdentity(left.right, right.right)) return null
+    return {...left, strict: left.strict && right.strict}
+  }
   if (left.kind === 'nonzero' || right.kind === 'nonzero') return null
   if (!sameValueIdentity(left.index, right.index)
     || !sameValueIdentity(left.array, right.array)) return null
@@ -73,7 +107,13 @@ function sameValueFact(left: ValueFact, right: ValueFact): boolean {
   if (left.kind === 'nonzero' && right.kind === 'nonzero') {
     return sameValueIdentity(left.value, right.value)
   }
+  if (left.kind === 'order' && right.kind === 'order') {
+    return left.strict === right.strict
+      && sameValueIdentity(left.left, right.left)
+      && sameValueIdentity(left.right, right.right)
+  }
   if (left.kind === 'nonzero' || right.kind === 'nonzero') return false
+  if (left.kind === 'order' || right.kind === 'order') return false
   return sameValueIdentity(left.index, right.index)
     && sameValueIdentity(left.array, right.array)
 }
@@ -91,7 +131,7 @@ export function cloneState(state: ExecutionState): ExecutionState {
   return {
     values: state.values.slice(),
     shared: cloneSharedState(state.shared),
-    // Facts are never mutated, only appended or filtered, so a shallow copy suffices.
+    // Fact objects are immutable; entries may be replaced whole, so a shallow copy suffices.
     valueFacts: state.valueFacts.slice(),
   }
 }

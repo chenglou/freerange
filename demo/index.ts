@@ -51,16 +51,12 @@ function springGoToEnd(config: Spring): Spring {
 }
 
 // === generic helpers
-/** @fit
- * given max >= min
- * return >= min
- * return <= max
- */
 function clamp(
   min: number,
   v: number,
   max: number,
 ): number {
+  console.assert(min <= max)
   return v > max ? max : v < min ? min : v
 }
 

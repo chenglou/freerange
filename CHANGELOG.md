@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow leading `console.assert` calls to require an ordered relationship between two numeric inputs.
+
 ## 0.0.4 - 2026-07-31
 
 - Allow `Date.now()` to represent dates before the Unix epoch.

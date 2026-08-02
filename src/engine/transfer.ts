@@ -62,6 +62,7 @@ import {
   cloneState,
   hasIndexFact,
   hasNonzeroFact,
+  hasOrderFact,
   type ExecutionState,
   type SharedState,
   type ValueFact,
@@ -502,7 +503,7 @@ function evaluateInstructionKinded(
       return value({kind: 'boolean', canBeTrue: operand.canBeFalse, canBeFalse: operand.canBeTrue})
     }
     case 'staticAssert': {
-      const observation = staticAssertionObservation(instruction.value, state, context)
+      const observation = staticConditionObservation(instruction.value, state, context)
       return {kind: 'assertion', assertion: instruction.assertion, observation, value: {kind: 'void'}}
     }
     case 'staticRequire': {
@@ -511,10 +512,7 @@ function evaluateInstructionKinded(
       if (check?.kind !== 'compare' && check?.kind !== 'numberCheck') {
         return failedRequirement({kind: failureKind, site: instruction.site, status: 'unproven'})
       }
-      const condition = requiredValue(state, instruction.value)
-      if (condition.kind !== 'boolean') {
-        return failedRequirement({kind: failureKind, site: instruction.site, status: 'unproven'})
-      }
+      const condition = staticConditionObservation(instruction.value, state, context)
       if (!condition.canBeTrue) {
         return failedRequirement({kind: failureKind, site: instruction.site, status: 'refuted'})
       }
@@ -708,6 +706,10 @@ function valueFactUsesOwner(
   owner: ValueIdentityOwner,
 ): boolean {
   if (fact.kind === 'nonzero') return valueIdentityUsesOwner(fact.value, owner)
+  if (fact.kind === 'order') {
+    return valueIdentityUsesOwner(fact.left, owner)
+      || valueIdentityUsesOwner(fact.right, owner)
+  }
   return valueIdentityUsesOwner(fact.index, owner)
     || valueIdentityUsesOwner(fact.array, owner)
 }
@@ -1196,8 +1198,36 @@ function refineComparison(
   // rebuilds the record.
   writeThroughProducers(result, comparison.left, refinedLeft, producers)
   writeThroughProducers(result, comparison.right, refinedRight, producers)
+  recordOrderComparisonFact(result, comparison, operator, expressionContext)
   recordNonzeroComparisonFacts(result, comparison, expressionContext)
   return result
+}
+
+function recordOrderComparisonFact(
+  state: ExecutionState,
+  comparison: Extract<InstructionIR, {kind: 'compare'}>,
+  operator: ComparisonOperator,
+  expressionContext: ExpressionContext,
+): void {
+  const leftNumber = numberWithFacts(state, comparison.left, expressionContext)
+  const rightNumber = numberWithFacts(state, comparison.right, expressionContext)
+  if (leftNumber == null || rightNumber == null
+    || leftNumber.mayBeNaN || rightNumber.mayBeNaN) return
+  const left = canonicalValueIdentity(comparison.left, expressionContext)
+  const right = canonicalValueIdentity(comparison.right, expressionContext)
+  const record = (smaller: ValueIdentity, larger: ValueIdentity, strict: boolean): void => {
+    if (!sameValueIdentity(smaller, larger)) {
+      addValueFact(state.valueFacts, {kind: 'order', left: smaller, right: larger, strict})
+    }
+  }
+  switch (operator) {
+    case 'lessThan': record(left, right, true); return
+    case 'lessThanOrEqual': record(left, right, false); return
+    case 'greaterThan': record(right, left, true); return
+    case 'greaterThanOrEqual': record(right, left, false); return
+    case 'equal': return
+    case 'notEqual': return
+  }
 }
 
 // The check instructions whose branch outcomes refine the state. The list is the single
@@ -1451,7 +1481,7 @@ function evaluateSameOperandBinary(
 // rules may revisit the same pair through several min/max operands, so those pairs remain
 // memoized before their producers are expanded.
 
-function staticAssertionObservation(
+function staticConditionObservation(
   valueID: ValueID,
   state: ExecutionState,
   context: TransferContext,
@@ -1463,7 +1493,7 @@ function staticAssertionObservation(
   if (!held.canBeTrue || !held.canBeFalse) return held
   const producer = context.expressionContext.instructionByValue[valueID]
   if (producer?.kind === 'not') {
-    const operand = staticAssertionObservation(producer.value, state, context)
+    const operand = staticConditionObservation(producer.value, state, context)
     return {kind: 'boolean', canBeTrue: operand.canBeFalse, canBeFalse: operand.canBeTrue}
   }
   if (producer?.kind !== 'compare') return held
@@ -1532,6 +1562,15 @@ function createComparisonProof(
     return held != null && held.lower >= 0 && !held.mayBeNaN
   }
 
+  const recordedOrder = (left: ValueID, right: ValueID, strict: boolean): boolean => {
+    return hasOrderFact(
+      state.valueFacts,
+      canonicalValueIdentity(left, context),
+      canonicalValueIdentity(right, context),
+      strict,
+    )
+  }
+
   const atMost = (rawLeft: ValueID, rawRight: ValueID): boolean => {
     const left = resolveStoredValue(rawLeft, context)
     const right = resolveStoredValue(rawRight, context)
@@ -1542,6 +1581,7 @@ function createComparisonProof(
     if (leftNumber != null && rightNumber != null
       && !leftNumber.mayBeNaN && !rightNumber.mayBeNaN
       && leftNumber.upper <= rightNumber.lower) return true
+    if (recordedOrder(left, right, false)) return true
 
     const key = `${left}:${right}`
     const cached = atMostMemo.get(key)
@@ -1570,6 +1610,20 @@ function createComparisonProof(
         atMost(operand, rightProducer.values[index]!))
     }
 
+    // Addition is monotone in both operands; subtraction is monotone in its left
+    // operand and reverses order in its right operand. Written operand positions stay
+    // aligned, so this does not reassociate or cancel calculations.
+    if (!answer && leftProducer?.kind === 'binary' && leftProducer.operator === 'add'
+      && rightProducer?.kind === 'binary' && rightProducer.operator === 'add') {
+      answer = atMost(leftProducer.left, rightProducer.left)
+        && atMost(leftProducer.right, rightProducer.right)
+    }
+    if (!answer && leftProducer?.kind === 'binary' && leftProducer.operator === 'subtract'
+      && rightProducer?.kind === 'binary' && rightProducer.operator === 'subtract') {
+      answer = atMost(leftProducer.left, rightProducer.left)
+        && atMost(rightProducer.right, leftProducer.right)
+    }
+
     if (!answer && leftProducer?.kind === 'binary'
       && leftProducer.operator === 'subtract'
       && nonnegative(leftProducer.right)) {
@@ -1590,6 +1644,16 @@ function createComparisonProof(
             && atMost(leftBase, rightBase)) answer = true
         }
       }
+    }
+
+    // A non-NaN subtraction keeps the sign of the exact difference, including -0.
+    if (!answer && leftNumber?.lower === 0 && leftNumber.upper === 0
+      && rightProducer?.kind === 'binary' && rightProducer.operator === 'subtract') {
+      answer = atMost(rightProducer.right, rightProducer.left)
+    }
+    if (!answer && rightNumber?.lower === 0 && rightNumber.upper === 0
+      && leftProducer?.kind === 'binary' && leftProducer.operator === 'subtract') {
+      answer = atMost(leftProducer.left, leftProducer.right)
     }
 
     // Expanding max(xs) <= min(ys) requires the full xs-by-ys relation. That work grows
@@ -1628,11 +1692,22 @@ function createComparisonProof(
     if (leftNumber != null && rightNumber != null
       && !leftNumber.mayBeNaN && !rightNumber.mayBeNaN
       && leftNumber.upper < rightNumber.lower) return true
+    if (recordedOrder(left, right, true)) return true
 
-    const producer = context.instructionByValue[left]
-    if (producer?.kind !== 'binary' || producer.operator !== 'remainder'
-      || !same(producer.right, right)) return false
-    const divisor = heldNumber(producer.right)
+    const leftProducer = context.instructionByValue[left]
+    const rightProducer = context.instructionByValue[right]
+    if (leftNumber?.lower === 0 && leftNumber.upper === 0
+      && rightProducer?.kind === 'binary' && rightProducer.operator === 'subtract') {
+      return strictlyBelow(rightProducer.right, rightProducer.left)
+    }
+    if (rightNumber?.lower === 0 && rightNumber.upper === 0
+      && leftProducer?.kind === 'binary' && leftProducer.operator === 'subtract') {
+      return strictlyBelow(leftProducer.left, leftProducer.right)
+    }
+
+    if (leftProducer?.kind !== 'binary' || leftProducer.operator !== 'remainder'
+      || !same(leftProducer.right, right)) return false
+    const divisor = heldNumber(leftProducer.right)
     return divisor != null && !divisor.mayBeNaN && divisor.lower > 0
   }
 

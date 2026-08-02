@@ -76,9 +76,20 @@ In the example above, calling `itemColumn(0, 2.2)` produces an error (`columnCou
 `console.assert` calls at the very beginning of a function, before any other statement, are caller requirements. Like parameter types, every caller must satisfy them.
 Any `console.assert` later in the function will be proven by Freerange for the function itself. Otherwise, Freerange reports an error.
 
+Leading ordered assertions can compare two inputs. `===` and `!==` still need one fixed finite number. A caller with known bounds satisfies the requirement immediately; otherwise the same requirement passes to its caller:
+
+```ts
+function clamp(minimum: number, value: number, maximum: number): number {
+  console.assert(minimum <= maximum)
+  return Math.min(maximum, Math.max(minimum, value))
+}
+```
+
+For example, `clamp(0, opacity, 1)` satisfies the requirement, while `clamp(1, opacity, 0)` is an error.
+
 For simplicity and predictability, `console.assert` currently works only in named top-level functions and accepts simple numeric checks:
 - `Number.isInteger`, `Number.isFinite`, `Number.isNaN`
-- Strict comparisons (`===`, `!==`, `<`, `>`, `<=`, `>=`) using number literals, object paths, and `array.length`
+- Comparisons (`===`, `!==`, `<`, `>`, `<=`, `>=`) using number literals, object paths, and `array.length`
 - References to module constants. For caller requirements, the constant must resolve to a numeric literal
 
 We also don't support aliasing `console.assert`, e.g. `const assert = console.assert`.
@@ -199,7 +210,7 @@ Freerange does not retain arbitrary sets such as "every number except 240 and 30
 
 #### No transitive reasoning between comparisons
 
-Freerange does not combine `left <= middle` and `middle <= right` to prove `left <= right`:
+Freerange retains a direct ordered comparison between the same values when every incoming path establishes it, including through supported helpers in the same file. For example, from `left <= right` and `lowerOffset <= upperOffset`, it can prove `left - upperOffset <= right - lowerOffset`. Freerange does not combine `left <= middle` and `middle <= right` to prove `left <= right`:
 
 ```ts
 if (left > middle) throw new Error('out of order')
@@ -216,6 +227,18 @@ console.assert(navRight <= left)
 ```
 
 If the values arrive independently, Freerange may leave the relationship unproven.
+
+#### Branch results keep their range, not each branch's relationships
+
+Freerange does not transfer a different relationship from every branch onto the joined result:
+
+```ts
+console.assert(minimum <= maximum)
+const result = value > maximum ? maximum : value < minimum ? minimum : value
+console.assert(minimum <= result) // unproven
+```
+
+When the intended operation is a `Math.min`/`Math.max` clamp, writing that operation directly keeps its bounds visible to Freerange. Freerange does not transfer relationships onto branch results or values replaced by a loop.
 
 #### No algebraic inversion of conditions
 

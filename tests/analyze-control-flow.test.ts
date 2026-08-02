@@ -212,6 +212,8 @@ describe('control flow and contracts', () => {
     const kinds = {analyzed: 0, partial: 0, unsupported: 0}
     for (const fn of report.functions) kinds[fn.kind] += 1
     expect(kinds).toEqual({analyzed: 10, partial: 1, unsupported: 4})
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'clamp'))[0])
+      .toContain('min <= max')
     // springStep: the physics integration can overflow, and an overflowed pos minus dest
     // is Infinity - Infinity, so pos and v honestly carry possible NaN with the blame
     // site at the Fspring multiplication; dest, k, and b pass through untouched.

@@ -946,7 +946,7 @@ export function formatUnsupportedReason(reason: UnsupportedReason): string {
         case 'directCheck': return 'console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check'
         case 'bindValueFirst': return 'calculate or read the value before console.assert, then check the variable'
         case 'functionCall': return 'console.assert cannot call a function inside its condition except Number.isInteger, Number.isFinite, or Number.isNaN'
-        case 'callerRequirement': return 'a leading console.assert describes what callers must provide. It can compare one parameter with a fixed finite number, require one parameter to be an integer, or require a parameter or fixed-record property to be finite'
+        case 'callerRequirement': return 'a leading console.assert describes what callers must provide. <, <=, >, and >= may compare two parameters or fixed-record properties; === and !== need one fixed finite number. It can also require a parameter to be an integer or a parameter or fixed-record property to be finite'
       }
     }
     case 'varDeclaration': return 'var declarations (use let or const)'
