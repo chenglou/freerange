@@ -168,7 +168,7 @@ export function progressBar(value: number, start: number, end: number): number {
 }
 ```
 
-Freerange recognizes aliases, repeated reads of the same immutable field or array position, and the same argument passed to multiple parameters. A newly evaluated calculation or function call is a new value. Audit code: `[guard-derived-value]`.
+Freerange recognizes aliases, repeated reads of the same immutable field, repeated array reads using the same stored index, and the same argument passed to multiple parameters. A newly evaluated calculation or function call is a new value. Audit code: `[guard-derived-value]`.
 
 #### Ranges use inclusive endpoints
 
