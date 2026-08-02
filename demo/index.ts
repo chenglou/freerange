@@ -57,7 +57,10 @@ function clamp(
   max: number,
 ): number {
   console.assert(min <= max)
-  return v > max ? max : v < min ? min : v
+  const result = Math.min(max, Math.max(min, v))
+  console.assert(min <= result)
+  console.assert(result <= max)
+  return result
 }
 
 // === constant layout metrics. The rest is dynamic
