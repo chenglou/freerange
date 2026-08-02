@@ -218,6 +218,17 @@ if (middle > right) throw new Error('out of order')
 console.assert(left <= right) // unproven
 ```
 
+Multiplying both sides by the same nonnegative value preserves order; multiplying by the same nonpositive value reverses it. Division has the corresponding rule but excludes zero: a positive divisor preserves order and a negative divisor reverses it. An unknown sign or different factors remain unproven:
+
+```ts
+if (left > right || divisor <= 0) return
+const dividedLeft = left / divisor
+const dividedRight = right / divisor
+console.assert(dividedLeft <= dividedRight)
+```
+
+These rules apply only when neither result may be `NaN`. The proofs are non-strict because floating-point rounding may make two results equal.
+
 When one value is built from another, keep the relationship visible in that calculation:
 
 ```ts

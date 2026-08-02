@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Allow leading `console.assert` calls to require an ordered relationship between two numeric inputs.
+- Allow leading `console.assert` calls to require an ordered relationship between two numeric inputs and preserve it through corresponding arithmetic.
 
 ## 0.0.4 - 2026-07-31
 

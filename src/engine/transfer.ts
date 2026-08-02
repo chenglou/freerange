@@ -1639,10 +1639,21 @@ function createComparisonProof(
       const rightForms = [[rightProducer.left, rightProducer.right], [rightProducer.right, rightProducer.left]] as const
       for (const [leftBase, leftFactor] of leftForms) {
         for (const [rightBase, rightFactor] of rightForms) {
-          if (same(leftFactor, rightFactor)
-            && nonnegative(leftFactor)
-            && atMost(leftBase, rightBase)) answer = true
+          if (!same(leftFactor, rightFactor)) continue
+          const factor = heldNumber(leftFactor)
+          if (factor == null || factor.mayBeNaN) continue
+          if (factor.lower >= 0 && atMost(leftBase, rightBase)) answer = true
+          if (!answer && factor.upper <= 0 && atMost(rightBase, leftBase)) answer = true
         }
+      }
+    }
+    if (!answer && leftProducer?.kind === 'binary' && leftProducer.operator === 'divide'
+      && rightProducer?.kind === 'binary' && rightProducer.operator === 'divide'
+      && same(leftProducer.right, rightProducer.right)) {
+      const divisor = heldNumber(leftProducer.right)
+      if (divisor != null && !divisor.mayBeNaN) {
+        if (divisor.lower > 0) answer = atMost(leftProducer.left, rightProducer.left)
+        if (divisor.upper < 0) answer = atMost(rightProducer.left, leftProducer.left)
       }
     }
 

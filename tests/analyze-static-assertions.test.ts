@@ -548,6 +548,14 @@ describe('static console.assert contracts', () => {
       Number.POSITIVE_INFINITY,
     ]
     const nonnegative = [0, Number.MIN_VALUE, 1, 9007199254740992, Number.MAX_VALUE, Number.POSITIVE_INFINITY]
+    const scales = [
+      Number.NEGATIVE_INFINITY,
+      -Number.MAX_VALUE,
+      -1,
+      -Number.MIN_VALUE,
+      -0,
+      ...nonnegative,
+    ]
 
     for (const base of bases) {
       for (const offset of nonnegative) {
@@ -565,11 +573,20 @@ describe('static console.assert contracts', () => {
           expect(0 < right - left).toBe(true)
           expect(left - right < 0).toBe(true)
         }
-        for (const factor of nonnegative) {
+        for (const factor of scales) {
           const leftProduct = left * factor
           const rightProduct = right * factor
           if (!Number.isNaN(leftProduct) && !Number.isNaN(rightProduct)) {
-            expect(leftProduct <= rightProduct).toBe(true)
+            if (factor >= 0) expect(leftProduct <= rightProduct).toBe(true)
+            if (factor <= 0) expect(rightProduct <= leftProduct).toBe(true)
+          }
+          if (factor !== 0) {
+            const leftQuotient = left / factor
+            const rightQuotient = right / factor
+            if (!Number.isNaN(leftQuotient) && !Number.isNaN(rightQuotient)) {
+              if (factor > 0) expect(leftQuotient <= rightQuotient).toBe(true)
+              if (factor < 0) expect(rightQuotient <= leftQuotient).toBe(true)
+            }
           }
         }
       }
@@ -662,7 +679,7 @@ describe('static console.assert contracts', () => {
       .toEqual(['proven'])
   })
 
-  test('direct order composes through aligned addition and subtraction', () => {
+  test('direct order composes through aligned arithmetic', () => {
     const report = analyzeSource('aligned-order.ts', `
       export function shifted(left: number, right: number, first: number, second: number): void {
         if (left > right) return
@@ -726,6 +743,80 @@ describe('static console.assert contracts', () => {
         const shiftedRight = right + offset
         console.assert(shiftedLeft < shiftedRight)
       }
+
+      export function positiveDivision(left: number, right: number, divisor: number): void {
+        if (left > right) return
+        if (divisor <= 0) return
+        const dividedLeft = left / divisor
+        const dividedRight = right / divisor
+        const dividedTwiceLeft = dividedLeft / divisor
+        const dividedTwiceRight = dividedRight / divisor
+        console.assert(dividedLeft <= dividedRight)
+        console.assert(dividedTwiceLeft <= dividedTwiceRight)
+      }
+
+      export function negativeDivision(left: number, right: number, divisor: number): void {
+        if (left > right) return
+        if (divisor >= 0) return
+        const dividedLeft = left / divisor
+        const dividedRight = right / divisor
+        const dividedTwiceLeft = dividedLeft / divisor
+        const dividedTwiceRight = dividedRight / divisor
+        console.assert(dividedRight <= dividedLeft)
+        console.assert(dividedTwiceLeft <= dividedTwiceRight)
+      }
+
+      export function negativeMultiplication(left: number, right: number, factor: number): void {
+        const boundedLeft = Math.max(-100, Math.min(100, left))
+        const boundedRight = Math.max(-100, Math.min(100, right))
+        const negativeFactor = Math.max(-10, Math.min(-1, factor))
+        if (boundedLeft > boundedRight) return
+        const multipliedLeft = boundedLeft * negativeFactor
+        const multipliedRight = boundedRight * negativeFactor
+        const multipliedTwiceLeft = multipliedLeft * negativeFactor
+        const multipliedTwiceRight = multipliedRight * negativeFactor
+        console.assert(multipliedRight <= multipliedLeft)
+        console.assert(multipliedTwiceLeft <= multipliedTwiceRight)
+      }
+
+      export function nanScaling(): void {
+        const zero = 0
+        const infinity = Infinity
+        const firstProduct = zero * infinity
+        const secondProduct = zero * infinity
+        const firstQuotient = infinity / infinity
+        const secondQuotient = infinity / infinity
+        console.assert(firstProduct <= secondProduct)
+        console.assert(firstQuotient <= secondQuotient)
+      }
+
+      export function unknownDivisionSign(left: number, right: number, divisor: number): void {
+        if (left > right) return
+        const dividedLeft = left / divisor
+        const dividedRight = right / divisor
+        console.assert(dividedLeft <= dividedRight)
+      }
+
+      export function differentDivisors(
+        left: number,
+        right: number,
+        firstDivisor: number,
+        secondDivisor: number,
+      ): void {
+        if (left > right) return
+        if (firstDivisor <= 0 || secondDivisor <= 0) return
+        const dividedLeft = left / firstDivisor
+        const dividedRight = right / secondDivisor
+        console.assert(dividedLeft <= dividedRight)
+      }
+
+      export function noStrictDivision(left: number, right: number, divisor: number): void {
+        if (left >= right) return
+        if (divisor <= 0) return
+        const dividedLeft = left / divisor
+        const dividedRight = right / divisor
+        console.assert(dividedLeft < dividedRight)
+      }
     `)
 
     expect(analyzedFunction(report, 'shifted').assertions?.map(assertion => assertion.verdict))
@@ -741,6 +832,20 @@ describe('static console.assert contracts', () => {
     expect(analyzedFunction(report, 'noFloatingCancellation').assertions?.map(assertion => assertion.verdict))
       .toEqual(['unproven'])
     expect(analyzedFunction(report, 'noStrictArithmetic').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['unproven'])
+    expect(analyzedFunction(report, 'positiveDivision').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['proven', 'proven'])
+    expect(analyzedFunction(report, 'negativeDivision').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['proven', 'proven'])
+    expect(analyzedFunction(report, 'negativeMultiplication').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['proven', 'proven'])
+    expect(analyzedFunction(report, 'nanScaling').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['unproven', 'unproven'])
+    expect(analyzedFunction(report, 'unknownDivisionSign').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['unproven'])
+    expect(analyzedFunction(report, 'differentDivisors').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['unproven'])
+    expect(analyzedFunction(report, 'noStrictDivision').assertions?.map(assertion => assertion.verdict))
       .toEqual(['unproven'])
   })
 
