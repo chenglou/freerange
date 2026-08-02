@@ -217,17 +217,6 @@ console.assert(navRight <= left)
 
 If the values arrive independently, Freerange may leave the relationship unproven.
 
-A guard can establish one direct relationship, and Freerange preserves its non-strict ordering through matching addition or subtraction:
-
-```ts
-if (oldTop > oldBottom) throw new Error('invalid rectangle')
-const nextTop = oldTop + scrollChange
-const nextBottom = oldBottom + scrollChange
-console.assert(nextTop <= nextBottom)
-```
-
-Freerange can combine matching relationships inside one addition or subtraction. It still does not chain comparisons transitively, e.g. `left <= middle` and `middle <= right` do not prove `left <= right`.
-
 #### No algebraic inversion of conditions
 
 Freerange narrows the direct operands of a comparison but does not rearrange `width * 2 > 10` to derive `width > 5`. Check the value used by the later operation:
@@ -238,8 +227,6 @@ export function previewScale(width: number): number {
   return 100 / width
 }
 ```
-
-Freerange also does not generally cancel floating-point operations. For example, `(right - width) + width` can be the next representable number above or below `right`, even for ordinary pixel-sized values. Offset cancellation is used only when every involved value is a safe integer and the matching addition or subtraction is present in the calculation.
 
 #### No algebraic normalization
 

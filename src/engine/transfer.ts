@@ -42,7 +42,7 @@ import {
   type ValueIdentityOwner,
 } from '../domain/value-identity.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
-import {forEachOperand, type ComparisonOperator, type InstructionIR} from '../ir/instructions.ts'
+import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import {coveringKindValue, declaredKindOf, type DeclaredKind, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
@@ -708,10 +708,6 @@ function valueFactUsesOwner(
   owner: ValueIdentityOwner,
 ): boolean {
   if (fact.kind === 'nonzero') return valueIdentityUsesOwner(fact.value, owner)
-  if (fact.kind === 'order') {
-    return valueIdentityUsesOwner(fact.left, owner)
-      || valueIdentityUsesOwner(fact.right, owner)
-  }
   return valueIdentityUsesOwner(fact.index, owner)
     || valueIdentityUsesOwner(fact.array, owner)
 }
@@ -1200,7 +1196,6 @@ function refineComparison(
   // rebuilds the record.
   writeThroughProducers(result, comparison.left, refinedLeft, producers)
   writeThroughProducers(result, comparison.right, refinedRight, producers)
-  recordOrderComparisonFact(result, comparison.left, comparison.right, operator, expressionContext)
   recordNonzeroComparisonFacts(result, comparison, expressionContext)
   return result
 }
@@ -1288,33 +1283,6 @@ function recordNonzeroComparisonFacts(
     if (expressionContext.instructionByValue[id]?.kind === 'constant') continue
     const held = requiredValue(state, id)
     if (held.kind === 'number' && !includesZero(held)) recordNonzeroValueFact(state, id, expressionContext)
-  }
-}
-
-function recordOrderComparisonFact(
-  state: ExecutionState,
-  rawLeft: ValueID,
-  rawRight: ValueID,
-  operator: ComparisonOperator,
-  expressionContext: ExpressionContext,
-): void {
-  const leftNumber = numberWithFacts(state, rawLeft, expressionContext)
-  const rightNumber = numberWithFacts(state, rawRight, expressionContext)
-  if (leftNumber == null || rightNumber == null
-    || leftNumber.mayBeNaN || rightNumber.mayBeNaN) return
-  const left = canonicalValueIdentity(rawLeft, expressionContext)
-  const right = canonicalValueIdentity(rawRight, expressionContext)
-  const add = (smaller: ValueIdentity, larger: ValueIdentity, strict: boolean): void => {
-    if (sameValueIdentity(smaller, larger)) return
-    addValueFact(state.valueFacts, {kind: 'order', left: smaller, right: larger, strict})
-  }
-  switch (operator) {
-    case 'lessThan': add(left, right, true); return
-    case 'lessThanOrEqual': add(left, right, false); return
-    case 'greaterThan': add(right, left, true); return
-    case 'greaterThanOrEqual': add(right, left, false); return
-    case 'equal': return
-    case 'notEqual': return
   }
 }
 
@@ -1564,137 +1532,16 @@ function createComparisonProof(
     return held != null && held.lower >= 0 && !held.mayBeNaN
   }
 
-  // Integer addition and subtraction are exact while every operand and result stays in
-  // the safe-integer band. Rules below may move an offset across a comparison only inside
-  // this band; the same algebra is false for ordinary finite floating-point values.
-  const safeInteger = (value: ValueID): boolean => {
-    const held = heldNumber(value)
-    return held != null && held.integer && !held.mayBeNaN
-      && Math.abs(held.lower) <= Number.MAX_SAFE_INTEGER
-      && Math.abs(held.upper) <= Number.MAX_SAFE_INTEGER
-  }
-
-  // Exact offset transfer uses either a witness evaluated while producing the queried
-  // value, or one named by a direct order fact on the current path. Index each reachable
-  // producer DAG once, plus one function-wide index for the direct-fact case, instead of
-  // rescanning instructions for every proof pair. Stable runtime-value identities keep
-  // duplicate reads and caller arguments aligned without treating separate calculations
-  // as the same value.
-  type BinaryWitnesses = {
-    additions: Map<string, ValueID[]>
-    subtractions: Map<string, ValueID[]>
-  }
-  const ownerIndexes = new Map<ValueIdentityOwner, number>()
-  const identityKeyMemo = new WeakMap<object, string>()
-  let nextOwnerIndex = 0
-  const identityKey = (identity: ValueIdentity): string => {
-    const cached = identityKeyMemo.get(identity)
-    if (cached != null) return cached
-    let key: string
-    switch (identity.kind) {
-      case 'local': {
-        let ownerIndex = ownerIndexes.get(identity.owner)
-        if (ownerIndex == null) {
-          ownerIndex = nextOwnerIndex
-          nextOwnerIndex += 1
-          ownerIndexes.set(identity.owner, ownerIndex)
-        }
-        key = JSON.stringify(['local', ownerIndex, identity.value])
-        break
-      }
-      case 'property':
-        key = JSON.stringify(['property', identityKey(identity.object), identity.property])
-        break
-      case 'arrayIndex':
-        key = JSON.stringify(['index', identityKey(identity.array), identityKey(identity.index)])
-        break
-    }
-    identityKeyMemo.set(identity, key)
-    return key
-  }
-  const valueKey = (value: ValueID): string =>
-    identityKey(canonicalValueIdentity(value, context))
-  const identityPairKey = (left: ValueIdentity, right: ValueIdentity): string =>
-    JSON.stringify([identityKey(left), identityKey(right)])
-  const orderKeys = new Set<string>()
-  const strictOrderKeys = new Set<string>()
-  for (const fact of state.valueFacts) {
-    if (fact.kind !== 'order') continue
-    const key = identityPairKey(fact.left, fact.right)
-    orderKeys.add(key)
-    if (fact.strict) strictOrderKeys.add(key)
-  }
-  const recordedOrder = (left: ValueID, right: ValueID, strict: boolean): boolean => {
-    const key = identityPairKey(
-      canonicalValueIdentity(left, context),
-      canonicalValueIdentity(right, context),
-    )
-    return (strict ? strictOrderKeys : orderKeys).has(key)
-  }
-  const operandPairKey = (left: ValueID, right: ValueID): string =>
-    JSON.stringify([valueKey(left), valueKey(right)])
-  const addWitness = (map: Map<string, ValueID[]>, key: string, value: ValueID): void => {
-    const values = map.get(key)
-    if (values == null) map.set(key, [value])
-    else values.push(value)
-  }
-  const indexWitness = (result: BinaryWitnesses, producer: InstructionIR): void => {
-    if (producer.kind !== 'binary') return
-    if (producer.operator === 'add') {
-      const written = operandPairKey(producer.left, producer.right)
-      addWitness(result.additions, written, producer.result)
-      const reversed = operandPairKey(producer.right, producer.left)
-      if (reversed !== written) addWitness(result.additions, reversed, producer.result)
-    }
-    if (producer.operator === 'subtract') {
-      addWitness(
-        result.subtractions,
-        operandPairKey(producer.left, producer.right),
-        producer.result,
-      )
-    }
-  }
-  const reachableWitnessMemo = new Map<ValueID, BinaryWitnesses>()
-  const reachableWitnesses = (rawRoot: ValueID): BinaryWitnesses => {
-    const root = resolveStoredValue(rawRoot, context)
-    const cached = reachableWitnessMemo.get(root)
-    if (cached != null) return cached
-    const result: BinaryWitnesses = {additions: new Map(), subtractions: new Map()}
-    const visited = new Set<ValueID>()
-    const pending = [root]
-    while (pending.length > 0) {
-      const value = resolveStoredValue(pending.pop()!, context)
-      if (visited.has(value)) continue
-      visited.add(value)
-      const producer = context.instructionByValue[value]
-      if (producer == null) continue
-      indexWitness(result, producer)
-      forEachOperand(producer, operand => pending.push(operand))
-    }
-    reachableWitnessMemo.set(root, result)
-    return result
-  }
-  let allWitnessesMemo: BinaryWitnesses | null = null
-  const allWitnesses = (): BinaryWitnesses => {
-    if (allWitnessesMemo != null) return allWitnessesMemo
-    const result: BinaryWitnesses = {additions: new Map(), subtractions: new Map()}
-    for (const producer of context.instructionByValue) {
-      if (producer != null) indexWitness(result, producer)
-    }
-    allWitnessesMemo = result
-    return result
-  }
-
   const atMost = (rawLeft: ValueID, rawRight: ValueID): boolean => {
     const left = resolveStoredValue(rawLeft, context)
     const right = resolveStoredValue(rawRight, context)
+    if (same(left, right)) return true
+
     const leftNumber = heldNumber(left)
     const rightNumber = heldNumber(right)
-    if (leftNumber == null || rightNumber == null
-      || leftNumber.mayBeNaN || rightNumber.mayBeNaN) return false
-    if (same(left, right)) return true
-    if (leftNumber.upper <= rightNumber.lower) return true
-    if (recordedOrder(left, right, false)) return true
+    if (leftNumber != null && rightNumber != null
+      && !leftNumber.mayBeNaN && !rightNumber.mayBeNaN
+      && leftNumber.upper <= rightNumber.lower) return true
 
     const key = `${left}:${right}`
     const cached = atMostMemo.get(key)
@@ -1717,23 +1564,10 @@ function createComparisonProof(
     // Math.min and Math.max are monotone in corresponding operands. Keeping the written
     // operand order makes the rule linear and predictable; agents can align equivalent
     // clamps instead of asking the checker to search permutations.
-    if (!answer && leftProducer?.kind === 'minimum' && rightProducer?.kind === 'minimum'
+    if (leftProducer?.kind === 'minimum' && rightProducer?.kind === 'minimum'
       && leftProducer.values.length === rightProducer.values.length) {
       answer = leftProducer.values.every((operand, index) =>
         atMost(operand, rightProducer.values[index]!))
-    }
-    // IEEE addition is monotone in both operands; subtraction is monotone in its left
-    // operand and antitone in its right. These rules preserve written relationships
-    // without reassociating or cancelling any operation.
-    if (!answer && leftProducer?.kind === 'binary' && leftProducer.operator === 'add'
-      && rightProducer?.kind === 'binary' && rightProducer.operator === 'add') {
-      answer = atMost(leftProducer.left, rightProducer.left)
-        && atMost(leftProducer.right, rightProducer.right)
-    }
-    if (!answer && leftProducer?.kind === 'binary' && leftProducer.operator === 'subtract'
-      && rightProducer?.kind === 'binary' && rightProducer.operator === 'subtract') {
-      answer = atMost(leftProducer.left, rightProducer.left)
-        && atMost(rightProducer.right, leftProducer.right)
     }
 
     if (!answer && leftProducer?.kind === 'binary'
@@ -1754,107 +1588,6 @@ function createComparisonProof(
           if (same(leftFactor, rightFactor)
             && nonnegative(leftFactor)
             && atMost(leftBase, rightBase)) answer = true
-        }
-      }
-    }
-
-    // The sign of a non-NaN rounded subtraction agrees with the exact difference. This
-    // proves the zero arm of a clamp against `upper - lower` when a written guard already
-    // established lower <= upper, without moving either operand across the subtraction.
-    if (!answer && rightProducer?.kind === 'binary' && rightProducer.operator === 'subtract'
-      && leftNumber.upper <= 0) {
-      answer = atMost(rightProducer.right, rightProducer.left)
-    }
-    if (!answer && leftProducer?.kind === 'binary' && leftProducer.operator === 'subtract'
-      && rightNumber.lower >= 0) {
-      answer = atMost(leftProducer.left, leftProducer.right)
-    }
-
-    // Exact safe-integer offset transfer. The matching inverse operation must occur in
-    // the producer DAG of the side whose bound it justifies, or be named by a direct order
-    // fact on this path; no expression is invented. For general floats these round trips
-    // can move by one ULP, so every safeInteger gate is load-bearing.
-    if (!answer && leftProducer?.kind === 'binary' && leftProducer.operator === 'add'
-      && safeInteger(left) && safeInteger(right)) {
-      const forms = [[leftProducer.left, leftProducer.right], [leftProducer.right, leftProducer.left]] as const
-      for (const [addend, offset] of forms) {
-        if (!safeInteger(addend) || !safeInteger(offset)) continue
-        const witnessKey = operandPairKey(right, offset)
-        for (const witness of reachableWitnesses(addend).subtractions.get(witnessKey) ?? []) {
-          if (safeInteger(witness) && atMost(addend, witness)) {
-            answer = true
-            break
-          }
-        }
-        if (!answer) {
-          for (const witness of allWitnesses().subtractions.get(witnessKey) ?? []) {
-            if (safeInteger(witness) && recordedOrder(addend, witness, false)) {
-              answer = true
-              break
-            }
-          }
-        }
-        if (answer) break
-      }
-    }
-    if (!answer && leftProducer?.kind === 'binary' && leftProducer.operator === 'subtract'
-      && safeInteger(left) && safeInteger(right)
-      && safeInteger(leftProducer.left) && safeInteger(leftProducer.right)) {
-      const witnessKey = operandPairKey(leftProducer.right, right)
-      for (const witness of reachableWitnesses(leftProducer.left).additions.get(witnessKey) ?? []) {
-        if (safeInteger(witness) && atMost(leftProducer.left, witness)) {
-          answer = true
-          break
-        }
-      }
-      if (!answer) {
-        for (const witness of allWitnesses().additions.get(witnessKey) ?? []) {
-          if (safeInteger(witness) && recordedOrder(leftProducer.left, witness, false)) {
-            answer = true
-            break
-          }
-        }
-      }
-    }
-    if (!answer && rightProducer?.kind === 'binary' && rightProducer.operator === 'add'
-      && safeInteger(left) && safeInteger(right)) {
-      const forms = [[rightProducer.left, rightProducer.right], [rightProducer.right, rightProducer.left]] as const
-      for (const [base, offset] of forms) {
-        if (!safeInteger(base) || !safeInteger(offset)) continue
-        const witnessKey = operandPairKey(left, offset)
-        for (const witness of reachableWitnesses(base).subtractions.get(witnessKey) ?? []) {
-          if (safeInteger(witness) && atMost(witness, base)) {
-            answer = true
-            break
-          }
-        }
-        if (!answer) {
-          for (const witness of allWitnesses().subtractions.get(witnessKey) ?? []) {
-            if (safeInteger(witness) && recordedOrder(witness, base, false)) {
-              answer = true
-              break
-            }
-          }
-        }
-        if (answer) break
-      }
-    }
-    if (!answer && rightProducer?.kind === 'binary' && rightProducer.operator === 'subtract'
-      && safeInteger(left) && safeInteger(right)
-      && safeInteger(rightProducer.left) && safeInteger(rightProducer.right)) {
-      const witnessKey = operandPairKey(rightProducer.right, left)
-      for (const witness of reachableWitnesses(rightProducer.left).additions.get(witnessKey) ?? []) {
-        if (safeInteger(witness) && atMost(witness, rightProducer.left)) {
-          answer = true
-          break
-        }
-      }
-      if (!answer) {
-        for (const witness of allWitnesses().additions.get(witnessKey) ?? []) {
-          if (safeInteger(witness) && recordedOrder(witness, rightProducer.left, false)) {
-            answer = true
-            break
-          }
         }
       }
     }
@@ -1892,25 +1625,9 @@ function createComparisonProof(
     const right = resolveStoredValue(rawRight, context)
     const leftNumber = heldNumber(left)
     const rightNumber = heldNumber(right)
-    if (leftNumber == null || rightNumber == null
-      || leftNumber.mayBeNaN || rightNumber.mayBeNaN) return false
-    if (leftNumber.upper < rightNumber.lower) return true
-    if (recordedOrder(left, right, true)) return true
-
-    // A positive safe-integer increment cannot be absorbed by rounding. General floats
-    // deliberately stay out: `1e16 + 1 === 1e16`.
-    const rightProducer = context.instructionByValue[right]
-    if (rightProducer?.kind === 'binary' && rightProducer.operator === 'add'
-      && safeInteger(left) && safeInteger(right)) {
-      for (const [base, offset] of [
-        [rightProducer.left, rightProducer.right],
-        [rightProducer.right, rightProducer.left],
-      ] as const) {
-        const offsetNumber = heldNumber(offset)
-        if (same(base, left) && safeInteger(offset)
-          && offsetNumber != null && offsetNumber.lower >= 1) return true
-      }
-    }
+    if (leftNumber != null && rightNumber != null
+      && !leftNumber.mayBeNaN && !rightNumber.mayBeNaN
+      && leftNumber.upper < rightNumber.lower) return true
 
     const producer = context.instructionByValue[left]
     if (producer?.kind !== 'binary' || producer.operator !== 'remainder'
