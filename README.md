@@ -76,7 +76,7 @@ In the example above, calling `itemColumn(0, 2.2)` produces an error (`columnCou
 `console.assert` calls at the very beginning of a function, before any other statement, are caller requirements. Like parameter types, every caller must satisfy them.
 Any `console.assert` later in the function will be proven by Freerange for the function itself. Otherwise, Freerange reports an error.
 
-Leading ordered assertions can compare two inputs. `===` and `!==` still need one fixed finite number. A caller with known bounds satisfies the requirement immediately; otherwise the same requirement passes to its caller:
+Leading assertions can compare two inputs with `===`, `<`, `<=`, `>`, or `>=`. `!==` still needs one fixed finite number. A caller with known bounds satisfies the requirement immediately; otherwise the same requirement passes to its caller:
 
 ```ts
 function clamp(minimum: number, value: number, maximum: number): number {

@@ -1180,15 +1180,15 @@ function refineComparison(
   // survive there.
   const holdsForNaN = operator === 'notEqual'
   if (emptied) {
-    // The interval refinement only rules out the non-NaN inhabitants; a NaN operand still
-    // lands on the side its comparison semantics allow (e.g. `x > -1 ? 1 : 0` with x
-    // possibly NaN takes the 0 arm at runtime, and `x !== x` style emptiness keeps the
-    // NaN inhabitant on the not-equal side). Keep the unrefined values — a superset —
-    // rather than pruning the branch.
-    if ((!truth || holdsForNaN) && (left.mayBeNaN || right.mayBeNaN)) return cloneState(state)
+    // The interval refinement only rules out the non-NaN inhabitants. NaN keeps an
+    // effective !== branch alive, including the false branch of ===. Keep the unrefined
+    // values — a superset — because the number domain cannot represent NaN alone.
+    if (holdsForNaN && (left.mayBeNaN || right.mayBeNaN)) return cloneState(state)
     return null
   }
-  if (truth && !holdsForNaN) {
+  // Every effective comparison except !== rejects NaN. In particular, the false branch
+  // of a written !== is an equality branch and must clear NaN before recording equality.
+  if (!holdsForNaN) {
     refinedLeft = {...refinedLeft, mayBeNaN: false}
     refinedRight = {...refinedRight, mayBeNaN: false}
   }
@@ -1225,7 +1225,12 @@ function recordOrderComparisonFact(
     case 'lessThanOrEqual': record(left, right, false); return
     case 'greaterThan': record(right, left, true); return
     case 'greaterThanOrEqual': record(right, left, false); return
-    case 'equal': return
+    // For non-NaN numbers, === is exactly <= in both directions. Keeping equality in the
+    // existing order representation gives it the same joins and call propagation.
+    case 'equal':
+      record(left, right, false)
+      record(right, left, false)
+      return
     case 'notEqual': return
   }
 }
@@ -1531,12 +1536,16 @@ function comparisonLocalProof(
       return proof.strictlyBelow(instruction.left, instruction.right) ? exactBoolean(false) : null
     }
     case 'equal': {
+      if (proof.atMost(instruction.left, instruction.right)
+        && proof.atMost(instruction.right, instruction.left)) return exactBoolean(true)
       return proof.strictlyBelow(instruction.left, instruction.right)
         || proof.strictlyBelow(instruction.right, instruction.left) ? exactBoolean(false) : null
     }
     case 'notEqual': {
-      return proof.strictlyBelow(instruction.left, instruction.right)
-        || proof.strictlyBelow(instruction.right, instruction.left) ? exactBoolean(true) : null
+      if (proof.strictlyBelow(instruction.left, instruction.right)
+        || proof.strictlyBelow(instruction.right, instruction.left)) return exactBoolean(true)
+      return proof.atMost(instruction.left, instruction.right)
+        && proof.atMost(instruction.right, instruction.left) ? exactBoolean(false) : null
     }
   }
 }

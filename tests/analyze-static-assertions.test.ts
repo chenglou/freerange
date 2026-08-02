@@ -228,6 +228,10 @@ describe('static console.assert contracts', () => {
         console.assert(left === right)
         return left
       }
+      export function inequalityRequirement(left: number, right: number): number {
+        console.assert(left !== right)
+        return left
+      }
       export function finiteRequirement(value: number): number {
         console.assert(Number.isFinite(value))
         return value
@@ -303,7 +307,7 @@ describe('static console.assert contracts', () => {
       'constant',
       'optional',
       'expressionPosition',
-      'equalityRequirement',
+      'inequalityRequirement',
       'inlineDivision',
       'inlineRemainder',
       'inlineIndex',
@@ -328,7 +332,9 @@ describe('static console.assert contracts', () => {
     expect(unsupported('constant')).toContain('one direct numeric comparison')
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'relationalRequirement'))[0])
       .toContain('left <= right')
-    expect(unsupported('equalityRequirement')).toContain('=== and !== need one fixed finite number')
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'equalityRequirement'))[0])
+      .toContain('left === right')
+    expect(unsupported('inequalityRequirement')).toContain('!== needs one fixed finite number')
     expect(analyzedFunction(report, 'finiteRequirement').requires[0]).toContain('Number.isFinite(value)')
     expect(unsupported('inlineDivision')).toContain('calculate or read the value before console.assert')
     expect(unsupported('inlineIndex')).toContain('calculate or read the value before console.assert')
@@ -849,10 +855,23 @@ describe('static console.assert contracts', () => {
       .toEqual(['unproven'])
   })
 
-  test('ordered requirements use direct facts for scalar and record inputs', () => {
+  test('ordered and equality requirements use direct facts for scalar and record inputs', () => {
     const report = analyzeSource('ordered-requirements.ts', `
       function requireStrict(left: number, right: number): void {
         console.assert(left < right)
+      }
+
+      function requireEqual(left: number, right: number, offset: number): void {
+        console.assert(left === right)
+        const difference = left - right
+        const shiftedLeft = left + offset
+        const shiftedRight = right + offset
+        console.assert(difference === 0)
+        console.assert(shiftedLeft === shiftedRight)
+      }
+
+      function ensureEqual(left: number, right: number): void {
+        if (left !== right) throw new Error('different')
       }
 
       function requireRecordOrder(bounds: {minimum: number; maximum: number}): void {
@@ -882,21 +901,86 @@ describe('static console.assert contracts', () => {
       export function refutedRecord(): void {
         requireRecordOrder({minimum: 1, maximum: 0})
       }
+
+      export function knownEqual(): void {
+        requireEqual(5, 5, 10)
+      }
+
+      export function propagatedEqual(left: number, right: number): void {
+        requireEqual(left, right, 10)
+      }
+
+      export function guardedEqual(left: number, right: number): void {
+        if (left !== right) return
+        requireEqual(left, right, 10)
+      }
+
+      export function refutedEqual(): void {
+        requireEqual(5, 6, 10)
+      }
+
+      export function helperEqual(left: number, right: number): void {
+        ensureEqual(left, right)
+        const difference = left - right
+        console.assert(difference === 0)
+      }
+
+      export function joinedEqual(left: number, right: number, firstPath: boolean): void {
+        if (firstPath) {
+          if (left !== right) return
+        } else if (left !== right) return
+        const difference = left - right
+        console.assert(difference === 0)
+      }
+
+      export function maybeNaNEqual(leftInput: number, rightInput: number): void {
+        const left = Math.sqrt(leftInput)
+        const right = Math.sqrt(rightInput)
+        if (left !== right) return
+        const difference = left - right
+        console.assert(left === right)
+        console.assert(difference === 0)
+      }
+
+      export function equalityBoundary(left: number, right: number): void {
+        console.assert(left === right)
+        const comparedLeft = left
+        const squaredLeft = left * left
+        const squaredRight = right * right
+        console.assert(comparedLeft < right)
+        console.assert(comparedLeft !== right)
+        console.assert(squaredLeft === squaredRight)
+      }
     `)
 
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'requireStrict'))[0])
       .toContain('left < right')
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'requireRecordOrder'))[0])
       .toContain('bounds.minimum <= bounds.maximum')
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'requireEqual'))[0])
+      .toContain('left === right')
+    expect(analyzedFunction(report, 'requireEqual').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['proven', 'proven'])
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'guardedStrict'))).toEqual([])
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'nonstrictIsNotStrict'))[0])
       .toContain('left < right')
-    for (const name of ['refutedStrict', 'refutedRecord']) {
+    for (const name of ['refutedStrict', 'refutedRecord', 'refutedEqual']) {
       const fn = report.functions.find(candidate => candidate.name === name)
       if (fn?.kind !== 'partial') throw new Error(`Expected ${name} to be partial`)
       expect(fn.partialReasons[0]).toContain('declared requirement definitely false')
     }
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'guardedRecord'))).toEqual([])
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'knownEqual'))).toEqual([])
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'propagatedEqual'))[0])
+      .toContain('left === right')
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'guardedEqual'))).toEqual([])
+    for (const name of ['helperEqual', 'joinedEqual']) {
+      expect(analyzedFunction(report, name).assertions?.map(assertion => assertion.verdict)).toEqual(['proven'])
+    }
+    expect(analyzedFunction(report, 'maybeNaNEqual').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['proven', 'proven'])
+    expect(analyzedFunction(report, 'equalityBoundary').assertions?.map(assertion => assertion.verdict))
+      .toEqual(['refuted', 'refuted', 'unproven'])
   })
 
   test('a leading two-parameter order requirement proves a min/max clamp and reaches callers', () => {

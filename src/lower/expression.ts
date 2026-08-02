@@ -675,7 +675,7 @@ function writtenRequirement(condition: ts.Expression, context: FunctionContext):
   const operator = comparisonOperator(current.operatorToken.kind)
   if (left == null || right == null || operator == null
     || (leftParameter != null && rightParameter != null
-      && (operator === 'equal' || operator === 'notEqual'))) return null
+      && operator === 'notEqual')) return null
   return {kind: 'comparison', left, right, operator}
 }
 
