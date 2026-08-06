@@ -122,9 +122,6 @@ type BoxData = {
   y: Spring
   scale: Spring // @fit scale.dest: 1..1.02
   fxFactor: Spring
-  node: HTMLDivElement
-  img: HTMLImageElement
-  promptNode: HTMLElement
 }
 
 let data: BoxData[] = (() => {
@@ -135,17 +132,6 @@ let data: BoxData[] = (() => {
     const ar = d.w / d.h
     const sizeX = Math.min(d.w, boxMaxSizeX, imgMaxSizeY * ar)
     const sizeY = sizeX / ar + promptSizeY
-    // upon zooming into 1D mode (big image), swapping out an img src for a higher-res one would cause a flash of blank image in certain cases. Instead, we put the low-res image as a background-image on the container, then the high-res image as a real img on top. Hand-rolled double buffering...
-    const node = document.createElement('div')
-        node.className = 'box'
-        // node.tabIndex = i + 1 // uncomment when dismiss focus isn't this ugly blue hue anymore
-        node.style.backgroundImage = `url(https://cdn.midjourney.com/${d.id}_384_N.webp)` // 128 is the next smallest. Too small for retina screens
-    const img = document.createElement('img')
-        // img.decoding = 'async' // this sucks. It's slower _and_ still janks the UI. No point
-    const promptNode = document.createElement('figcaption')
-        promptNode.className = 'prompt'
-        promptNode.textContent = d.prompt
-    node.append(img, promptNode)
     return {
       id: d.id,
       naturalSizeX: d.w,
@@ -156,12 +142,31 @@ let data: BoxData[] = (() => {
       y: spring(windowSizeY + Math.floor(i / cols) * imgMaxSizeY),
       scale: spring(1),
       fxFactor: spring(20), // for brightness and blur
-      node,
-      img,
-      promptNode,
     }
   })
 })()
+type BoxDom = {
+  node: HTMLDivElement
+  img: HTMLImageElement
+  promptNode: HTMLElement
+}
+const domCache: {boxes: BoxDom[]} = {
+  // cache lifetime: app lifetime; nodes attach and detach with occlusion
+  boxes: photoGalleryData.map(d => {
+    // upon zooming into 1D mode (big image), swapping out an img src for a higher-res one would cause a flash of blank image in certain cases. Instead, we put the low-res image as a background-image on the container, then the high-res image as a real img on top. Hand-rolled double buffering...
+    const node = document.createElement('div')
+        node.className = 'box'
+        node.style.backgroundImage = `url(https://cdn.midjourney.com/${d.id}_384_N.webp)` // 128 is the next smallest. Too small for retina screens
+    const img = document.createElement('img')
+        // img.decoding = 'async' // this sucks. It's slower _and_ still janks the UI. No point
+    const promptNode = document.createElement('figcaption')
+        promptNode.className = 'prompt'
+        promptNode.textContent = d.prompt
+    node.append(img, promptNode)
+    return {node, img, promptNode}
+  }),
+}
+// domCache.boxes.forEach(({node}, i) => {node.tabIndex = i + 1}) // uncomment when dismiss focus isn't this ugly blue hue anymore
 function springForEach(f: (s: Spring) => Spring): void { // no spring ownership struggle between the spring library above vs consumer; un-inversion of control!
   data = data.map(d => ({...d, sizeX: f(d.sizeX), sizeY: f(d.sizeY), x: f(d.x), y: f(d.y), scale: f(d.scale), fxFactor: f(d.fxFactor)})) // no different than [a, b, c].map(f)
 }
@@ -412,7 +417,7 @@ function render(now: number): boolean {
   const browserUIMaxSizeTop = 100, browserUIMaxSizeBottom = 150 // browsers UI like Safari are transluscent. Random conservative numbers
   for (let i = 0; i < data.length; i++) {
     let d = data[i]!
-    const {node, img, promptNode} = d
+    const {node, img, promptNode} = domCache.boxes[i]!
     if ( // occlusion culling, aka only draw what's visible on screen (aka "virtualization")
       d.y.pos -/*toGlobal*/adjustedScrollTop <= windowSizeY + browserUIMaxSizeBottom &&
       d.y.pos + d.sizeY.pos -/*toGlobal*/adjustedScrollTop >= -browserUIMaxSizeTop &&
