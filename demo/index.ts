@@ -116,7 +116,7 @@ type State = {
   anchor: number
   windowSizeX: number
   scrollY: number
-  pointer: {x: number; y: number}
+  pointer: {x: number; y: number; timeStamp: number}
   events: {keydown: KeyboardEvent | null; click: MouseEvent | null; mousemove: MouseEvent | null}
   data: BoxData[]
 }
@@ -148,7 +148,7 @@ const state: State = (() => {
     anchor: 0, // keep a box stable during resize layout shifts
     windowSizeX,
     scrollY: isSafari ? document.body.scrollTop : window.scrollY,
-    pointer: {x: -Infinity, y: -Infinity}, // btw, on page load, there's no way to render a first cursor state =(
+    pointer: {x: -Infinity, y: -Infinity, timeStamp: -Infinity}, // btw, on page load, there's no way to render a first cursor state =(
     events: {keydown: null, click: null, mousemove: null},
     data,
   }
@@ -243,19 +243,19 @@ function render(now: number): boolean {
   // keydown
   const inputCode = state.events.keydown == null ? null : state.events.keydown.code
 
-  // click
-  let clickedTarget: EventTarget | null = null
-  if (state.events.click != null) {
-    // needed to update coords even when we already track mousemove. E.g. in Chrome, right click context menu, move elsewhere, then click to dismiss. BAM, mousemove triggers with stale/wrong (??) coordinates... Click again without moving, and now you're clicking on the wrong thing
-    clickedTarget = state.events.click.target
-    state.pointer = {x: state.events.click.clientX, y: state.events.click.clientY}
-  }
-  // mousemove
-  if (state.events.mousemove != null) {
-    // we only use clientX/Y, not pageX/Y, because we want to ignore scrolling. See comment around isSafari above; we either scroll body or window depending on the browser, so pageX/Y might be meaningless (if Safari)
-    state.pointer = {x: state.events.mousemove.clientX, y: state.events.mousemove.clientY}
-    // btw, pointer can exceed document bounds, e.g. dragging reports back out-of-bound, legal negative values
-  }
+  // click & mousemove
+  const click = state.events.click
+  const mousemove = state.events.mousemove
+  // Chrome can deliver mousemoves buffered by a native context menu out of timestamp order, including across renders
+  const newestPointerEvent =
+    click == null ? mousemove
+    : mousemove == null || click.timeStamp > mousemove.timeStamp ? click // click is newer
+    : mousemove // mousemove is newer or tied
+  const pointer = newestPointerEvent != null && newestPointerEvent.timeStamp >= state.pointer.timeStamp
+    ? {x: newestPointerEvent.clientX, y: newestPointerEvent.clientY, timeStamp: newestPointerEvent.timeStamp}
+    : state.pointer
+  // we only use clientX/Y, not pageX/Y, because we want to ignore scrolling. See comment around isSafari above; we either scroll body or window depending on the browser, so pageX/Y might be meaningless (if Safari)
+  // btw, pointer can exceed document bounds, e.g. dragging reports back out-of-bound, legal negative values
 
   // === step 1: batched DOM reads (to avoid accidental DOM read & write interleaving)
   const newWindowSizeX = document.documentElement.clientWidth // excludes scroll bar & invariant under safari pinch zoom
@@ -268,7 +268,7 @@ function render(now: number): boolean {
 
   let focused: number | null = null; for (let i = 0; i < state.data.length; i++) if (state.data[i]!.id === hashImgId) focused = i
   // don't forget top & bottom safari UI chrome sizes when vertically occluding, since they're transluscent so we can't over-occlude by ignoring them
-  const pointerXLocal = state.pointer.x +/*toLocal*/currentScrollX, pointerYLocal = state.pointer.y +/*toLocal*/currentScrollY
+  const pointerXLocal = pointer.x +/*toLocal*/currentScrollX, pointerYLocal = pointer.y +/*toLocal*/currentScrollY
 
   // === step 2: handle inputs-related state change
   // keys
@@ -279,7 +279,8 @@ function render(now: number): boolean {
     : inputCode === 'ArrowRight' ? Math.min(state.data.length - 1, focused! + 1)
     : focused
   // pointer
-  if (clickedTarget != null) { // clicked
+  if (click != null) { // clicked
+    const clickedTarget = click.target
     if (clickedTarget instanceof HTMLElement && clickedTarget.tagName === 'FIGCAPTION') { // select the whole prompt
       const selection = window.getSelection()
       if (selection == null) throw new Error('Expected document selection API')
@@ -469,6 +470,7 @@ function render(now: number): boolean {
   state.events.keydown = null
   state.events.click = null
   state.events.mousemove = null
+  state.pointer = pointer
   state.animatedUntilTime = stillAnimating ? newAnimatedUntilTime : null
   state.anchor = newAnchor
   state.windowSizeX = newWindowSizeX
