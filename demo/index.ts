@@ -1,11 +1,11 @@
 import {photoGalleryData} from './data'
 
-// === generic scheduler & its debugger
+// === generic scheduler
 let scheduledRender = false
 function scheduleRender(): void {
   if (scheduledRender) return;
   scheduledRender = true
-  requestAnimationFrame(function renderAndMaybeScheduleAnotherRender(now) { // eye-grabbing name. No "(anonymous)" function in the debugger & profiler
+  requestAnimationFrame(function renderAndMaybeScheduleAnotherRender(now) { // eye-grabbing name. No "(anonymous)" function in stack traces & profiles
     scheduledRender = false
     if (render(now)) scheduleRender()
   })
@@ -100,11 +100,6 @@ if (isSafari) {
 }
 
 // === state. Plus one in the URL's hash
-let debug = false // toggle this for manually stepping through animation frames (press key A)
-function isDebug(): boolean {
-  return debug
-}
-let debugTimestamp = 0
 let animatedUntilTime: number | null = null
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 let anchor = 0 // keep a box stable during resize layout shifts
@@ -214,10 +209,6 @@ const dummyPlaceholder = document.createElement('div')
 dummyPlaceholder.style.position = 'absolute'
 dummyPlaceholder.style.width = '1px' // make it tiny in case it affects compositing... sigh lamport.azurewebsites.net/pubs/future-of-computing.pdf
 document.body.append(dummyPlaceholder)
-if (isDebug()) {
-  document.documentElement.style.background = 'repeating-linear-gradient(#e66465 0px, #9198e5 300px)'
-  document.documentElement.style.height = '100%'
-}
 
 // === hit testing logic. Boxes' hit area should be static and not follow their current animated state usually (but we can do either)
 function hitTest2DMode(data: BoxData[], pointerX: number, pointerY: number): number | null {
@@ -251,11 +242,6 @@ function render(now: number): boolean {
     // we only use clientX/Y, not pageX/Y, because we want to ignore scrolling. See comment around isSafari above; we either scroll body or window depending on the browser, so pageX/Y might be meaningless (if Safari)
     pointer = {x: events.mousemove.clientX, y: events.mousemove.clientY}
     // btw, pointer can exceed document bounds, e.g. dragging reports back out-of-bound, legal negative values
-  }
-
-  if (debug) {
-    if (inputCode === 'KeyA') debugTimestamp += 1000 / 60
-    now = debugTimestamp
   }
 
   // === step 1: batched DOM reads (to avoid accidental DOM read & write interleaving)
@@ -431,7 +417,6 @@ function render(now: number): boolean {
       node.style.filter = newFocused != null && (i === newFocused - 1 || i === newFocused || i === newFocused + 1)
         ? `brightness(${d.fxFactor.pos * 100}%) blur(${Math.max(0, 6 - d.fxFactor.pos * 6)}px)` // blur these 3 only
         : `brightness(${d.fxFactor.pos * 100}%)` // blur of unrelated pics is too fast during transition from/to 1D mode to be seen anyway
-      if (debug) node.style.outline = i === newAnchor ? '2px solid rgba(255, 255, 0, 0.8)' : 'none'
       promptNode.style.top = `${d.sizeX.pos / d.ar}px` // right below img's sizeY
 
       if (i === newFocused) {
