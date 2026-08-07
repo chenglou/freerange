@@ -99,14 +99,7 @@ if (isSafari) {
   document.body.style.height = '100vh'
 }
 
-// === state. Plus one in the URL's hash
-let animatedUntilTime: number | null = null
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
-let anchor = 0 // keep a box stable during resize layout shifts
-let windowSizeX = document.documentElement.clientWidth
-let scrollY = isSafari ? document.body.scrollTop : window.scrollY
-let pointer: {x: number; y: number} = {x: -Infinity, y: -Infinity} // btw, on page load, there's no way to render a first cursor state =(
-let events: {keydown: KeyboardEvent | null; click: MouseEvent | null; mousemove: MouseEvent | null} = {keydown: null, click: null, mousemove: null}
 type BoxData = {
   id: string
   naturalSizeX: number // @fit int 1..Infinity
@@ -118,12 +111,23 @@ type BoxData = {
   scale: Spring // @fit scale.dest: 1..1.02
   fxFactor: Spring
 }
+type State = {
+  animatedUntilTime: number | null
+  anchor: number
+  windowSizeX: number
+  scrollY: number
+  pointer: {x: number; y: number}
+  events: {keydown: KeyboardEvent | null; click: MouseEvent | null; mousemove: MouseEvent | null}
+  data: BoxData[]
+}
 
-let data: BoxData[] = (() => {
+// === state. Plus one in the URL's hash
+const state: State = (() => {
+  const windowSizeX = document.documentElement.clientWidth
   const windowSizeY = document.documentElement.clientHeight
   const {cols, boxMaxSizeX} = colsBoxMaxSizeXF(windowSizeX)
   const imgMaxSizeY = boxMaxSizeX + 100 // TODO: adjust this better
-  return photoGalleryData.map((d, i) => {
+  const data = photoGalleryData.map((d, i) => {
     const ar = d.w / d.h
     const sizeX = Math.min(d.w, boxMaxSizeX, imgMaxSizeY * ar)
     const sizeY = sizeX / ar + promptSizeY
@@ -139,6 +143,15 @@ let data: BoxData[] = (() => {
       fxFactor: spring(20), // for brightness and blur
     }
   })
+  return {
+    animatedUntilTime: null,
+    anchor: 0, // keep a box stable during resize layout shifts
+    windowSizeX,
+    scrollY: isSafari ? document.body.scrollTop : window.scrollY,
+    pointer: {x: -Infinity, y: -Infinity}, // btw, on page load, there's no way to render a first cursor state =(
+    events: {keydown: null, click: null, mousemove: null},
+    data,
+  }
 })()
 type BoxDom = {
   node: HTMLDivElement
@@ -163,11 +176,11 @@ const domCache: {boxes: BoxDom[]} = {
 }
 // domCache.boxes.forEach(({node}, i) => {node.tabIndex = i + 1}) // uncomment when dismiss focus isn't this ugly blue hue anymore
 function springForEach(f: (s: Spring) => Spring): void { // no spring ownership struggle between the spring library above vs consumer; un-inversion of control!
-  data = data.map(d => ({...d, sizeX: f(d.sizeX), sizeY: f(d.sizeY), x: f(d.x), y: f(d.y), scale: f(d.scale), fxFactor: f(d.fxFactor)})) // no different than [a, b, c].map(f)
+  state.data = state.data.map(d => ({...d, sizeX: f(d.sizeX), sizeY: f(d.sizeY), x: f(d.x), y: f(d.y), scale: f(d.scale), fxFactor: f(d.fxFactor)})) // no different than [a, b, c].map(f)
 }
 function stepSprings(steps: number): boolean {
   let stillAnimating = false
-  data = data.map(d => {
+  state.data = state.data.map(d => {
     const sizeX = stepSpring(d.sizeX, steps)
     const sizeY = stepSpring(d.sizeY, steps)
     const x = stepSpring(d.x, steps)
@@ -200,9 +213,9 @@ function stepSpring(
 window.addEventListener('resize', () => scheduleRender())
 window.addEventListener('scroll', () => scheduleRender(), true) // capture is needed for iPad Safari...
 window.addEventListener('popstate', () => scheduleRender())
-window.addEventListener('keydown', (e) => {events.keydown = e; scheduleRender()})
-window.addEventListener('click', (e) => {events.click = e; scheduleRender()})
-window.addEventListener('mousemove', (e) => {events.mousemove = e; scheduleRender()})
+window.addEventListener('keydown', (e) => {state.events.keydown = e; scheduleRender()})
+window.addEventListener('click', (e) => {state.events.click = e; scheduleRender()})
+window.addEventListener('mousemove', (e) => {state.events.mousemove = e; scheduleRender()})
 
 // === static DOM initialization. Just 1 in this app. The more you have here the more your app looks like a PDF document. Minimize
 const dummyPlaceholder = document.createElement('div')
@@ -228,19 +241,19 @@ function hitTest1DMode(data: BoxData[], focused: number, windowSizeX: number, po
 function render(now: number): boolean {
   // === step 0: process events
   // keydown
-  const inputCode = events.keydown == null ? null : events.keydown.code
+  const inputCode = state.events.keydown == null ? null : state.events.keydown.code
 
   // click
   let clickedTarget: EventTarget | null = null
-  if (events.click != null) {
+  if (state.events.click != null) {
     // needed to update coords even when we already track mousemove. E.g. in Chrome, right click context menu, move elsewhere, then click to dismiss. BAM, mousemove triggers with stale/wrong (??) coordinates... Click again without moving, and now you're clicking on the wrong thing
-    clickedTarget = events.click.target
-    pointer = {x: events.click.clientX, y: events.click.clientY}
+    clickedTarget = state.events.click.target
+    state.pointer = {x: state.events.click.clientX, y: state.events.click.clientY}
   }
   // mousemove
-  if (events.mousemove != null) {
+  if (state.events.mousemove != null) {
     // we only use clientX/Y, not pageX/Y, because we want to ignore scrolling. See comment around isSafari above; we either scroll body or window depending on the browser, so pageX/Y might be meaningless (if Safari)
-    pointer = {x: events.mousemove.clientX, y: events.mousemove.clientY}
+    state.pointer = {x: state.events.mousemove.clientX, y: state.events.mousemove.clientY}
     // btw, pointer can exceed document bounds, e.g. dragging reports back out-of-bound, legal negative values
   }
 
@@ -253,9 +266,9 @@ function render(now: number): boolean {
   const currentScrollX = isSafari ? document.body.scrollLeft : window.scrollX
   const hashImgId = window.location.hash.slice(1)
 
-  let focused: number | null = null; for (let i = 0; i < data.length; i++) if (data[i]!.id === hashImgId) focused = i
+  let focused: number | null = null; for (let i = 0; i < state.data.length; i++) if (state.data[i]!.id === hashImgId) focused = i
   // don't forget top & bottom safari UI chrome sizes when vertically occluding, since they're transluscent so we can't over-occlude by ignoring them
-  const pointerXLocal = pointer.x +/*toLocal*/currentScrollX, pointerYLocal = pointer.y +/*toLocal*/currentScrollY
+  const pointerXLocal = state.pointer.x +/*toLocal*/currentScrollX, pointerYLocal = state.pointer.y +/*toLocal*/currentScrollY
 
   // === step 2: handle inputs-related state change
   // keys
@@ -263,7 +276,7 @@ function render(now: number): boolean {
     inputCode === 'Escape' ? null
     : (inputCode === 'ArrowLeft' || inputCode === 'ArrowRight') && focused == null ? 0
     : inputCode === 'ArrowLeft' ? Math.max(0, focused! - 1)
-    : inputCode === 'ArrowRight' ? Math.min(data.length - 1, focused! + 1)
+    : inputCode === 'ArrowRight' ? Math.min(state.data.length - 1, focused! + 1)
     : focused
   // pointer
   if (clickedTarget != null) { // clicked
@@ -275,9 +288,9 @@ function render(now: number): boolean {
       selection.removeAllRanges()
       selection.addRange(range)
     } else if (focused == null) { // in 2D grid mode. Find the box the pointer's on
-      newFocused = hitTest2DMode(data, pointerXLocal, pointerYLocal) ?? newFocused
+      newFocused = hitTest2DMode(state.data, pointerXLocal, pointerYLocal) ?? newFocused
     } else { // 1D mode
-      newFocused = hitTest1DMode(data, focused, newWindowSizeX, pointerXLocal)
+      newFocused = hitTest1DMode(state.data, focused, newWindowSizeX, pointerXLocal)
     }
   }
 
@@ -286,8 +299,8 @@ function render(now: number): boolean {
   const boxes2DSizeX: number[] = [], boxes2DSizeY: number[] = [], rowsTop: number[] = [windowPaddingTop] // length: number of rows + 1
   { // first pass over data to set final 2D dimensions and row height (for vertical centering in 2D & total scrollbar height)
     let rowMaxSizeY = 0
-    for (let i = 0; i < data.length; i++) {
-      let d = data[i]!
+    for (let i = 0; i < state.data.length; i++) {
+      let d = state.data[i]!
       const imgMaxSizeY =
         d.ar === 1 ? boxMaxSizeX * 0.85 // square aspect ratio area too big. Shrink it
         : d.ar < 1 ? boxMaxSizeX * 1.05 // vertical images look a bit small. Grow it
@@ -297,14 +310,14 @@ function render(now: number): boolean {
       boxes2DSizeX.push(sizeX)
       boxes2DSizeY.push(sizeY)
       rowMaxSizeY = Math.max(rowMaxSizeY, sizeY)
-      if (i % cols === cols - 1 || i === data.length - 1) { // last box of the row or last box ever
+      if (i % cols === cols - 1 || i === state.data.length - 1) { // last box of the row or last box ever
         rowsTop.push(rowsTop.at(-1)! + rowMaxSizeY + boxesGapY)
         rowMaxSizeY = 0
       }
     }
   }
   let cursor = 'auto'
-  let newAnchor = anchor
+  let newAnchor = state.anchor
   let adjustedScrollTop = currentScrollY
   const hoverMagnetFactor = 40
   if (newFocused == null) { // 2D mode
@@ -316,8 +329,8 @@ function render(now: number): boolean {
       }
     }
 
-    for (let i = 0; i < data.length; i++) { // calculate boxes positions
-      let d = data[i]!
+    for (let i = 0; i < state.data.length; i++) { // calculate boxes positions
+      let d = state.data[i]!
       const sizeX = boxes2DSizeX[i]!, sizeY = boxes2DSizeY[i]!
       const currentRow = Math.floor(i / cols)
       const rowMaxSizeY = rowsTop[currentRow + 1]! - boxesGapY - rowsTop[currentRow]! // this is restoring the rowMaxSizeY info above, kinda weird
@@ -329,21 +342,21 @@ function render(now: number): boolean {
       d.fxFactor.dest = 1
     }
 
-    const hit = hitTest2DMode(data, pointerXLocal, pointerYLocal)
+    const hit = hitTest2DMode(state.data, pointerXLocal, pointerYLocal)
     if (hit == null) cursor = 'auto'
     else { // hovering over a box. Adjust position
       cursor = 'zoom-in'
-      let {x, y, sizeX, sizeY, scale} = data[hit]!
+      let {x, y, sizeX, sizeY, scale} = state.data[hit]!
       x.dest += (pointerXLocal - (x.dest + sizeX.dest / 2)) / hoverMagnetFactor
       y.dest += (pointerYLocal - (y.dest + sizeY.dest / 2)) / hoverMagnetFactor
       scale.dest = 1.02
     }
     // if layout shifted, keep the boxes near the same place to prevent annoying layout jumps while viewing
-    const anchorY = data[anchor]!.y.dest - gapTopPeek
-    if (newWindowSizeX !== windowSizeX) adjustedScrollTop = Math.max(0, anchorY) // resized; maintain position!
-    if (adjustedScrollTop !== scrollY && Math.abs(anchorY -/*toLocal*/adjustedScrollTop) > windowSizeY / 10) { // find new anchor if the current one moved too much
-      for (newAnchor = 0; newAnchor < data.length; newAnchor += cols) { // new anchor is picked from leftmost column. Btw old anchor might not be from leftmost col due to resize layout shifts
-        let d = data[newAnchor]!
+    const anchorY = state.data[state.anchor]!.y.dest - gapTopPeek
+    if (newWindowSizeX !== state.windowSizeX) adjustedScrollTop = Math.max(0, anchorY) // resized; maintain position!
+    if (adjustedScrollTop !== state.scrollY && Math.abs(anchorY -/*toLocal*/adjustedScrollTop) > windowSizeY / 10) { // find new anchor if the current one moved too much
+      for (newAnchor = 0; newAnchor < state.data.length; newAnchor += cols) { // new anchor is picked from leftmost column. Btw old anchor might not be from leftmost col due to resize layout shifts
+        let d = state.data[newAnchor]!
         // find 1st box whose bottom exceeds 20% of window height
         if (d.y.dest + d.sizeY.dest -/*toLocal*/adjustedScrollTop > windowSizeY / 5) break
       }
@@ -354,17 +367,17 @@ function render(now: number): boolean {
 
     let currentLeft = hitArea1DSizeX + boxes1DGapX // start from the right edge of the left box and...
     for (let i = newFocused - 1; i >= 0; i--) { // ...iterate til we get the left edge of the very first box
-      let d = data[i]!
+      let d = state.data[i]!
       const imgSizeX = Math.min(d.naturalSizeX, box1DMaxSizeX, img1DSizeY * d.ar) * 0.7
       currentLeft -= imgSizeX + boxes1DGapX
     }
 
     const edgeRubberBandVelocityX = // feedback when you hit first/last image and keep pressing left/right key
       inputCode === 'ArrowLeft' && focused === 0 ? 2 * 1000 // 2 pixels per second
-      : inputCode === 'ArrowRight' && focused === data.length - 1 ? -2 * 1000
+      : inputCode === 'ArrowRight' && focused === state.data.length - 1 ? -2 * 1000
       : 0
-    for (let i = 0; i < data.length; i++) { // calculate boxes positions
-      let d = data[i]!
+    for (let i = 0; i < state.data.length; i++) { // calculate boxes positions
+      let d = state.data[i]!
       const imgSizeX = Math.min(d.naturalSizeX, box1DMaxSizeX, img1DSizeY * d.ar) * (i === newFocused ? 1 : 0.7)
       const boxSizeY = imgSizeX / d.ar + prompt1DSizeY
       d.sizeX.dest = imgSizeX
@@ -378,11 +391,11 @@ function render(now: number): boolean {
       currentLeft = i === newFocused ? newWindowSizeX - hitArea1DSizeX : currentLeft + imgSizeX + boxes1DGapX
     }
 
-    const hit = hitTest1DMode(data, newFocused, newWindowSizeX, pointerXLocal)
+    const hit = hitTest1DMode(state.data, newFocused, newWindowSizeX, pointerXLocal)
     if (hit == null) cursor = 'zoom-out'
     else { // hovering on left or right image
       cursor = 'zoom-in'
-      let {x, y, sizeX, sizeY, scale, fxFactor} = data[hit]!
+      let {x, y, sizeX, sizeY, scale, fxFactor} = state.data[hit]!
       x.dest += (pointerXLocal - (x.dest + sizeX.dest / 2)) / hoverMagnetFactor
       y.dest += (pointerYLocal - (y.dest + sizeY.dest / 2)) / hoverMagnetFactor
       scale.dest = 1.02
@@ -390,10 +403,10 @@ function render(now: number): boolean {
     }
   }
   // ensure that no matter how the scrolling is abruptly adjusted, the boxes on the screen don't suddenly jump too. When going 1D->2D mode where the dismissed image might be far from the initial one, or when resizing causes layout shifts, the boxes now stay unaffected!
-  for (let {y} of data) y.pos += adjustedScrollTop - currentScrollY
+  for (let {y} of state.data) y.pos += adjustedScrollTop - currentScrollY
 
   // === step 4: run animation
-  let newAnimatedUntilTime = animatedUntilTime ?? now
+  let newAnimatedUntilTime = state.animatedUntilTime ?? now
   const steps = Math.floor((now - newAnimatedUntilTime) / msPerAnimationStep) // run x spring steps. Decouple physics simulation from framerate!
   newAnimatedUntilTime += steps * msPerAnimationStep
   const stillAnimating = animationDisabled ? false : stepSprings(steps)
@@ -401,8 +414,8 @@ function render(now: number): boolean {
 
   // === step 5: render. Batch DOM writes
   const browserUIMaxSizeTop = 100, browserUIMaxSizeBottom = 150 // browsers UI like Safari are transluscent. Random conservative numbers
-  for (let i = 0; i < data.length; i++) {
-    let d = data[i]!
+  for (let i = 0; i < state.data.length; i++) {
+    let d = state.data[i]!
     const {node, img, promptNode} = domCache.boxes[i]!
     if ( // occlusion culling, aka only draw what's visible on screen (aka "virtualization")
       d.y.pos -/*toGlobal*/adjustedScrollTop <= windowSizeY + browserUIMaxSizeBottom &&
@@ -420,7 +433,7 @@ function render(now: number): boolean {
       promptNode.style.top = `${d.sizeX.pos / d.ar}px` // right below img's sizeY
 
       if (i === newFocused) {
-        node.style.zIndex = `${data.length + 1}` // guaranteed above everything
+        node.style.zIndex = `${state.data.length + 1}` // guaranteed above everything
         promptNode.style.overflowY = 'auto'
         promptNode.style.height = `${prompt1DSizeY - promptPaddingBottom}px`
         promptNode.style.setProperty('line-clamp', '999')
@@ -451,15 +464,15 @@ function render(now: number): boolean {
     (isSafari ? document.body : window).scrollTo({top: adjustedScrollTop}) // will trigger scrolling, thus next frame's render
   }
   if (newFocused !== focused) {
-    window.history.pushState(null, '', `${window.location.pathname}${window.location.search}${newFocused == null ? '' : '#' + data[newFocused]!.id}`)
+    window.history.pushState(null, '', `${window.location.pathname}${window.location.search}${newFocused == null ? '' : '#' + state.data[newFocused]!.id}`)
   }
-  events.keydown = null
-  events.click = null
-  events.mousemove = null
-  animatedUntilTime = stillAnimating ? newAnimatedUntilTime : null
-  anchor = newAnchor
-  windowSizeX = newWindowSizeX
-  scrollY = adjustedScrollTop
+  state.events.keydown = null
+  state.events.click = null
+  state.events.mousemove = null
+  state.animatedUntilTime = stillAnimating ? newAnimatedUntilTime : null
+  state.anchor = newAnchor
+  state.windowSizeX = newWindowSizeX
+  state.scrollY = adjustedScrollTop
 
   return stillAnimating
 }
