@@ -4,6 +4,7 @@
 
 - Allow leading `console.assert` calls to compare numeric inputs with `===`, `<`, `<=`, `>`, or `>=`.
 - Preserve direct numeric comparisons through branches, same-file helper calls, and matching calculations, e.g. proving `left + offset <= right + offset` from `left <= right`.
+- Analyze accessed fields on object types declared by TypeScript libraries.
 
 ## 0.0.4 - 2026-07-31
 

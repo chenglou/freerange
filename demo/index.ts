@@ -239,12 +239,7 @@ function hitTest1DMode(data: BoxData[], focused: number, windowSizeX: number, po
     : null
 }
 
-type PointerEventSample = {
-  clientX: number
-  clientY: number
-  timeStamp: number
-}
-function latestPointer(previous: Pointer, click: PointerEventSample | null, mousemove: PointerEventSample | null): Pointer {
+function latestPointer(previous: Pointer, click: MouseEvent | null, mousemove: MouseEvent | null): Pointer {
   // Chrome can deliver mousemoves buffered by a native context menu out of timestamp order, including across renders
   const event = click == null ? mousemove
     : mousemove == null || click.timeStamp > mousemove.timeStamp ? click // click is newer

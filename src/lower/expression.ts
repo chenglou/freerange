@@ -20,6 +20,7 @@ import {
 } from './context.ts'
 import type {StaticAnnotation} from './static-intrinsics.ts'
 import {isUndefinedGlobal, numericLiteralValue, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
+import {isExternalRecordType} from './external-records.ts'
 
 // The only entry point through which assignments lower. Statement positions (expression
 // statements, for-loop incrementors) call this; everything else goes through
@@ -1194,7 +1195,7 @@ function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number
     // required non-callable property, or primitives inhabit it — every non-null value
     // satisfies `{}`, and a number satisfies `{toString(): string}` — letting a number
     // and a record meet at a join.
-    if (checker.getIndexInfosOfType(type).length > 0) return null
+    if (checker.getIndexInfosOfType(type).length > 0 && !isExternalRecordType(type, checker)) return null
     if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) {
       // A pure function type — call signatures and nothing else — is carried opaquely,
       // like a callback stored in a record already is: calls to it reject at the call

@@ -6,6 +6,7 @@ import {
   moduleInitializerName,
   type DeclaredKind,
   type DeclaredNumberInterval,
+  type DeclaredProperty,
   type DeclaredVariant,
   type FunctionIR,
   type InitializerSkip,
@@ -18,6 +19,7 @@ import {numericLiteralValue} from './literals.ts'
 import {declaredOnlyInDeclarationFiles} from './platform.ts'
 import {addInstruction, addSite, createFunctionContext, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type TopLevelFunction} from './context.ts'
 import {lowerExpression, nonMissingUnionMembers, tagLiteralValues, taggedUnionProperty, valueKind} from './expression.ts'
+import {isExternalRecordType, type AccessedProperties} from './external-records.ts'
 import {directFunctionExpression} from './function-unit.ts'
 import {numberConstituent} from './numeric-intersection.ts'
 import {lowerStatement} from './statements.ts'
@@ -25,13 +27,32 @@ import {lowerStatement} from './statements.ts'
 export type ModuleScan = {
   bindings: ModuleBindingIR[]
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>
+  declaredKinds: DeclaredKindContext
+}
+
+export type DeclaredKindContext = {
+  checker: ts.TypeChecker
+  accessedProperties: AccessedProperties
+  cache: WeakMap<ts.Type, Array<DeclaredKind | null | undefined>>
+  ancestorCuts: number
+}
+
+export function createDeclaredKindContext(
+  checker: ts.TypeChecker,
+  accessedProperties: AccessedProperties,
+): DeclaredKindContext {
+  return {checker, accessedProperties, cache: new WeakMap(), ancestorCuts: 0}
 }
 
 // Classifies every top-level binding by one rule: a function may trust the binding's value
 // only when every possible write to it is accounted for. The scan reads the entire file's
 // text — bodies of functions the analyzer rejects included — so a write hiding inside
 // unsupported code still demotes the binding.
-export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeChecker): ModuleScan {
+export function scanModuleBindings(
+  sourceFile: ts.SourceFile,
+  declaredKinds: DeclaredKindContext,
+): ModuleScan {
+  const {checker} = declaredKinds
   const bindings: ModuleBindingIR[] = []
   const bindingsBySymbol = new Map<ts.Symbol, ModuleBindingID>()
   const register = (name: ts.Identifier, category: ModuleBindingCategory): void => {
@@ -55,7 +76,7 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
             isConst && declarator.initializer != null
               && directFunctionExpression(declarator.initializer) != null
               ? {kind: 'function'}
-              : declaredCategory(declarator.name, checker),
+              : declaredCategory(declarator.name, declaredKinds),
           )
           continue
         }
@@ -63,7 +84,7 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
         // module binding, categorized by its element type like any declarator.
         if (ts.isObjectBindingPattern(declarator.name)) {
           for (const element of declarator.name.elements) {
-            if (ts.isIdentifier(element.name)) register(element.name, declaredCategory(element.name, checker))
+            if (ts.isIdentifier(element.name)) register(element.name, declaredCategory(element.name, declaredKinds))
           }
         }
       }
@@ -92,7 +113,7 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
     ts.forEachChild(node, child => { visit(child, enteringFunction) })
   }
   visit(sourceFile, false)
-  return {bindings, bindingsBySymbol}
+  return {bindings, bindingsBySymbol, declaredKinds}
 }
 
 // The category of one imported name. A named or default import whose target resolves to a
@@ -436,8 +457,8 @@ function scanSkippedModuleEffects(
   return {directWrites, invokesUnknownCode}
 }
 
-function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleBindingCategory {
-  const declared = declaredKind(checker.getTypeAtLocation(name), checker, [])
+function declaredCategory(name: ts.Identifier, context: DeclaredKindContext): ModuleBindingCategory {
+  const declared = declaredKind(context.checker.getTypeAtLocation(name), context, [])
   return declared == null ? {kind: 'opaque'} : {kind: 'value', declaredKind: declared}
 }
 
@@ -446,16 +467,21 @@ function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleB
 // set is rejected: `{}` and index-signature-only types have no named values to track.
 function declaredRecordProperties(
   type: ts.Type,
-  checker: ts.TypeChecker,
+  context: DeclaredKindContext,
   seen: ts.Type[],
-): Array<{name: string; declared: DeclaredKind}> | null {
-  if (cutByAncestor(seen, type)) return null
-  const properties: Array<{name: string; declared: DeclaredKind}> = []
+): DeclaredProperty[] | null {
+  const {checker, accessedProperties} = context
+  if (cutByAncestor(seen, type, context)) return null
+  const externalRecord = isExternalRecordType(type, checker)
+  const properties: DeclaredProperty[] = []
   for (const property of checker.getPropertiesOfType(type)) {
+    const declaredExternally = declaredOnlyInDeclarationFiles(property)
+    const accessed = accessedProperties.get(type)?.has(property) === true
+    if (!accessed && (externalRecord || declaredExternally)) continue
     const optional = (property.flags & ts.SymbolFlags.Optional) !== 0
     const walked = declaredKind(
       checker.getTypeOfSymbol(property),
-      checker,
+      context,
       [...seen, type],
     )
     // A property the walk cannot classify — a recursive route, a mixed-literal union, a
@@ -463,12 +489,11 @@ function declaredRecordProperties(
     // is carried without claims, and a read that needs more than carrying is gated at the
     // read position (numeric use rejects at lowering; a modeled-kind read of the
     // unclassified value stops at the kind-mismatch backstop). The record's NUMERIC
-    // contract survives its weird neighbors. Properties the project did not write —
-    // inherited from a lib interface the project type extends — are boundary leaves for
-    // the same reason whole lib types are: without this, `interface SizedElement extends
-    // HTMLElement` floods the report with assumes lines about clientWidth and friends.
+    // contract survives its weird neighbors. A declaration-file property is analyzed
+    // only when its name appears in a property read in this source file; inherited DOM
+    // fields therefore follow the same bounded rule as fields on a DOM parameter.
     const opaqueLeaf: DeclaredKind = {kind: 'opaque'}
-    const propertyDeclared = declaredOnlyInDeclarationFiles(property) ? opaqueLeaf : (walked ?? opaqueLeaf)
+    const propertyDeclared = walked ?? opaqueLeaf
     // `session?: boolean` reads as boolean | undefined, which is exactly what the missing-
     // value machinery models. The analysis deliberately represents absence and explicit
     // undefined alike: ordinary reads cannot distinguish them, and supported `in` checks
@@ -477,9 +502,12 @@ function declaredRecordProperties(
     properties.push({
       name: property.name,
       declared: optional ? wrapOptional(propertyDeclared) : propertyDeclared,
+      ...(declaredExternally ? {external: true as const} : {}),
     })
   }
-  if (properties.length === 0) return null
+  // An external record can have no selected fields; its caller decides whether to carry
+  // that value opaquely or use the selected record shape.
+  if (properties.length === 0 && !externalRecord) return null
   return properties
 }
 
@@ -508,20 +536,21 @@ function wrapOptional(declared: DeclaredKind): DeclaredKind {
 function declaredTaggedVariants(
   member: ts.Type,
   tagProperty: string,
-  checker: ts.TypeChecker,
+  context: DeclaredKindContext,
   seen: ts.Type[],
 ): DeclaredVariant[] | null {
+  const {checker} = context
   const tag = checker.getPropertyOfType(member, tagProperty)
   if (tag == null) return null
   const literals = tagLiteralValues(checker.getTypeOfSymbol(tag))
   if (literals == null) return null
-  const properties = declaredRecordProperties(member, checker, seen)
+  const properties = declaredRecordProperties(member, context, seen)
   if (properties == null) return null
   return literals.map(tagValue => ({tagValue, properties}))
 }
 
-// The classification walk is pure over the type, and the checker interns types, so one
-// walk per (type, remaining depth) suffices. The type graph is a DAG with heavy sharing,
+// Within one source file, the classification walk is pure over the type, and the checker
+// interns types, so one walk per (type, remaining depth) suffices. The type graph has heavy sharing,
 // and the walk previously ran once per PATH — exponential in the depth cap; a profile
 // caught 35 million property resolutions over ~216 distinct types in one file, all of
 // lowering's residual cost. Cached nulls matter as much as hits: rejection walks repeat
@@ -533,35 +562,32 @@ function declaredTaggedVariants(
 // such a cut can make the result depend on which path reached it. A top-level walk starts
 // with no ancestors, so its answer is context-free even when the walk later encounters a
 // cycle and may always be stored. Depth-cap cuts are deterministic per depth too.
-const declaredKindByDepth = new WeakMap<ts.Type, Array<DeclaredKind | null>>()
-// Bumped at every in-progress-ancestor cut; a walk whose subtree bumped it is not stored.
-let ancestorCuts = 0
-
-function cutByAncestor(seen: ts.Type[], type: ts.Type): boolean {
+function cutByAncestor(seen: ts.Type[], type: ts.Type, context: DeclaredKindContext): boolean {
   if (seen.length >= 8) return true
   if (seen.includes(type)) {
-    ancestorCuts += 1
+    context.ancestorCuts += 1
     return true
   }
   return false
 }
 
-export function declaredKind(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
+export function declaredKind(type: ts.Type, context: DeclaredKindContext, seen: ts.Type[]): DeclaredKind | null {
   const depth = seen.length
-  let byDepth = declaredKindByDepth.get(type)
+  let byDepth = context.cache.get(type)
   if (byDepth == null) {
     byDepth = []
-    declaredKindByDepth.set(type, byDepth)
+    context.cache.set(type, byDepth)
   }
   const cached = byDepth[depth]
   if (cached !== undefined) return cached
-  const cutsBefore = ancestorCuts
-  const walked = declaredKindUncached(type, checker, seen)
-  if (depth === 0 || ancestorCuts === cutsBefore) byDepth[depth] = walked
+  const cutsBefore = context.ancestorCuts
+  const walked = declaredKindUncached(type, context, seen)
+  if (depth === 0 || context.ancestorCuts === cutsBefore) byDepth[depth] = walked
   return walked
 }
 
-function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
+function declaredKindUncached(type: ts.Type, context: DeclaredKindContext, seen: ts.Type[]): DeclaredKind | null {
+  const {checker} = context
   switch (valueKind(type, checker)) {
     case 'number': {
       const interval = numericLiteralInterval(type)
@@ -577,19 +603,19 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
       // A nullable wrapper can hide the recursive edge from the exact-type ancestor
       // check. Cut before expanding the same record or tagged union again.
       if (rest.some(member => seen.includes(member))) {
-        ancestorCuts += 1
+        context.ancestorCuts += 1
         return null
       }
       let inner: DeclaredKind | null
       if (rest.length === 1) {
-        inner = declaredKind(rest[0]!, checker, seen)
+        inner = declaredKind(rest[0]!, context, seen)
       } else {
         // `'compact' | 'wide' | undefined`, `4 | 8 | undefined`, `boolean | null` (the
         // checker splits boolean into true | false): several non-missing members are
         // fine when they collapse to one scalar kind, the same rule valueKind applies
         // to the bare union. Structural members keep the exactly-one rule — two record
         // shapes under a nullish wrapper are a tagged union, not a nullable record.
-        const members = rest.map(member => declaredKind(member, checker, seen))
+        const members = rest.map(member => declaredKind(member, context, seen))
         inner = joinScalarDeclaredKinds(members)
         // `owner: null | LightboxOwnerRoute` where the inner is itself a union of tagged
         // shapes: the non-missing members classify as one tagged union, and maybeNullish
@@ -599,7 +625,7 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
           const unionVariants: DeclaredVariant[] = []
           let allClassified = true
           for (const member of rest) {
-            const variants = declaredTaggedVariants(member, restTagProperty, checker, seen)
+            const variants = declaredTaggedVariants(member, restTagProperty, context, seen)
             if (variants == null) {
               allClassified = false
               break
@@ -624,11 +650,11 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
     case 'array': {
       const element = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
       if (element == null) return null
-      const elementKind = declaredKind(element, checker, [...seen, type])
+      const elementKind = declaredKind(element, context, [...seen, type])
       return elementKind == null ? null : {kind: 'array', element: elementKind}
     }
     case 'tuple': {
-      if (cutByAncestor(seen, type)) return null
+      if (cutByAncestor(seen, type, context)) return null
       // The tuple target's elementFlags say what each written position is: required,
       // optional ([number, number?]), or a rest element ([number, ...number[]]). The type
       // ARGUMENTS alone cannot: an optional slot and a rest slot each contribute one
@@ -643,7 +669,7 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
       if (tupleHasOptionalOrRestPositions(type, checker)) return null
       const elements: DeclaredKind[] = []
       for (const elementType of checker.getTypeArguments(type as ts.TypeReference)) {
-        const element = declaredKind(elementType, checker, [...seen, type])
+        const element = declaredKind(elementType, context, [...seen, type])
         if (element == null) return null
         elements.push(element)
       }
@@ -651,18 +677,18 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
       return {kind: 'tuple', elements}
     }
     case 'object': {
-      // A record type the PROJECT did not write — HTMLDivElement, a library's config
-      // interface, anything declared only in .d.ts files — is carried as an opaque leaf,
-      // not contracted: walking a DOM interface would flood the report with hundreds of
-      // assumes lines about properties nobody reads, and the project cannot uphold
-      // contracts on shapes it does not own. (Math and friends never reach here — value
-      // reads of them are gated elsewhere.)
-      if (declaredOnlyInDeclarationFiles(type.getSymbol() ?? type.aliasSymbol)) return {kind: 'opaque'}
+      // Mapped declaration-file utility types keep the existing opaque treatment. Plain
+      // declaration-file records include only field names accessed in this source file.
+      if (declaredOnlyInDeclarationFiles(type.getSymbol() ?? type.aliasSymbol)
+        && !isExternalRecordType(type, checker)) return {kind: 'opaque'}
       // A recursive property becomes opaque. The ancestor check catches direct recursion;
       // the depth cap catches recursive generics, whose every level is a fresh
       // instantiation that exact type identity cannot recognize.
-      const properties = declaredRecordProperties(type, checker, seen)
-      return properties == null ? null : {kind: 'record', properties}
+      const properties = declaredRecordProperties(type, context, seen)
+      if (properties == null) return null
+      return properties.length === 0 && isExternalRecordType(type, checker)
+        ? {kind: 'opaque'}
+        : {kind: 'record', properties}
     }
     case 'taggedUnion': {
       if (!type.isUnion()) return null
@@ -670,7 +696,7 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
       if (tagProperty == null) return null
       const variants: DeclaredVariant[] = []
       for (const member of type.types) {
-        const memberVariants = declaredTaggedVariants(member, tagProperty, checker, seen)
+        const memberVariants = declaredTaggedVariants(member, tagProperty, context, seen)
         if (memberVariants == null) return null
         variants.push(...memberVariants)
       }

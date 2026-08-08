@@ -343,7 +343,7 @@ This is not a general replacement for `map` or `filter`: object and array writes
 
 ### Objects, Arrays, and Changing State
 
-Freerange reads plain objects, fixed tuples, dense arrays, and tagged unions declared in the project through at most eight nested levels. Give each union case a tag, use an exhaustive non-fallthrough `switch`, and keep deeply nested or unclassifiable data outside important numeric helpers.
+Freerange reads plain objects, fixed tuples, dense arrays, and tagged unions through at most eight nested levels. For types declared by a library, such as `MouseEvent`, Freerange includes only fields used by the file. Numeric library fields appear as assumptions rather than requirements on the project's callers. Give each union case a tag, use an exhaustive non-fallthrough `switch`, and keep deeply nested or unclassifiable data outside important numeric helpers.
 
 Freerange assumes that property reads are stable and perform no work during one analyzed synchronous call. A getter or Proxy that changes its answer or performs work is outside the scope.
 

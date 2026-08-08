@@ -187,7 +187,8 @@ export type FunctionLowering = FunctionIR | UnsupportedFunctionIR
 // a record with a fixed property shape (shapes nest — module state is a tree of records).
 // The promise is an assumption, not a guarantee: TypeScript accepts an `any`-typed value in
 // any write position, so the report prints a condition for every read that rests on one.
-export type DeclaredVariant = {tagValue: string | boolean; properties: Array<{name: string; declared: DeclaredKind}>}
+export type DeclaredProperty = {name: string; declared: DeclaredKind; external?: true}
+export type DeclaredVariant = {tagValue: string | boolean; properties: DeclaredProperty[]}
 
 export type DeclaredNumberInterval = {
   lower: number
@@ -198,7 +199,7 @@ export type DeclaredNumberInterval = {
 export type DeclaredKind =
   | {kind: 'number'; interval: DeclaredNumberInterval | null}
   | {kind: 'boolean'}
-  | {kind: 'record'; properties: Array<{name: string; declared: DeclaredKind}>}
+  | {kind: 'record'; properties: DeclaredProperty[]}
   | {kind: 'nullish'; inner: DeclaredKind; sentinels: 'null' | 'undefined' | 'both'}
   // A tuple type: fixed length, one declared kind per position — the module config table
   // `const gapSizes = [4, 8, 24] as const` publishes like a record.

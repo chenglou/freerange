@@ -16,6 +16,7 @@ export function finiteInputPaths(declared: DeclaredKind): string[][] {
     case 'record': {
       const paths: string[][] = []
       for (const property of declared.properties) {
+        if (property.external === true) continue
         for (const path of finiteInputPaths(property.declared)) {
           paths.push([property.name, ...path])
         }

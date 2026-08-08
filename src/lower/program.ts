@@ -5,9 +5,10 @@ import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
 import {addInstructionAtSite, addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {lowerExpression, valueKind} from './expression.ts'
+import {scanAccessedProperties} from './external-records.ts'
 import {callableSignature, topLevelFunctionUnits} from './function-unit.ts'
 import {parameterDefaultFits, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
-import {declaredKind, lowerModuleInitializer, scanModuleBindings, tupleHasOptionalOrRestPositions, type ModuleScan} from './module.ts'
+import {createDeclaredKindContext, declaredKind, lowerModuleInitializer, scanModuleBindings, tupleHasOptionalOrRestPositions, type ModuleScan} from './module.ts'
 import {scanStaticAnnotations, type StaticAnnotation} from './static-intrinsics.ts'
 import {lowerStatements} from './statements.ts'
 
@@ -61,7 +62,8 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
     return rejectFile(nodeSpan(sourceFile, evalNode), {kind: 'evalInFile'})
   }
   const functionsBySymbol = new Map<ts.Symbol, TopLevelFunction>()
-  const scan = scanModuleBindings(sourceFile, checker)
+  const declaredKinds = createDeclaredKindContext(checker, scanAccessedProperties(sourceFile, checker))
+  const scan = scanModuleBindings(sourceFile, declaredKinds)
   const topLevelFunctions: TopLevelFunction[] = []
   for (let index = 0; index < declarations.length; index++) {
     const unit = declarations[index]!
@@ -182,7 +184,7 @@ function lowerFunction(
     // names, so a condition says `width` rather than `{width, height}.width`. Defaults
     // and rest inside the pattern stay out, like the body form.
     if (ts.isObjectBindingPattern(parameter.name)) {
-      const type = lowerParameterType(parameter, parameterType, checker)
+      const type = lowerParameterType(parameter, parameterType, scan)
       // The pattern text becomes the parameter's report name; a pattern the author wrapped
       // across source lines would otherwise break the one-fact-per-line report format
       // (`assumes: {` and orphan fragments — a corpus census caught eight of these).
@@ -220,7 +222,7 @@ function lowerFunction(
     if (parameter.dotDotDotToken != null) {
       throw unsupported(parameter, {kind: 'parameterType', typeText: `...${checker.typeToString(checker.getTypeAtLocation(parameter))}`, optionalOrRestTuple: false})
     }
-    let type = lowerParameterType(parameter, parameterType, checker)
+    let type = lowerParameterType(parameter, parameterType, scan)
     // A default value applies whenever a caller omits the argument. Literal defaults can
     // be represented exactly and checked against the declared assumptions: `zoom: number
     // = 5` supplies a finite number. Anything else — `= Infinity`, `= readConfig()` —
@@ -304,7 +306,8 @@ function declaredRecordReturnNames(returnType: ts.Type, checker: ts.TypeChecker)
   if (kind === 'nullable' && returnType.isUnion()) {
     const missing = ts.TypeFlags.Null | ts.TypeFlags.Undefined
     const members = returnType.types.filter(member => (member.flags & missing) === 0)
-    if (members.length > 0 && members.every(member => valueKind(member, checker) === 'object')) {
+    if (members.length > 0 && members.every(member =>
+      valueKind(member, checker) === 'object')) {
       const names = new Set<string>()
       for (const member of members) {
         for (const property of checker.getPropertiesOfType(member)) names.add(property.name)
@@ -318,17 +321,17 @@ function declaredRecordReturnNames(returnType: ts.Type, checker: ts.TypeChecker)
 function lowerParameterType(
   parameter: ts.ParameterDeclaration,
   type: ts.Type,
-  checker: ts.TypeChecker,
+  scan: ModuleScan,
 ): DeclaredKind {
   // The same recursive classification module bindings use: numbers, booleans, records
   // (opaque leaves included — an id: string property is carried, not rejected), nullable
   // wrappers, arrays, tuples, and bare opaque (a plain string parameter).
-  const declared = declaredKind(type, checker, [])
+  const declared = declaredKind(type, scan.declaredKinds, [])
   if (declared == null) {
     throw unsupported(parameter, {
       kind: 'parameterType',
-      typeText: checker.typeToString(type),
-      optionalOrRestTuple: tupleHasOptionalOrRestPositions(type, checker),
+      typeText: scan.declaredKinds.checker.typeToString(type),
+      optionalOrRestTuple: tupleHasOptionalOrRestPositions(type, scan.declaredKinds.checker),
     })
   }
   return declared
