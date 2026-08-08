@@ -211,7 +211,7 @@ describe('control flow and contracts', () => {
     const report = analyzeFile(demoFixture)
     const kinds = {analyzed: 0, partial: 0, unsupported: 0}
     for (const fn of report.functions) kinds[fn.kind] += 1
-    expect(kinds).toEqual({analyzed: 9, partial: 1, unsupported: 4})
+    expect(kinds).toEqual({analyzed: 10, partial: 1, unsupported: 4})
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'clamp'))[0])
       .toContain('min <= max')
     // springStep: the physics integration can overflow, and an overflowed pos minus dest

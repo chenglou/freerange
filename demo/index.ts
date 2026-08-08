@@ -111,12 +111,13 @@ type BoxData = {
   scale: Spring // @fit scale.dest: 1..1.02
   fxFactor: Spring
 }
+type Pointer = {x: number; y: number; timeStamp: number}
 type State = {
   animatedUntilTime: number | null
   anchor: number
   windowSizeX: number
   scrollY: number
-  pointer: {x: number; y: number; timeStamp: number}
+  pointer: Pointer
   events: {keydown: KeyboardEvent | null; click: MouseEvent | null; mousemove: MouseEvent | null}
   data: BoxData[]
 }
@@ -238,6 +239,21 @@ function hitTest1DMode(data: BoxData[], focused: number, windowSizeX: number, po
     : null
 }
 
+type PointerEventSample = {
+  clientX: number
+  clientY: number
+  timeStamp: number
+}
+function latestPointer(previous: Pointer, click: PointerEventSample | null, mousemove: PointerEventSample | null): Pointer {
+  // Chrome can deliver mousemoves buffered by a native context menu out of timestamp order, including across renders
+  const event = click == null ? mousemove
+    : mousemove == null || click.timeStamp > mousemove.timeStamp ? click // click is newer
+    : mousemove // mousemove is newer or tied
+  return event != null && event.timeStamp >= previous.timeStamp
+    ? {x: event.clientX, y: event.clientY, timeStamp: event.timeStamp}
+    : previous
+}
+
 function render(now: number): boolean {
   // === step 0: process events
   // keydown
@@ -246,14 +262,7 @@ function render(now: number): boolean {
   // click & mousemove
   const click = state.events.click
   const mousemove = state.events.mousemove
-  // Chrome can deliver mousemoves buffered by a native context menu out of timestamp order, including across renders
-  const newestPointerEvent =
-    click == null ? mousemove
-    : mousemove == null || click.timeStamp > mousemove.timeStamp ? click // click is newer
-    : mousemove // mousemove is newer or tied
-  const pointer = newestPointerEvent != null && newestPointerEvent.timeStamp >= state.pointer.timeStamp
-    ? {x: newestPointerEvent.clientX, y: newestPointerEvent.clientY, timeStamp: newestPointerEvent.timeStamp}
-    : state.pointer
+  const pointer = latestPointer(state.pointer, click, mousemove)
   // we only use clientX/Y, not pageX/Y, because we want to ignore scrolling. See comment around isSafari above; we either scroll body or window depending on the browser, so pageX/Y might be meaningless (if Safari)
   // btw, pointer can exceed document bounds, e.g. dragging reports back out-of-bound, legal negative values
 
@@ -289,9 +298,11 @@ function render(now: number): boolean {
       selection.removeAllRanges()
       selection.addRange(range)
     } else if (focused == null) { // in 2D grid mode. Find the box the pointer's on
-      newFocused = hitTest2DMode(state.data, pointerXLocal, pointerYLocal) ?? newFocused
+      const clickXLocal = click.clientX +/*toLocal*/currentScrollX
+      const clickYLocal = click.clientY +/*toLocal*/currentScrollY
+      newFocused = hitTest2DMode(state.data, clickXLocal, clickYLocal) ?? newFocused
     } else { // 1D mode
-      newFocused = hitTest1DMode(state.data, focused, newWindowSizeX, pointerXLocal)
+      newFocused = hitTest1DMode(state.data, focused, newWindowSizeX, click.clientX)
     }
   }
 
