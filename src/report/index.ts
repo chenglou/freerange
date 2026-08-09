@@ -169,7 +169,7 @@ function requirementLines(
         const parameter = fn.parameters[path.parameter]!
         const parameterInputs = inputsByParameter[path.parameter]!
         const condition = parameter.bindings == null
-          ? `every number field in ${parameter.name} is finite`
+          ? `every number field of ${parameter.name} used in this file is finite`
           : finiteBindingList(parameter, parameterInputs)
         lines.push(`${condition} (input at ${formatSite(program, parameter.site)})`)
         emitted[path.parameter] = true
@@ -486,9 +486,9 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // PreparedLayout parameter with a dozen numeric properties repeats "is finite and not NaN"
 // a dozen times, on every function that takes one, and the repetition drowns the requires
 // and ensures lines that carry actual information. The number default folds into one line
-// per value, e.g. `every property declared as a number in prepared holds a finite non-NaN
-// number` (array elements and tuple slots are index properties, so one word covers every
-// leaf). The quantifier ranges over the DECLARED properties and demands a held value; a
+// per value, e.g. `every number field of prepared used in this file is finite and not
+// NaN` (array elements and tuple slots are index properties, so one word covers every
+// leaf). The quantifier ranges over the selected typed fields and demands a held value; a
 // quantifier over runtime values would be vacuous for exactly the two smuggles that must
 // violate the line — a non-number in a number slot (not a "number value") and an absent
 // property (no value at all), both reachable through `any`: the per-leaf line `box.width is finite and not
@@ -528,24 +528,21 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 // lying inner row through with every printed line holding, and the unconditional
 // 'holds' was violated by a legal null behind a nullable record, so the whole report
 // stopped applying to legitimate callers.
-// Either fold prints only when the read filter keeps EVERY position its sentence covers:
-// the sentence quantifies over the DECLARED properties ("every property declared as a
-// number in prepared"), so printing it while a covered position is unread would claim
-// trust nothing rests on — and re-restrict legal callers at the unread position, the
-// exact over-restriction the read filter removes. When any covered position is unread,
-// the kept positions print per-property and the unread ones stay silent.
+// Either fold prints only when the read filter keeps every selected position its sentence
+// covers. When any covered position is unread on this function's analyzed paths, the kept
+// positions print per-property and the others stay silent.
 function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[], keep: KeepPath): void {
   const numberLeaves = numberLeafCount(declared, [], keep)
   const folds = !hasLiteralNumberInterval(declared)
     && numberLeaves.total >= 3
     && numberLeaves.kept === numberLeaves.total
     && declared.kind !== 'number'
-  if (folds) assumptions.push(`every property declared as a number in ${path} holds a finite non-NaN number`)
+  if (folds) assumptions.push(`every number field of ${path} used in this file is finite and not NaN`)
   if (declared.kind === 'record') {
     const arrayProperties = declared.properties.filter(property => property.declared.kind === 'array')
     const keptArrayProperties = arrayProperties.filter(property => keep([property.name]))
     if (arrayProperties.length >= 3 && keptArrayProperties.length === arrayProperties.length) {
-      assumptions.push(`every property declared as an array in ${path} holds a plain array — its length counts its elements, and every index below the length holds an element`)
+      assumptions.push(`every array field of ${path} used in this file holds a plain array — its length counts its elements, and every index below the length holds an element`)
       for (const property of declared.properties) {
         pushDeclaredAssumptions(`${path}.${property.name}`, [property.name], property.declared, assumptions, keep, {
           skipNumberLeaves: folds,

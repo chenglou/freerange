@@ -704,7 +704,7 @@ describe('arrays and declared values', () => {
       }
     `)
     expect(analyzedFunction(report, 'firstWidth').assumptions).toEqual([
-      'every property declared as an array in prepared holds a plain array — its length counts its elements, and every index below the length holds an element',
+      'every array field of prepared used in this file holds a plain array — its length counts its elements, and every index below the length holds an element',
       'every prepared.widths element is finite and not NaN',
       'every prepared.gaps element is finite and not NaN',
       // Each nullable member names its own declared sentinel and only that one: a legal
@@ -740,7 +740,7 @@ describe('arrays and declared values', () => {
         return layout.widths.length + layout.heights.length + extra
       }
     `)
-    expect(formatReport(report)).not.toContain('every property declared as an array in')
+    expect(formatReport(report)).not.toContain('every array field of')
     const perProperty = [
       'layout.widths is a plain array — its length counts its elements, and every index below the length holds an element',
       'every layout.widths element is finite and not NaN',
@@ -759,7 +759,7 @@ describe('arrays and declared values', () => {
     // Three or more number leaves and three or more direct array properties on one
     // record: both folded sentences print, and each covers only what it names — the
     // number line quantifies the number-declared positions (array element leaves
-    // included, as index properties), the array line the array-declared properties. No
+    // included, as index properties), the array line the selected array fields. No
     // per-leaf or per-array residue line remains, and nothing is double-stated.
     const report = analyzeSource('mixed-fold.ts', `
       type Panel = {
@@ -776,7 +776,7 @@ describe('arrays and declared values', () => {
       }
     `)
     expect(analyzedFunction(report, 'panelWidth').assumptions).toEqual([
-      'every property declared as an array in panel holds a plain array — its length counts its elements, and every index below the length holds an element',
+      'every array field of panel used in this file holds a plain array — its length counts its elements, and every index below the length holds an element',
       'every panel.widths element is finite and not NaN',
       'every panel.gaps element is finite and not NaN',
       'every panel.margins element is finite and not NaN',
@@ -786,15 +786,15 @@ describe('arrays and declared values', () => {
   test('a nullable root never folds: its own plain-array disjuncts print', () => {
     // `grid: number[][][] | null` has kind nullish, and a fold guard keyed on the root's
     // kind alone would let the nullable root fold — yet the folded sentence ('every
-    // property declared as an array IN grid') quantifies over the root's properties,
+    // array field of grid used in this file') quantifies over the root's properties,
     // saying nothing about grid itself, and the fold would suppress the root's own
     // disjunct lines. A review round ran the falsification: a Proxy whose length trap
     // answers 0.5 made a strict-tsc-clean caller get 0.5 back against 'return is a
     // finite integer number from 0 through 4294967295' with every printed line holding.
     // The root's disjunct lines must print whether or not a fold triggers elsewhere in
-    // the entry (frame folds here). A nullable RECORD root with three array properties
-    // stays out of the fold the same way: its per-property lines all carry the null
-    // disjunct, so a legal null caller violates nothing.
+    // the entry (frame folds here). A nullable record root stays out of the fold too;
+    // only properties read in this file are represented, so bandCount prints widths and
+    // says nothing about its unread siblings.
     const report = analyzeSource('nullable-array-root.ts', `
       type Frame = {rows: number[]; columns: string[]; labels: string[]}
       export function rowCount(grid: number[][][] | null, frame: Frame): number {
@@ -812,16 +812,12 @@ describe('arrays and declared values', () => {
       'grid is null or every grid element is a plain array — its length counts its elements, and every index below the length holds an element',
       'grid is null or every grid[each] element is a plain array — its length counts its elements, and every index below the length holds an element',
       'grid is null or every grid[each][each] element is finite and not NaN',
-      'every property declared as an array in frame holds a plain array — its length counts its elements, and every index below the length holds an element',
+      'every array field of frame used in this file holds a plain array — its length counts its elements, and every index below the length holds an element',
       'every frame.rows element is finite and not NaN',
     ])
     expect(analyzedFunction(report, 'bandCount').assumptions).toEqual([
       'bands is null or bands.widths is a plain array — its length counts its elements, and every index below the length holds an element',
       'bands is null or every bands.widths element is finite and not NaN',
-      'bands is null or bands.gaps is a plain array — its length counts its elements, and every index below the length holds an element',
-      'bands is null or every bands.gaps element is finite and not NaN',
-      'bands is null or bands.margins is a plain array — its length counts its elements, and every index below the length holds an element',
-      'bands is null or every bands.margins element is finite and not NaN',
     ])
   })
 
@@ -841,7 +837,7 @@ describe('arrays and declared values', () => {
       }
     `)
     expect(analyzedFunction(report, 'seriesCount').assumptions).toEqual([
-      'every property declared as an array in chart holds a plain array — its length counts its elements, and every index below the length holds an element',
+      'every array field of chart used in this file holds a plain array — its length counts its elements, and every index below the length holds an element',
       'every chart.series element is a plain array — its length counts its elements, and every index below the length holds an element',
       'every chart.series[each] element is finite and not NaN',
     ])
@@ -864,7 +860,7 @@ describe('arrays and declared values', () => {
       }
     `)
     expect(analyzedFunction(report, 'totalBands').assumptions).toEqual([
-      'every property declared as an array in layout holds a plain array — its length counts its elements, and every index below the length holds an element',
+      'every array field of layout used in this file holds a plain array — its length counts its elements, and every index below the length holds an element',
       'every layout.widths element is finite and not NaN',
       'every layout.gaps element is finite and not NaN',
       'layout.config is null or layout.config.grid is a plain array — its length counts its elements, and every index below the length holds an element',
@@ -934,11 +930,12 @@ describe('arrays and declared values', () => {
     // plain-array line — the root is not a record property, so the array fold's sentence
     // never covers it.
     expect(analyzedFunction(report, 'pathTotal').assumptions).toEqual([
-      'every property declared as a number in points holds a finite non-NaN number',
+      'every number field of points used in this file is finite and not NaN',
       'points is a plain array — its length counts its elements, and every index below the length holds an element',
     ])
     expect(analyzedFunction(report, 'zoomedX').assumptions).toEqual([
-      'every property declared as a number in camera holds a finite non-NaN number',
+      'camera.x is finite and not NaN',
+      'camera.zoom is finite and not NaN',
     ])
   })
 
@@ -971,12 +968,9 @@ describe('arrays and declared values', () => {
     ])
   })
 
-  test('escaped values keep their lines: call arguments, returns, and module writes', () => {
-    // The filter drops a line only when the path is provably untouched. A value that
-    // escapes may be read anywhere the walk cannot see — a callee evaluated inline can
-    // read anything under an argument, the ensures lines describe a returned value, and
-    // module state outlives the call — so an escape keeps every line at and below the
-    // escaping path.
+  test('moving an object does not select unread fields', () => {
+    // Calls, returns, and module assignments carry field selections from later reads.
+    // Merely moving the object does not select every field.
     const report = analyzeSource('read-filter-escapes.ts', `
       type Box = {xs: number[]; ys: number[]}
       function ignore(box: Box): number {
@@ -994,23 +988,15 @@ describe('arrays and declared values', () => {
         return 0
       }
     `)
-    const allBoxLines = [
-      'box.xs is a plain array — its length counts its elements, and every index below the length holds an element',
-      'every box.xs element is finite and not NaN',
-      'box.ys is a plain array — its length counts its elements, and every index below the length holds an element',
-      'every box.ys element is finite and not NaN',
-    ]
-    expect(analyzedFunction(report, 'passesWhole').assumptions).toEqual(allBoxLines)
-    expect(analyzedFunction(report, 'returnsWhole').assumptions).toEqual(allBoxLines)
-    expect(analyzedFunction(report, 'stores').assumptions).toEqual(allBoxLines)
+    expect(analyzedFunction(report, 'passesWhole').assumptions).toEqual([])
+    expect(analyzedFunction(report, 'returnsWhole').assumptions).toEqual([])
+    expect(analyzedFunction(report, 'stores').assumptions).toEqual([])
   })
 
   test('a fold prints only when every position its sentence covers was read', () => {
-    // The folded sentence quantifies over the DECLARED properties, so printing it while
-    // one is unread would claim trust nothing rests on — and re-restrict a legal caller
-    // at the unread position, the over-restriction the read filter removes. With one of
-    // three arrays unread, the two read ones print per-property and the third stays
-    // silent.
+    // The folded sentence covers every selected array field kept for this function, so
+    // one unread field keeps the fold from claiming trust nothing rests on. The two read
+    // fields print separately and the third stays silent.
     const report = analyzeSource('read-filter-fold.ts', `
       type Bands = {widths: number[]; gaps: number[]; margins: number[]}
       export function twoOfThree(bands: Bands): number {

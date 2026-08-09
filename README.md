@@ -124,7 +124,7 @@ There are infinitely many assertable things. Here are some good, non-noisy ones:
   console.assert(frame.inputTray.bottom === frame.input.bottom)
   ```
 
-Every plain `number` parameter, including a number field in a fixed-shape object parameter, already requires a finite, non-`NaN` value. Freerange also checks whether a divisor may be `0` and the other conditions shown by `fr --audit`. You don't need to assert the same information explicitly.
+Every plain `number` parameter already requires a finite, non-`NaN` value. The same requirement applies to numeric fields selected from a fixed-shape object parameter. Freerange also checks whether a divisor may be `0` and the other conditions shown by `fr --audit`. You don't need to assert the same information explicitly.
 
 ## Writing Analyzable TypeScript
 
@@ -343,7 +343,7 @@ This is not a general replacement for `map` or `filter`: object and array writes
 
 ### Objects, Arrays, and Changing State
 
-Freerange reads plain objects, fixed tuples, dense arrays, and tagged unions through at most eight nested levels. For types declared by a library, such as `MouseEvent`, Freerange includes only fields used by the file. Numeric library fields appear as assumptions rather than requirements on the project's callers. Give each union case a tag, use an exhaustive non-fallthrough `switch`, and keep deeply nested or unclassifiable data outside important numeric helpers.
+Freerange reads plain objects, fixed tuples, dense arrays, and tagged unions through at most eight nested levels. When an object is known only from its TypeScript type, Freerange includes the fields accessed somewhere in the file and follows those selections through typed declarations, assignments, same-file function calls, and returns. A selected plain number field on a project-defined parameter becomes a caller requirement. A selected library field, such as `MouseEvent.clientX`, appears as an assumption because the project does not define its runtime value. Object literals still evaluate every field initializer and can report guarantees for every field they construct. When a conditional or nullish expression chooses between different object types, name the chosen value before reading one of its fields, e.g. `const point = useFallback ? fallback : measured; return point.x`. Give each union case a tag, use an exhaustive non-fallthrough `switch`, and keep deeply nested or unclassifiable data outside important numeric helpers.
 
 Freerange assumes that property reads are stable and perform no work during one analyzed synchronous call. A getter or Proxy that changes its answer or performs work is outside the scope.
 
@@ -428,7 +428,7 @@ Freerange uses a few terms consistently:
 
 ### Caller Requirements
 
-Every plain `number` parameter must be finite and not `NaN`. The same rule applies to numeric fields in fixed-shape object parameters, even when the function does not read them. Numeric literal types such as `1 | 2` already satisfy the rule. Nullable numbers, arrays, tuples, and tagged unions use more specific `assumes` lines instead. A supported literal default can satisfy the requirement when a caller omits an argument.
+Every plain `number` parameter must be finite and not `NaN`, even when the function does not read it. The same rule applies to numeric fields selected from fixed-shape object parameters. Numeric literal types such as `1 | 2` already satisfy the rule. Nullable numbers, arrays, tuples, and tagged unions use more specific `assumes` lines instead. A supported literal default can satisfy the requirement when a caller omits an argument.
 
 Division and array reads can create additional requirements. Freerange tries to express them using the function's parameters so that supported same-file callers can prove them, pass them to their own callers, or report a definitely invalid argument. If a condition cannot be expressed that way, `fr --audit` prints a local `assumes` line instead.
 

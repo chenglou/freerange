@@ -6,6 +6,7 @@ import {numberConstituent} from './numeric-intersection.ts'
 import {
   declaredOnlyInDeclarationFiles,
   hasDefaultLibraryDeclaration,
+  isExternalRecordType,
   platformFact,
 } from './platform.ts'
 import {
@@ -20,7 +21,6 @@ import {
 } from './context.ts'
 import type {StaticAnnotation} from './static-intrinsics.ts'
 import {isUndefinedGlobal, numericLiteralValue, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
-import {isExternalRecordType} from './external-records.ts'
 
 // The only entry point through which assignments lower. Statement positions (expression
 // statements, for-loop incrementors) call this; everything else goes through
@@ -1711,33 +1711,11 @@ function propertyName(name: ts.PropertyName): string {
 function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expression {
   let current = expression
   while (true) {
-    if (ts.isParenthesizedExpression(current) || ts.isSatisfiesExpression(current)) {
-      // Neither changes the expression's type.
-      current = current.expression
+    const operand = transparentExpressionOperand(current, checker)
+    if (operand != null) {
+      current = operand
       continue
     }
-    // Only `as const` peels: TypeScript permits it solely on literals and it narrows the
-    // literal to its own literal type, so the value kind provably cannot change. Every
-    // other as/angle assertion is an erasure point (see the as/angle arm in
-    // lowerExpression) — an assertion is exactly where the checker's word and the runtime
-    // value may diverge, and claim-free is the one honest reading. Three review rounds
-    // settled this: each attempt to LICENSE carrying (asserted kind matches operand kind;
-    // then recursive type-shape comparisons) was defeated by another diagnostic-clean aliasing
-    // route (`true as {} as number` via comparability, `flags as unknown[] as number[]`
-    // at the element level, optional-property and heterogeneous-union comparison
-    // collisions). No type-level test can be finer than TypeScript's own cast
-    // permissiveness, so the license is gone rather than repaired again.
-    if ((ts.isAsExpression(current) || ts.isTypeAssertionExpression(current))
-      && ts.isConstTypeReference(current.type)) {
-      current = current.expression
-      continue
-    }
-    // The non-null assertion `x!` peels only while the value kind is unchanged underneath —
-    // on a nullable type, e.g. `x!` with `x: number | null`, the static type stops
-    // describing the value the analysis models, so stop. The one blessed kind-changing
-    // form is `arr[i]!`: the syntax itself requests asserted-read treatment — an in-bounds
-    // assumption line, or a bounds proof when the loop supplies one. Bare reads carry
-    // possible undefined in the engine regardless of the project's TypeScript options.
     if (ts.isNonNullExpression(current)) {
       const assertedType = checker.getTypeAtLocation(current)
       const operandType = checker.getTypeAtLocation(current.expression)
@@ -1759,4 +1737,30 @@ function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expressi
     }
     return current
   }
+}
+
+// Wrappers which Freerange treats as the same runtime value. Field-selection scanning
+// uses this too, so a harmless wrapper cannot hide a value flow that lowering accepts.
+export function transparentExpressionOperand(
+  expression: ts.Expression,
+  checker: ts.TypeChecker,
+): ts.Expression | null {
+  if (ts.isParenthesizedExpression(expression) || ts.isSatisfiesExpression(expression)) {
+    return expression.expression
+  }
+  // Only `as const` peels: TypeScript permits it solely on literals and it narrows the
+  // literal to its own literal type. Every other assertion remains an erasure point.
+  if ((ts.isAsExpression(expression) || ts.isTypeAssertionExpression(expression))
+    && ts.isConstTypeReference(expression.type)) return expression.expression
+  if (!ts.isNonNullExpression(expression)) return null
+  const assertedType = checker.getTypeAtLocation(expression)
+  const operandType = checker.getTypeAtLocation(expression.expression)
+  // `arr[i]!` stays wrapped because lowering gives asserted array reads their explicit
+  // bounds treatment. Other non-null assertions peel only when the value kind is unchanged.
+  if (ts.isElementAccessExpression(expression.expression) && valueKind(assertedType, checker) != null) {
+    return null
+  }
+  return valueKind(assertedType, checker) === valueKind(operandType, checker)
+    ? expression.expression
+    : null
 }

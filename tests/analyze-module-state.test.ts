@@ -695,11 +695,9 @@ describe('module state and nullability', () => {
     expect(reader.ensures).toEqual(['return is a finite number'])
   })
 
-  test('a read module binding keeps all its lines; an unread one contributes nothing', () => {
-    // Module bindings filter at whole-binding granularity: a callee's reads reach the
-    // caller as a binding ID with no path detail, so a read binding keeps every line —
-    // ratioOnly reads only viewport.ratio yet prints the width line too. An unread
-    // binding supports no claim and prints nothing, like an unread parameter.
+  test('module records include only fields selected in the file', () => {
+    // ratioOnly reads viewport.ratio, so that field prints and width does not. An unread
+    // module binding supports no claim and prints nothing, like an unread parameter.
     const report = analyzeSource('binding-read-filter.ts', `
       let viewport = {width: 800, ratio: 2}
       export function resize(width: number): void {
@@ -713,7 +711,6 @@ describe('module state and nullability', () => {
       }
     `)
     expect(analyzedFunction(report, 'ratioOnly').assumptions).toEqual([
-      'viewport.width is finite and not NaN',
       'viewport.ratio is finite and not NaN',
     ])
     expect(analyzedFunction(report, 'ignoresViewport').assumptions).toEqual([])

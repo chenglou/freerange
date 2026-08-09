@@ -3,7 +3,7 @@ import {analyzeSource} from '../src/index.ts'
 import {analyzedFunction} from './analyze-helpers.ts'
 
 describe('finite number input contracts', () => {
-  test('plain numbers use one uniform caller rule', () => {
+  test('plain number parameters and selected record fields require finite inputs', () => {
     const report = analyzeSource('finite-input-shapes.ts', `
       type Layout = {width: number; height: number; gap: number; label: string}
 
@@ -35,7 +35,6 @@ describe('finite number input contracts', () => {
     expect(ignored.assumptions).toEqual([])
     expect(ignored.requires).toEqual([
       'Number.isFinite(value) (input at finite-input-shapes.ts:4:24)',
-      'every number field in layout is finite (input at finite-input-shapes.ts:4:39)',
     ])
     const rejectedUnused = report.functions.find(fn => fn.name === 'rejectedUnusedInput')
     if (rejectedUnused?.kind !== 'partial') throw new Error('Expected rejectedUnusedInput to be partial')
@@ -259,7 +258,7 @@ describe('finite number input contracts', () => {
     expect(analyzedFunction(report, 'destructured').requires.some(line =>
       line.startsWith('availableWidth is nonzero'))).toBe(true)
     expect(analyzedFunction(report, 'destructuredWithRemainder').requires[0])
-      .toContain('availableWidth and height are finite')
+      .toContain('availableWidth is finite')
     const checkedResult = analyzedFunction(report, 'checkedResult')
     expect(checkedResult.requires).toHaveLength(1)
     expect(checkedResult.requires[0]).toContain('Number.isFinite(result.value)')

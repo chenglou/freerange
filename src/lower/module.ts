@@ -16,10 +16,10 @@ import {
 } from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
 import {numericLiteralValue} from './literals.ts'
-import {declaredOnlyInDeclarationFiles} from './platform.ts'
+import {declaredOnlyInDeclarationFiles, isExternalRecordType} from './platform.ts'
 import {addInstruction, addSite, createFunctionContext, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type TopLevelFunction} from './context.ts'
 import {lowerExpression, nonMissingUnionMembers, tagLiteralValues, taggedUnionProperty, valueKind} from './expression.ts'
-import {isExternalRecordType, type AccessedProperties} from './external-records.ts'
+import type {AccessedProperties} from './record-properties.ts'
 import {directFunctionExpression} from './function-unit.ts'
 import {numberConstituent} from './numeric-intersection.ts'
 import {lowerStatement} from './statements.ts'
@@ -462,9 +462,9 @@ function declaredCategory(name: ts.Identifier, context: DeclaredKindContext): Mo
   return declared == null ? {kind: 'opaque'} : {kind: 'value', declaredKind: declared}
 }
 
-// The properties of one record type. A property whose type cannot be represented becomes
-// opaque so the record can keep claims about its supported properties. An empty property
-// set is rejected: `{}` and index-signature-only types have no named values to track.
+// The accessed properties of one record type. A property whose type cannot be represented
+// becomes opaque so the record can keep claims about its supported properties. A record
+// with no accessed properties is carried opaquely.
 function declaredRecordProperties(
   type: ts.Type,
   context: DeclaredKindContext,
@@ -472,12 +472,11 @@ function declaredRecordProperties(
 ): DeclaredProperty[] | null {
   const {checker, accessedProperties} = context
   if (cutByAncestor(seen, type, context)) return null
-  const externalRecord = isExternalRecordType(type, checker)
   const properties: DeclaredProperty[] = []
   for (const property of checker.getPropertiesOfType(type)) {
     const declaredExternally = declaredOnlyInDeclarationFiles(property)
     const accessed = accessedProperties.get(type)?.has(property) === true
-    if (!accessed && (externalRecord || declaredExternally)) continue
+    if (!accessed) continue
     const optional = (property.flags & ts.SymbolFlags.Optional) !== 0
     const walked = declaredKind(
       checker.getTypeOfSymbol(property),
@@ -489,9 +488,8 @@ function declaredRecordProperties(
     // is carried without claims, and a read that needs more than carrying is gated at the
     // read position (numeric use rejects at lowering; a modeled-kind read of the
     // unclassified value stops at the kind-mismatch backstop). The record's NUMERIC
-    // contract survives its weird neighbors. A declaration-file property is analyzed
-    // only when its name appears in a property read in this source file; inherited DOM
-    // fields therefore follow the same bounded rule as fields on a DOM parameter.
+    // contract survives its weird neighbors. Every property is analyzed only when its
+    // name appears in a property read in this source file.
     const opaqueLeaf: DeclaredKind = {kind: 'opaque'}
     const propertyDeclared = walked ?? opaqueLeaf
     // `session?: boolean` reads as boolean | undefined, which is exactly what the missing-
@@ -505,9 +503,6 @@ function declaredRecordProperties(
       ...(declaredExternally ? {external: true as const} : {}),
     })
   }
-  // An external record can have no selected fields; its caller decides whether to carry
-  // that value opaquely or use the selected record shape.
-  if (properties.length === 0 && !externalRecord) return null
   return properties
 }
 
@@ -677,8 +672,7 @@ function declaredKindUncached(type: ts.Type, context: DeclaredKindContext, seen:
       return {kind: 'tuple', elements}
     }
     case 'object': {
-      // Mapped declaration-file utility types keep the existing opaque treatment. Plain
-      // declaration-file records include only field names accessed in this source file.
+      // Mapped declaration-file utility types keep the existing opaque treatment.
       if (declaredOnlyInDeclarationFiles(type.getSymbol() ?? type.aliasSymbol)
         && !isExternalRecordType(type, checker)) return {kind: 'opaque'}
       // A recursive property becomes opaque. The ancestor check catches direct recursion;
@@ -686,9 +680,7 @@ function declaredKindUncached(type: ts.Type, context: DeclaredKindContext, seen:
       // instantiation that exact type identity cannot recognize.
       const properties = declaredRecordProperties(type, context, seen)
       if (properties == null) return null
-      return properties.length === 0 && isExternalRecordType(type, checker)
-        ? {kind: 'opaque'}
-        : {kind: 'record', properties}
+      return properties.length === 0 ? {kind: 'opaque'} : {kind: 'record', properties}
     }
     case 'taggedUnion': {
       if (!type.isUnion()) return null

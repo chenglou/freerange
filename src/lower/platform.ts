@@ -95,3 +95,11 @@ export function declaredOnlyInDeclarationFiles(symbol: ts.Symbol | undefined): b
   if (declarations == null || declarations.length === 0) return false
   return declarations.every(declaration => declaration.getSourceFile().isDeclarationFile)
 }
+
+export function isExternalRecordType(type: ts.Type, checker: ts.TypeChecker): boolean {
+  if ((type.flags & ts.TypeFlags.Object) === 0) return false
+  if (checker.isArrayType(type) || checker.isTupleType(type)) return false
+  if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return false
+  if (((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Mapped) !== 0) return false
+  return declaredOnlyInDeclarationFiles(type.getSymbol())
+}

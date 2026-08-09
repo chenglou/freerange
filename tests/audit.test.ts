@@ -25,7 +25,7 @@ function analyzed(report: AnalysisReport, name: string) {
 function nonInputRequirements(report: AnalysisReport, name: string): string[] {
   return analyzed(report, name).requires.filter(requirement =>
     !requirement.startsWith('Number.isFinite(')
-    && !requirement.startsWith('every number field in '))
+    && !requirement.startsWith('every number field of '))
 }
 
 function isNonInputRequirement(reference: ReturnType<typeof auditSource>['references'][number]): boolean {

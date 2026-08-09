@@ -245,7 +245,7 @@ describe('control flow and contracts', () => {
     // and the plain-array boundary line states the trust its length and element reads
     // rest on.
     expect(analyzedFunction(report, 'hitTest2DMode').assumptions).toEqual([
-      'every property declared as a number in data holds a finite non-NaN number',
+      'every number field of data used in this file is finite and not NaN',
       'data is a plain array — its length counts its elements, and every index below the length holds an element',
     ])
   })
