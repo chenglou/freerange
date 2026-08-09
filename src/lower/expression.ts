@@ -143,11 +143,13 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     return addInstruction(context, current, {kind: 'booleanConstant', value: current.kind === ts.SyntaxKind.TrueKeyword})
   }
   if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.PlusToken) {
-    const positive = unwrap(current.operand, context.checker)
-    if (ts.isNumericLiteral(positive)) {
-      return addInstruction(context, current, {kind: 'constant', value: Number(positive.text)})
-    }
-    throw unsupported(current, {kind: 'expressionForm', syntax: ts.SyntaxKind[current.kind]})
+    const operandKind = valueKind(context.checker.getTypeAtLocation(current.operand), context.checker)
+    const value = lowerExpression(current.operand, context)
+    // Unary plus preserves numbers. Other TypeScript-supported operands use the
+    // existing conservative model for JavaScript number conversion.
+    return operandKind === 'number'
+      ? value
+      : addInstruction(context, current, {kind: 'parsedNumber', integer: false})
   }
   if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
     // A negated literal folds into one constant instead of lowering as `0 - operand`.
@@ -898,6 +900,7 @@ export function compoundAssignmentOperator(kind: ts.SyntaxKind): Extract<Instruc
     case ts.SyntaxKind.MinusEqualsToken: return 'subtract'
     case ts.SyntaxKind.AsteriskEqualsToken: return 'multiply'
     case ts.SyntaxKind.SlashEqualsToken: return 'divide'
+    case ts.SyntaxKind.PercentEqualsToken: return 'remainder'
     default: return null
   }
 }

@@ -13,7 +13,9 @@ describe('requirements and numeric checks', () => {
         return ratio(total, left, right)
       }
       export function difference(value: number): number { return value - value }
+      export function unaryPositive(value: number): number { return value - +value }
       export function doubled(value: number): number { return value + value }
+      export function doubledThroughUnary(value: 1 | 2): number { return +(value + value) }
       export function square(value: number): number { return value * value }
       export function quotient(value: number): number { return value / value }
       export function remainder(value: number): number { return value % value }
@@ -46,11 +48,20 @@ describe('requirements and numeric checks', () => {
       export function separateCalls(total: number, value: number): number {
         return ratio(total, identity(value), identity(value))
       }
+      export function guardedUnaryPositive(divisor: number): number {
+        if (+divisor === 0) return 0
+        return 1 / divisor
+      }
+      export function coerciveUnaryPlus(value: string): number { return +value }
     `)
 
     expect(analyzedFunction(report, 'difference').ensures)
       .toEqual(['return is a finite integer number from 0 through 0'])
+    expect(analyzedFunction(report, 'unaryPositive').ensures)
+      .toEqual(['return is a finite integer number from 0 through 0'])
     expect(analyzedFunction(report, 'doubled').ensures[0]).not.toContain('NaN')
+    expect(analyzedFunction(report, 'doubledThroughUnary').ensures)
+      .toEqual(['return is a finite integer number from 2 through 4'])
     expect(analyzedFunction(report, 'square').ensures[0]).toContain('from 0 through Infinity')
     expect(analyzedFunction(report, 'quotient').ensures)
       .toEqual(['return is a finite integer number from 1 through 1'])
@@ -72,6 +83,9 @@ describe('requirements and numeric checks', () => {
     // Matching source text is not identity: these calls are evaluated separately.
     expect(analyzedFunction(report, 'separateCalls').assumptions)
       .toContain('the divisor at same-value.ts:4:16 is nonzero')
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'guardedUnaryPositive')))
+      .toEqual([])
+    expect(analyzedFunction(report, 'coerciveUnaryPlus').ensures[0]).toContain('possibly NaN')
   })
 
   test('same-value comparisons preserve JavaScript NaN behavior', () => {

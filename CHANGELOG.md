@@ -4,8 +4,8 @@
 
 - Allow leading `console.assert` calls to compare numeric inputs with `===`, `<`, `<=`, `>`, or `>=`.
 - Preserve direct numeric comparisons through branches, same-file helper calls, and matching calculations, e.g. proving `left + offset <= right + offset` from `left <= right`.
-- When an object is known from its TypeScript type, analyze only fields accessed by the file, including fields declared by TypeScript libraries.
-- Bound field selection through recursive generic object types.
+- Analyze the object fields used by each file, including fields from library types such as `MouseEvent`.
+- Support unary `+` and `%=`.
 
 ## 0.0.4 - 2026-07-31
 

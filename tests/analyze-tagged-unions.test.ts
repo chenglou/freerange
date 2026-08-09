@@ -443,6 +443,22 @@ describe('tagged unions and narrowing', () => {
       export function destructuredChoice({kind, value}: DestructuredChoice): number {
         return kind === 'small' ? value : 0
       }
+      export function moduloAssignment(index: number, length: number): number {
+        if (length === 0) return 0
+        index %= length
+        return index
+      }
+      export function moduloAssignmentRequires(index: number, length: number): number {
+        index %= length
+        return index
+      }
+      export function moduloAssignmentLoop(index: number, length: number, count: number): number {
+        if (length === 0) return 0
+        for (let step = 0; step < count; step += 1) {
+          index %= length
+        }
+        return index
+      }
     `)
     const file = 'sweep-group4.ts'
     expect(analyzedFunction(report, 'nullishAssign').ensures).toEqual(['return is a finite number'])
@@ -468,6 +484,10 @@ describe('tagged unions and narrowing', () => {
       "value is finite and not NaN (when kind is 'small')",
       "value is finite and not NaN (when kind is 'large')",
     ])
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'moduloAssignment'))).toEqual([])
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'moduloAssignmentRequires'))[0])
+      .toContain('length is nonzero')
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'moduloAssignmentLoop'))).toEqual([])
   })
 
   test('module refinements require a local snapshot', () => {
