@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.5 - 2026-09-03
+
 - Allow leading `console.assert` calls to compare numeric inputs with `===`, `<`, `<=`, `>`, or `>=`.
 - Preserve direct numeric comparisons through branches, same-file helper calls, and matching calculations, e.g. proving `left + offset <= right + offset` from `left <= right`.
 - Analyze the object fields used by each file, including fields from library types such as `MouseEvent`.
