@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Stop trusting the initial value of a module `let` that top-level code assigns again, because the file's functions can run during module initialization and observe the earlier value.
+
 ## 0.0.5 - 2026-09-03
 
 - Allow leading `console.assert` calls to compare numeric inputs with `===`, `<`, `<=`, `>`, or `>=`.

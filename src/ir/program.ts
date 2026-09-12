@@ -216,17 +216,18 @@ export type DeclaredKind =
   | {kind: 'taggedUnion'; tagProperty: string; variants: [DeclaredVariant, ...DeclaredVariant[]]}
 
 // What a function may assume about a module-level binding, decided once by a whole-file
-// scan before any lowering. The rule: trust a value only when every possible write to it
-// is accounted for. A const collapses into the no-outside-write check, since TypeScript
-// already rejects assigning a const anywhere.
+// scan before any lowering. The rule: trust a value only when the binding's declaration is
+// its only write. A const collapses into that check, since TypeScript already rejects
+// assigning a const anywhere.
 export type ModuleBindingCategory =
-  // A binding of a representable declared kind that nothing outside the initializer
+  // A binding of a representable declared kind that nothing besides its declaration
   // writes. Its initialized value flows into every function, e.g. `const boxesGapX = 24`
   // reads as 24 and `const gaps = {small: 4, large: 24}` reads as that exact record.
   | {kind: 'value'; declaredKind: DeclaredKind}
-  // A binding of a representable declared kind that some function writes. Functions see
-  // only the declared kind — some finite number, some boolean, some record of the declared
-  // shape — and the report prints that as an assumption.
+  // A binding of a representable declared kind that something besides its declaration
+  // writes — a function or later top-level code — or whose declaration the initializer
+  // skipped. Functions see only the declared kind — some finite number, some boolean, some
+  // record of the declared shape — and the report prints that as an assumption.
   | {kind: 'kind'; declaredKind: DeclaredKind}
   // An imported binding. Single-file analysis knows nothing about the other module.
   | {kind: 'import'}

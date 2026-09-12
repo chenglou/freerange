@@ -375,6 +375,23 @@ export function viewportScale(): number {
 
 Keep separate reads when two observations are intentional, such as two clock reads used to measure elapsed time.
 
+#### Functions see a reassigned module `let` only as its declared type
+
+Freerange can give functions the exact initial value of a module `const`, or of a `let` that nothing assigns again, once it has analyzed module initialization through that declaration. When any other code assigns the `let`, whether a function or later top-level code, functions see only its declared type. A file's functions can run while the module is still initializing, so a later assignment can change a value that an earlier call already used:
+
+```ts
+let columnCount = 4
+
+export function columnWidth(containerWidth: number): number {
+  return containerWidth / columnCount
+}
+
+export const previewWidth = columnWidth(960) // runs while columnCount is 4
+columnCount = 6
+```
+
+When every use should see one value, compute it in the declaration, e.g. `const columnCount = window.innerWidth > 1200 ? 6 : 4`.
+
 #### Array reads require dense arrays and valid indexes
 
 Use `values[index] ?? fallback` only when the application wants a fallback. Otherwise, prove that `index` is an integer from zero through `values.length - 1` before using `values[index]!`. A bounds check cannot detect a hole in a sparse array, so Freerange expects arrays to be dense. Audit codes: `[handle-missing-element]`, `[guard-array-index]`.

@@ -1,7 +1,7 @@
 import {constantNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
 import type {ValueIdentity, ValueIdentityOwner} from '../domain/value-identity.ts'
-import type {BlockID, FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
+import type {BlockID, FunctionID, SiteID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import {finiteInputExpression, finiteInputs} from '../ir/finite-inputs.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
@@ -204,42 +204,22 @@ function seedModuleSlots(program: ProgramIR, moduleValues: Array<AbstractValue |
 }
 
 // The values functions may trust, per binding: the binding's category must allow a value,
-// the slot must be initialized at every path end of the initializer (stops included), and
-// no write to the binding may sit where the analysis stopped following — inside the
-// stopping block past the stop, or in any block still reachable from it (loops included,
-// since a stop can first appear on a late widening round).
+// and the slot must be initialized at every path end of the initializer, stops included,
+// because uninitialized dominates the join. No write rule is needed on top of that: the
+// whole-file scan already demoted every binding that anything besides its declaration
+// writes, so a trusted slot changes exactly once. A declaration the analysis never reached,
+// e.g. one past a stop, leaves the slot uninitialized in that stop's captured state, so
+// the binding publishes nothing.
 function publishedModuleValues(
   program: ProgramIR,
   run: EvaluationRun,
   evaluation: FunctionEvaluation,
 ): Array<AbstractValue | null> {
-  const fn = program.initializer
   const end = evaluation.normal == null
     ? run.moduleEnd
     : run.moduleEnd == null
       ? evaluation.normal.sharedState
       : joinModuleSlots(run.moduleEnd, evaluation.normal.sharedState)
-
-  const demoted = new Set<ModuleBindingID>()
-  const successors = blockSuccessors(fn)
-  const stoppingBlocks: BlockID[] = []
-  for (let blockID = 0; blockID < fn.blocks.length; blockID++) {
-    const stopIndex = run.blocks[blockID]!.stopIndex
-    if (stopIndex == null) continue
-    stoppingBlocks.push(blockID)
-    const instructions = fn.blocks[blockID]!.instructions
-    for (let index = stopIndex; index < instructions.length; index++) {
-      const instruction = instructions[index]!
-      if (instruction.kind === 'moduleWrite') demoted.add(instruction.binding)
-    }
-  }
-  const reachedAfterStops = reachableAfter(successors, stoppingBlocks)
-  for (let target = 0; target < fn.blocks.length; target++) {
-    if (reachedAfterStops[target] !== true) continue
-    for (const instruction of fn.blocks[target]!.instructions) {
-      if (instruction.kind === 'moduleWrite') demoted.add(instruction.binding)
-    }
-  }
 
   // Exact structural publishing (records, tuples, arrays — nullish-wrapped included)
   // additionally requires the whole file to be fully analyzed. Analyzed code cannot write
@@ -256,8 +236,7 @@ function publishedModuleValues(
     && program.functions.every(lowered => lowered.kind === 'lowered')
 
   return program.moduleBindings.map((binding, index) => {
-    if ((binding.category.kind !== 'value' && binding.category.kind !== 'function')
-      || demoted.has(index)) return null
+    if (binding.category.kind !== 'value' && binding.category.kind !== 'function') return null
     // holdsMutableStructure, not a top-level tag check: a `number[] | null` binding is
     // nullish at the top level yet the array inside is exactly as alias-mutable.
     if (binding.category.kind === 'value'
@@ -279,10 +258,9 @@ type IncomingState = {
 // they share one record per block instead of parallel arrays that could drift apart.
 type BlockRun = {
   incoming: IncomingState | null
-  // The instruction index where the block first stopped (instructions.length for a stop
-  // terminator); null when no visit stopped. The module publish rule demotes writes from
-  // here onward, and the failed-header closure treats the block as cut.
-  stopIndex: number | null
+  // Whether any visit stopped in the block, at an instruction or at its stop terminator.
+  // The failed-header closure treats a stopped block as cut.
+  stopped: boolean
   // A loop header whose state never stabilized. Returns reachable from a failed header
   // are not evidence — they were computed from a state short of its fixed point.
   failedHeader: boolean
@@ -349,7 +327,7 @@ function runEvaluation(
   const successors = blockSuccessors(fn)
   const run: EvaluationRun = {
     fn,
-    blocks: fn.blocks.map(() => ({incoming: null, stopIndex: null, failedHeader: false, pendingReturn: null})),
+    blocks: fn.blocks.map(() => ({incoming: null, stopped: false, failedHeader: false, pendingReturn: null})),
     queue: [fn.entry],
     stops: [],
     assertionObservations: [],
@@ -415,7 +393,6 @@ function runEvaluation(
             blockID,
             result.stop,
             state.shared.slice(),
-            index,
           )
           // A return recorded by an earlier visit of this block described a smaller incoming
           // state; the stop supersedes it.
@@ -455,7 +432,6 @@ function runEvaluation(
           blockID,
           {site: block.terminator.site, reason: {kind: 'unsupportedCode', reason: block.terminator.reason}},
           state.shared.slice(),
-          block.instructions.length,
         )
         break
       }
@@ -476,7 +452,6 @@ function runEvaluation(
             blockID,
             conditionOutcome.stop,
             state.shared.slice(),
-            block.instructions.length,
           )
           run.blocks[blockID]!.pendingReturn = null
           break
@@ -522,7 +497,7 @@ function runEvaluation(
       if (reachedFromHeader != null) {
         const returnsToHeader = reachableFrom(predecessors, headerID)
         for (let stopBlock = 0; stopBlock < run.blocks.length; stopBlock++) {
-          if (run.blocks[stopBlock]!.stopIndex == null || reachedFromHeader[stopBlock] !== true) continue
+          if (!run.blocks[stopBlock]!.stopped || reachedFromHeader[stopBlock] !== true) continue
           if (returnsToHeader[stopBlock] === true) {
             header.failedHeader = true
             break
@@ -584,7 +559,6 @@ function runEvaluation(
           headerID,
           {site: header.loopHeader, reason: {kind: 'nonExitingLoop'}},
           entry_.state.shared.slice(),
-          0,
         )
       }
     }
@@ -651,12 +625,8 @@ function addStop(
   blockID: BlockID,
   stop: Stop,
   moduleCapture: SharedState,
-  instructionIndex: number,
 ): void {
-  const block = run.blocks[blockID]!
-  if (block.stopIndex == null || instructionIndex < block.stopIndex) {
-    block.stopIndex = instructionIndex
-  }
+  run.blocks[blockID]!.stopped = true
   run.moduleEnd = run.moduleEnd == null ? moduleCapture : joinModuleSlots(run.moduleEnd, moduleCapture)
   // The first stop at a site wins, so re-visits (loop rounds, both arms of a branch
   // reaching one call) cannot grow the list past the function's site count. A linear scan,
@@ -700,7 +670,6 @@ function propagate(
         sourceBlock,
         {site: target.loopHeader, reason: {kind: 'loopLimit', updates: maximumLoopHeaderUpdates}},
         state.shared.slice(),
-        0,
       )
       run.blocks[edge.block]!.failedHeader = true
       return

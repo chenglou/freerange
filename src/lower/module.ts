@@ -45,9 +45,9 @@ export function createDeclaredKindContext(
 }
 
 // Classifies every top-level binding by one rule: a function may trust the binding's value
-// only when every possible write to it is accounted for. The scan reads the entire file's
-// text — bodies of functions the analyzer rejects included — so a write hiding inside
-// unsupported code still demotes the binding.
+// only when the binding's declaration is its only write. The scan reads the entire file's
+// text — top-level code and bodies of functions the analyzer rejects included — so a write
+// hiding inside unsupported code still demotes the binding.
 export function scanModuleBindings(
   sourceFile: ts.SourceFile,
   declaredKinds: DeclaredKindContext,
@@ -106,13 +106,19 @@ export function scanModuleBindings(
     }
   }
 
-  // Demote bindings that functions write.
-  const visit = (node: ts.Node, insideFunction: boolean): void => {
-    if (insideFunction) demoteModuleWritesInNode(node, checker, bindingsBySymbol, bindings)
-    const enteringFunction = insideFunction || ts.isFunctionLike(node)
-    ts.forEachChild(node, child => { visit(child, enteringFunction) })
+  // Demote bindings that anything besides their declaration writes, top-level code included.
+  // This file's functions can run during initialization at points no list covers — a
+  // top-level call, a callback that a skipped statement runs, a getter — and each such call
+  // observes the value the binding holds at that moment. With `let pixelRatio = 1; export
+  // const border = hairlineWidth(); pixelRatio = 2`, hairlineWidth runs while pixelRatio is
+  // 1, so publishing the final 2 would prove claims that call breaks. The declaration never
+  // counts: before it runs, a read throws (the temporal dead zone), and afterward a binding
+  // with no other write keeps its value.
+  const visit = (node: ts.Node): void => {
+    demoteModuleWritesInNode(node, checker, bindingsBySymbol, bindings)
+    ts.forEachChild(node, visit)
   }
-  visit(sourceFile, false)
+  visit(sourceFile)
   return {bindings, bindingsBySymbol, declaredKinds}
 }
 
@@ -249,17 +255,18 @@ export function lowerModuleInitializer(
       lowerSupportedArgumentsOfSkippedTopLevelCall(statement, error, context)
       skips.push({site: addSite(context, error.node), reason: error.reason})
       // Demote what the statement writes directly, then reset every slot the statement
-      // could have changed — its own scalar targets and, when it can execute unknown
-      // code, scalars written by functions in this file. Without the reset, a later
-      // analyzed statement would compute from the stale pre-skip value and publish the
-      // result through a fresh binding that nothing demotes. Structural bindings (records,
-      // tuples, arrays — nullish-wrapped included) are additionally ALL havocked: a
-      // skipped statement can mutate one without any write-position mention of its
-      // binding — `Object.assign(config, overrides)` holds the binding in argument
-      // position, `scores.push(999)` in receiver position, and an alias variant mentions
-      // it nowhere — so no mention scan is sound for them. Scalars are copied on read.
-      // Reset one only when this statement writes it directly or can execute code that
-      // reaches one of the file's known scalar writes.
+      // could have changed. Without the reset, a later analyzed statement would compute
+      // from the stale pre-skip value and publish the result through a fresh binding that
+      // nothing demotes. Scalars are copied on read, so a scalar resets only when this
+      // statement writes it directly, or when the statement can execute unknown code and
+      // the whole-file scan demoted the scalar. Unknown code can reach this file's
+      // functions and their writes; a scalar that only top-level code assigns again resets
+      // too, which is conservative. Structural bindings (records, tuples, arrays —
+      // nullish-wrapped included) are additionally ALL havocked: a skipped statement can
+      // mutate one without any write-position mention of its binding —
+      // `Object.assign(config, overrides)` holds the binding in argument position,
+      // `scores.push(999)` in receiver position, and an alias variant mentions it nowhere —
+      // so no mention scan is sound for them.
       const effects = scanSkippedModuleEffects(
         statement,
         checker,
@@ -760,8 +767,8 @@ export function tupleHasOptionalOrRestPositions(type: ts.Type, checker: ts.TypeC
   return (type as ts.TupleTypeReference).target.elementFlags.some(flags => (flags & ts.ElementFlags.Required) === 0)
 }
 
-// A binding with an unaccounted write cannot publish its value: it keeps only its declared
-// kind — some finite number, some boolean, some record of the declared shape.
+// A binding with a write besides its declaration cannot publish its value: it keeps only
+// its declared kind — some finite number, some boolean, some record of the declared shape.
 function demote(bindings: ModuleBindingIR[], binding: ModuleBindingID): void {
   const category = bindings[binding]!.category
   switch (category.kind) {

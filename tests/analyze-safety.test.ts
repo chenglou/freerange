@@ -30,11 +30,121 @@ describe('acceptance and module safety', () => {
     // boxesGapY was written before the stop, so its value holds on every analyzed path.
     expect(analyzedFunction(report, 'gapAfterStop').ensures)
       .toEqual(['return is a finite integer number from 12 through 12'])
-    // scale's write sits past the stop: the analysis never confirmed it ran, so only the
-    // declared kind survives.
+    // scale's declaration sits past the stop, so the slot is still uninitialized in the state
+    // the stop captured, and only the declared kind survives.
     const scaleReader = analyzedFunction(report, 'scaleAfterStop')
     expect(scaleReader.assumptions).toEqual(['scale is finite and not NaN'])
     expect(scaleReader.ensures).toEqual(['return is a finite number'])
+
+    // A stop can first appear on a late loop round: step reaches the unsupported labelLength
+    // only after widening lets index exceed 1. The state that stop captured has
+    // totalAfterLoop uninitialized, and uninitialized wins the join, so totalAfterLoop
+    // publishes nothing even though the loop's exit path initialized it. At runtime it is 3.
+    const lateStop = analyzeSource('module-late-round-stop.ts', `
+      function labelLength(): number {
+        return 'abc'.slice(1).length
+      }
+      function step(index: number): number {
+        if (index > 1) return labelLength()
+        return index
+      }
+      let total = 0
+      for (let index = 0; index < 3; index++) {
+        total = total + step(index)
+      }
+      const totalAfterLoop = total
+      export function readTotalAfterLoop(): number {
+        return totalAfterLoop
+      }
+    `)
+    const totalReader = analyzedFunction(lateStop, 'readTotalAfterLoop')
+    expect(totalReader.assumptions).toEqual(['totalAfterLoop is finite and not NaN'])
+    expect(totalReader.ensures).toEqual(['return is a finite number'])
+  })
+
+  test('a binding that top-level code assigns again keeps only its declared kind', () => {
+    // This file's functions can run while the module initializes, and each call observes
+    // the binding as it is at that moment: hairlineWidth runs while pixelRatioSetting is 1,
+    // so its assertion fails at runtime even though the final value 2 would prove it. The
+    // route does not matter — a callback that a skipped statement runs observes the old
+    // value the same way, with no analyzed call to detect.
+    const file = 'module-init-call.ts'
+    const report = analyzeSource(file, `
+      let pixelRatioSetting = 1
+      export function hairlineWidth(): number {
+        const width = 1 / pixelRatioSetting
+        console.assert(width <= 0.5)
+        return width
+      }
+      export const defaultBorderWidth = hairlineWidth()
+      pixelRatioSetting = 2
+    `)
+    const hairline = analyzedFunction(report, 'hairlineWidth')
+    expect(hairline.assumptions).toEqual([
+      'pixelRatioSetting is finite and not NaN',
+      `the divisor at ${file}:4:23 is nonzero`,
+    ])
+    expect(hairline.assertions?.map(assertion => assertion.verdict)).toEqual(['unproven'])
+
+    const callback = analyzeSource('module-init-callback.ts', `
+      let gutter = 8
+      export function inset(): number {
+        const value = gutter
+        console.assert(value === 16)
+        return value
+      }
+      ;[0].forEach(() => { inset() })
+      gutter = 16
+    `)
+    const inset = analyzedFunction(callback, 'inset')
+    expect(inset.assumptions).toEqual(['gutter is finite and not NaN'])
+    expect(inset.assertions?.map(assertion => assertion.verdict)).toEqual(['unproven'])
+
+    // Deliberately given up: both assignments run before any call, so the exact 16 would be
+    // correct here. Keeping it would need the complete list of places where initialization
+    // runs this file's functions, and that list does not stay complete.
+    const reassignedFirst = analyzeSource('module-reassigned-before-call.ts', `
+      let gutter = 8
+      gutter = gutter * 2
+      export function inset(): number {
+        const value = gutter
+        console.assert(value === 16)
+        return value
+      }
+      export const early = inset()
+    `)
+    const insetAfterReassignment = analyzedFunction(reassignedFirst, 'inset')
+    expect(insetAfterReassignment.assumptions).toEqual(['gutter is finite and not NaN'])
+    expect(insetAfterReassignment.assertions?.map(assertion => assertion.verdict)).toEqual(['unproven'])
+  })
+
+  test('a let whose declaration is its only write still publishes around top-level calls', () => {
+    // Under ES module semantics a read before a declaration throws, and afterward a binding
+    // with no other write keeps its value, so every read that succeeds observes the
+    // published value. hairlineWidth's call during initialization reads pixelRatioSetting
+    // after its declaration, and runs before gutter's declaration without reading gutter.
+    const report = analyzeSource('module-single-write.ts', `
+      let pixelRatioSetting = 2
+      export function hairlineWidth(): number {
+        const width = 1 / pixelRatioSetting
+        console.assert(width <= 0.5)
+        return width
+      }
+      export const defaultBorderWidth = hairlineWidth()
+      let gutter = 16
+      export function inset(): number {
+        const value = gutter
+        console.assert(value === 16)
+        return value
+      }
+    `)
+    const hairline = analyzedFunction(report, 'hairlineWidth')
+    expect(hairline.assumptions).toEqual([])
+    expect(hairline.assertions?.map(assertion => assertion.verdict)).toEqual(['proven'])
+    expect(hairline.ensures).toEqual(['return is a finite number from 0.5 through 0.5'])
+    const inset = analyzedFunction(report, 'inset')
+    expect(inset.assumptions).toEqual([])
+    expect(inset.assertions?.map(assertion => assertion.verdict)).toEqual(['proven'])
   })
 
   test('eval anywhere puts the whole file outside the subset', () => {
