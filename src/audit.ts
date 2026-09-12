@@ -363,7 +363,9 @@ function guidesForReason(reason: AuditReason): RefactorGuideID[] {
     case 'assumes': return reason.assumption.kind === 'nonzeroDivisor'
       ? ['guard-derived-value']
       : ['guard-array-index']
-    case 'assertion':
+    case 'assertion': return reason.assertion.verdict === 'notChecked'
+      ? guidesForUnsupportedReason(reason.assertion.reason)
+      : []
     case 'staticAnnotationIssue': return []
     case 'unsupported': return guidesForUnsupportedReason(reason.reason)
     case 'partialSupport': return guidesForStop(reason.reason)

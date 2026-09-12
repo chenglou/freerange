@@ -374,6 +374,19 @@ export function invalidNegation(value: number): number {
   return result
 }
 
+export function notCheckedRequirement(value: number): number {
+  console.assert(value >= 0)
+  const result = unsupported(value)
+  console.assert(!(result < 0))
+  return result
+}
+
+export function optionalFlag(value: number, maybeFlag: boolean | undefined): number {
+  const result = Math.max(0, value)
+  console.assert(maybeFlag)
+  return result
+}
+
 console.assert(true)
 `})
 
@@ -387,7 +400,12 @@ console.assert(true)
     expect(lint.stdout).toContain('error [console-assert]: console.assert requirements in blockedRequirement were not checked because the function did not finish analysis without site-specific assumptions')
     expect(lint.stdout).toContain('error [console-assert]: console.assert is unreachable in dead: value >= 0')
     expect(lint.stdout).toContain('console.assert must have exactly one condition argument in invalid')
-    expect(lint.stdout).toContain('console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check in invalidNegation')
+    expect(lint.stdout).toContain('error [console-assert]: console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check in invalidNegation: !(result < 0)')
+    expect(lint.stdout).toContain('error [console-assert]: console.assert in optionalFlag was not checked because condition of type boolean | undefined (compare explicitly, e.g. width > 0 or mode !== undefined): maybeFlag')
+    // A not-checked interior assertion does not report that the function stopped, so the
+    // leading requirement still does.
+    expect(lint.stdout).toContain('error [console-assert]: console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check in notCheckedRequirement: !(result < 0)')
+    expect(lint.stdout).toContain('error [console-assert]: console.assert requirements in notCheckedRequirement were not checked because the function did not finish analysis without site-specific assumptions')
     expect(lint.stdout).toContain('console.assert is only supported inside a named top-level function')
     expect(lint.stdout).not.toContain('bounded >= 0')
 
@@ -399,7 +417,7 @@ console.assert(true)
     expect(audit.stdout).toContain('assertion can fail: positive < 0')
     expect(audit.stdout).toContain('assertion blocked: the function did not finish analysis without site-specific assumptions: result >= 0')
     expect(audit.stdout).toContain('unreachable assertion: value >= 0')
-    expect(audit.stdout).toContain('console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check')
+    expect(audit.stdout).toContain('assertion not checked: console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check: !(result < 0)')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }

@@ -300,48 +300,50 @@ describe('static console.assert contracts', () => {
       }
     `)
     const entries = new Map(report.functions.map(fn => [fn.name, fn]))
-    for (const name of [
-      'message',
-      'compound',
-      'called',
-      'constant',
-      'optional',
-      'expressionPosition',
-      'inequalityRequirement',
-      'inlineDivision',
-      'inlineRemainder',
-      'inlineIndex',
-      'inlineArithmetic',
-      'storedCondition',
-      'directMath',
-      'booleanEquality',
-      'negated',
-      'looseEquality',
-    ]) {
-      const fn = entries.get(name)
-      if (fn?.kind !== 'unsupported') throw new Error(`Expected ${name} to be unsupported`)
-      expect(fn.unsupported).toContain('console.assert')
-    }
     const unsupported = (name: string): string => {
       const fn = entries.get(name)
       if (fn?.kind !== 'unsupported') throw new Error(`Expected ${name} to be unsupported`)
       return fn.unsupported
     }
-    expect(unsupported('compound')).toContain('one direct numeric comparison')
+    // Call forms, caller requirements, and conditions containing calls reject the function.
+    for (const name of [
+      'message',
+      'called',
+      'constant',
+      'optional',
+      'expressionPosition',
+      'inequalityRequirement',
+      'directMath',
+    ]) {
+      expect(unsupported(name)).toContain('console.assert')
+    }
     expect(unsupported('called')).toContain('cannot call a function')
+    expect(unsupported('directMath')).toContain('cannot call a function')
     expect(unsupported('constant')).toContain('one direct numeric comparison')
+    // An interior condition outside the grammar leaves only its own assertion unchecked.
+    const notCheckedReason = (name: string): string => {
+      const assertions = analyzedFunction(report, name).assertions ?? []
+      const [assertion] = assertions
+      if (assertions.length !== 1 || assertion?.verdict !== 'notChecked') {
+        throw new Error(`Expected ${name} to have one not-checked assertion`)
+      }
+      return assertion.reason
+    }
+    expect(notCheckedReason('compound')).toContain('one direct numeric comparison')
+    expect(notCheckedReason('inlineDivision')).toContain('calculate or read the value before console.assert')
+    expect(notCheckedReason('inlineRemainder')).toContain('calculate or read the value before console.assert')
+    expect(notCheckedReason('inlineIndex')).toContain('calculate or read the value before console.assert')
+    expect(notCheckedReason('inlineArithmetic')).toContain('calculate or read the value before console.assert')
+    expect(notCheckedReason('storedCondition')).toContain('one direct numeric comparison')
+    expect(notCheckedReason('booleanEquality')).toContain('one direct numeric comparison')
+    expect(notCheckedReason('negated')).toContain('one direct numeric comparison')
+    expect(notCheckedReason('looseEquality')).toContain('using ===, !==, <, <=, >, or >=')
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'relationalRequirement'))[0])
       .toContain('left <= right')
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'equalityRequirement'))[0])
       .toContain('left === right')
     expect(unsupported('inequalityRequirement')).toContain('!== needs one fixed finite number')
     expect(analyzedFunction(report, 'finiteRequirement').requires[0]).toContain('Number.isFinite(value)')
-    expect(unsupported('inlineDivision')).toContain('calculate or read the value before console.assert')
-    expect(unsupported('inlineIndex')).toContain('calculate or read the value before console.assert')
-    expect(unsupported('storedCondition')).toContain('one direct numeric comparison')
-    expect(unsupported('booleanEquality')).toContain('one direct numeric comparison')
-    expect(unsupported('negated')).toContain('one direct numeric comparison')
-    expect(unsupported('looseEquality')).toContain('using ===, !==, <, <=, >, or >=')
     const shadowed = entries.get('shadowed')
     if (shadowed?.kind !== 'unsupported') throw new Error('Expected shadowed to be unsupported')
     expect(shadowed.unsupported).toContain('function parameter with type')
@@ -350,6 +352,271 @@ describe('static console.assert contracts', () => {
       .toEqual(['proven'])
     expect(analyzedFunction(report, 'positiveLiteral').assertions?.map(assertion => assertion.verdict))
       .toEqual(['proven'])
+  })
+
+  test('an unsupported interior condition leaves only its own assertion unchecked', () => {
+    const report = analyzeSource('assertion-not-checked.ts', `
+      enum Direction {
+        Up = 1,
+      }
+      let cursor = 0
+
+      function advance(): boolean {
+        cursor = 100
+        return true
+      }
+      function advanceNumber(): number {
+        cursor = 100
+        return 1
+      }
+      function makeRecord(): {x: number} {
+        cursor = 100
+        return {x: 1}
+      }
+      function unsupportedHelper(value: number): number {
+        return [value].reduce((total, item) => total + item, 0)
+      }
+
+      export function sidebarFrame(windowWidth: number, contentWidth: number): {content: number; sidebarLeft: number} {
+        const width = Math.max(400, windowWidth)
+        const content = Math.max(0, Math.min(contentWidth, 100))
+        const sidebarLeft = width - 50
+        console.assert(content >= 0)
+        console.assert(content <= sidebarLeft - 16)
+        console.assert(content === 0 || content > 0)
+        console.assert(content <= 100)
+        return {content, sidebarLeft}
+      }
+      export function doubledSidebarLeft(windowWidth: number): number {
+        return sidebarFrame(windowWidth, 80).sidebarLeft * 2
+      }
+      let scale = 1
+      export function setScale(value: number): void {
+        scale = value
+      }
+      export function readsScale(): number {
+        return scale
+      }
+      export function rolledBack(label: string, rawLeft: number, maybeFlag: boolean | undefined): number {
+        const left = Math.max(0, Math.min(rawLeft, 10))
+        const frame = {left, right: left + 5}
+        console.assert(scale <= Direction.Up)
+        console.assert(label.length > 0)
+        console.assert(maybeFlag)
+        console.assert(frame.left <= frame.right)
+        return frame.right
+      }
+      export function nested(flag: boolean, rawWidth: number): number {
+        const width = Math.max(0, rawWidth)
+        let total = 0
+        for (let index = 0; index < 3; index += 1) {
+          console.assert(total + index >= 0)
+          total += 1
+          console.assert(total >= 1)
+        }
+        if (flag) {
+          console.assert(width + total >= 1)
+          return width + total
+        }
+        return width
+      }
+      export function stopped(value: number): number {
+        const bounded = Math.max(0, value)
+        console.assert(bounded + 1 >= 1)
+        console.assert(bounded >= 0)
+        if (value > 5) return unsupportedHelper(bounded)
+        return bounded
+      }
+      export function operatorForms(flag: boolean, label: string, rawWidth: number, maybeOffset: number | null): number {
+        const width = Math.max(0, rawWidth)
+        console.assert(flag ? width >= 0 : width <= 100)
+        console.assert(typeof label === 'string')
+        console.assert(-width <= 0)
+        console.assert((width | 0) >= 0)
+        console.assert((maybeOffset ?? 0) >= 0)
+        console.assert(flag === true)
+        console.assert((width as number) + 1 > 0)
+        console.assert((width satisfies number) + 1 > 0)
+        console.assert(width >= 0)
+        return width
+      }
+
+      export function calledCondition(): number {
+        cursor = 0
+        console.assert(advance())
+        return 10 / (cursor - 100)
+      }
+      export function assignedCondition(value: number): number {
+        let result = value
+        console.assert((result = 1) > 0)
+        return result
+      }
+      export function updatedCondition(value: number): number {
+        let result = value
+        console.assert(result++ > 0)
+        return result
+      }
+      export function prefixIncrementCondition(value: number): number {
+        let result = value
+        console.assert(++result > 0)
+        return result
+      }
+      export function prefixDecrementCondition(value: number): number {
+        let result = value
+        console.assert(--result >= 0)
+        return result
+      }
+      export function numberCheckCall(value: number): number {
+        const result = Math.max(0, value)
+        console.assert(Number.isFinite(advanceNumber()))
+        return result
+      }
+      export function rightOperandCall(value: number): number {
+        const result = Math.max(0, value)
+        console.assert(0 < advanceNumber())
+        return result
+      }
+      export function ternaryCall(flag: boolean, value: number): number {
+        const result = Math.max(0, value)
+        console.assert(flag ? advance() : true)
+        return result
+      }
+      export function elementIndexCall(values: number[], value: number): number {
+        const result = Math.max(0, value)
+        console.assert(values[advanceNumber()]! > 0)
+        return result
+      }
+      export function receiverCall(value: number): number {
+        const result = Math.max(0, value)
+        console.assert(makeRecord().x > 0)
+        return result
+      }
+      export function negatedCall(value: number): number {
+        const result = Math.max(0, value)
+        console.assert(!advance())
+        return result
+      }
+      export function inCondition(value: number, settings: {offset?: number}): number {
+        const result = Math.max(0, value)
+        console.assert('offset' in settings)
+        return result
+      }
+      export function voidCondition(value: number): number {
+        const result = Math.max(0, value)
+        console.assert(void result === undefined)
+        return result
+      }
+      export function deleteCondition(value: number, settings: {offset?: number}): number {
+        const result = Math.max(0, value)
+        console.assert(delete settings.offset)
+        return result
+      }
+      export function templateCondition(value: number): number {
+        const result = Math.max(0, value)
+        console.assert(\`\${result}\` !== '')
+        return result
+      }
+      export function constructedCondition(value: number): number {
+        const result = Math.max(0, value)
+        console.assert(+new Date(result) >= 0)
+        return result
+      }
+      class ProjectDate extends Date {}
+      export function instanceofCondition(value: number, payload: {createdAt: Date}): number {
+        const result = Math.max(0, value)
+        console.assert(payload.createdAt instanceof ProjectDate)
+        return result
+      }
+      export function declarationFileInstanceof(value: number, payload: {createdAt: Date}): number {
+        const result = Math.max(0, value)
+        console.assert(payload.createdAt instanceof Date)
+        console.assert(result >= 0)
+        return result
+      }
+    `)
+
+    const verdicts = (fn: {assertions?: Array<{verdict: string}>}): string[] =>
+      fn.assertions?.map(assertion => assertion.verdict) ?? []
+
+    const sidebarFrame = analyzedFunction(report, 'sidebarFrame')
+    expect(verdicts(sidebarFrame)).toEqual(['proven', 'notChecked', 'notChecked', 'proven'])
+    expect(sidebarFrame.assertions?.[1]).toMatchObject({
+      verdict: 'notChecked',
+      text: 'content <= sidebarLeft - 16',
+      reason: 'calculate or read the value before console.assert, then check the variable',
+    })
+    expect(sidebarFrame.ensures).toEqual([
+      'return.content is a finite number from 0 through 100',
+      'return.sidebarLeft is a finite number at least 350',
+    ])
+    expect(analyzedFunction(report, 'doubledSidebarLeft').ensures[0])
+      .toStartWith('return is a possibly non-finite number from 700 through Infinity')
+
+    // The first condition stops after its left operand lowered, the second after lowering
+    // finished, and the third before lowering began. Each rolls back to the same state.
+    const rolledBack = analyzedFunction(report, 'rolledBack')
+    expect(verdicts(rolledBack)).toEqual(['notChecked', 'notChecked', 'notChecked', 'proven'])
+    expect(rolledBack.assertions?.map(assertion => assertion.verdict === 'notChecked' ? assertion.reason : null)).toEqual([
+      'an enum member read (replace the enum with plain module consts, e.g. const directionUp = 1)',
+      'calculate or read the value before console.assert, then check the variable',
+      'condition of type boolean | undefined (compare explicitly, e.g. width > 0 or mode !== undefined)',
+      null,
+    ])
+    expect(rolledBack.ensures).toEqual(['return is a finite number from 5 through 15'])
+    // The read of scale lowered before the enum read stopped. Keeping that instruction would
+    // print the same assumption on rolledBack.
+    expect(analyzedFunction(report, 'readsScale').assumptions).toEqual(['scale is finite and not NaN'])
+    expect(rolledBack.assumptions).toEqual([])
+
+    const nested = analyzedFunction(report, 'nested')
+    expect(verdicts(nested)).toEqual(['notChecked', 'proven', 'notChecked'])
+    expect(nested.ensures[0]).toStartWith('return is a possibly non-finite number from 0 through Infinity')
+
+    const stopped = report.functions.find(fn => fn.name === 'stopped')
+    if (stopped?.kind !== 'partial') throw new Error('Expected stopped to be partial')
+    expect(verdicts(stopped)).toEqual(['notChecked', 'blocked'])
+
+    // Positive controls for the same path as the prefix ++ and -- rejections below.
+    expect(verdicts(analyzedFunction(report, 'operatorForms'))).toEqual([
+      'notChecked',
+      'notChecked',
+      'notChecked',
+      'notChecked',
+      'notChecked',
+      'notChecked',
+      'notChecked',
+      'notChecked',
+      'proven',
+    ])
+
+    // Ordinary lowering already treats instanceof against a declaration-file constructor as
+    // effect-free; a project class can define Symbol.hasInstance.
+    expect(verdicts(analyzedFunction(report, 'declarationFileInstanceof'))).toEqual(['notChecked', 'proven'])
+
+    // Removing these conditions could change what later code observes.
+    for (const name of [
+      'calledCondition',
+      'assignedCondition',
+      'updatedCondition',
+      'prefixIncrementCondition',
+      'prefixDecrementCondition',
+      'numberCheckCall',
+      'rightOperandCall',
+      'ternaryCall',
+      'elementIndexCall',
+      'receiverCall',
+      'negatedCall',
+      'inCondition',
+      'voidCondition',
+      'deleteCondition',
+      'templateCondition',
+      'constructedCondition',
+      'instanceofCondition',
+    ]) {
+      const fn = report.functions.find(candidate => candidate.name === name)
+      if (fn?.kind !== 'unsupported') throw new Error(`Expected ${name} to be unsupported`)
+      expect(fn.unsupported).toContain('console.assert')
+    }
   })
 
   test('local producer proofs serve assertions without changing ordinary branches', () => {
