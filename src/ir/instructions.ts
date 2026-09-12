@@ -51,6 +51,11 @@ export type InstructionIR =
   // to what its category allows (declared-kind unknown, or uninitialized for untracked
   // bindings), so later top-level statements cannot compute from a stale pre-skip value.
   | (InstructionBase & {kind: 'moduleHavoc'; binding: ModuleBindingID})
+  // Emitted where the initializer skipped a top-level statement: every slot whose value
+  // holds a record, tuple, or array resets to what its category allows, because the skipped
+  // code can mutate a structure through an alias without naming its binding, e.g.
+  // `Object.assign(config, overrides)`.
+  | (InstructionBase & {kind: 'moduleHavocStructures'})
   | (InstructionBase & {
       kind: 'binary'
       operator: ArithmeticOperator
@@ -121,6 +126,7 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'booleanConstant':
     case 'moduleRead':
     case 'moduleHavoc':
+    case 'moduleHavocStructures':
     case 'platformValue':
       return
     case 'stringLength': visit(instruction.value); return

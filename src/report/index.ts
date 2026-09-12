@@ -1,5 +1,5 @@
 import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
-import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
+import {holdsStructure, recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {AssertionVerdict, FunctionAnalysis, ProgramAnalysis, RequirementFailure, Stop} from '../engine/outcome.ts'
 import {finiteInputs, type FiniteInput} from '../ir/finite-inputs.ts'
 import type {FunctionID, ModuleBindingID, SiteID, ValueID} from '../ir/ids.ts'
@@ -91,7 +91,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'partial',
           name: lowering.name,
-          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.observedBoundsAssumptions, []),
+          assumptions: assumptionLines(lowering, program, analysis.moduleValues, assumedBindings[functionID]!, fn.observedBoundsAssumptions, []),
           partialReasons: fn.stops.map(stop => formatStop(stop, program, analysis)),
           observed,
           ...(fn.assertions.length === 0 ? {} : {assertions: assertionReports(fn.assertions, program)}),
@@ -105,6 +105,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         const assumptions = assumptionLines(
           lowering,
           program,
+          analysis.moduleValues,
           assumedBindings[functionID]!,
           fn.boundsAssumptions,
           finiteAssumptionInputs(lowering, finite, fn.preconditions),
@@ -371,6 +372,7 @@ const keepEverything: KeepPath = () => true
 function assumptionLines(
   fn: FunctionIR,
   program: ProgramIR,
+  moduleValues: ReadonlyArray<AbstractValue | null>,
   assumedBindings: ReadonlySet<ModuleBindingID>,
   boundsAssumptions: BoundsAssumption[],
   finiteRequirements: FiniteInput[],
@@ -416,6 +418,16 @@ function assumptionLines(
   // binding ID with no path detail, so a read binding keeps all its lines.
   for (const bindingID of assumedBindings) {
     const binding = program.moduleBindings[bindingID]!
+    // A published binding enters the set only when its value holds a structure. Nothing in
+    // this file can modify that structure, but another module holding a reference can: an
+    // export, a returned value, and an object containing it all hand one out, and a
+    // readonly type does not stop it, because TypeScript lets a readonly property be
+    // assigned to a mutable one. The line names what the claims rest on without tracking
+    // how a reference escapes, so it prints for unexported bindings too.
+    if (moduleValues[bindingID] != null) {
+      assumptions.push(`other modules do not modify ${binding.name} or any object or array inside it`)
+      continue
+    }
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) throw new Error(`Module binding ${binding.name} has no declared kind to assume`)
     pushRootAssumptions(binding.name, declaredKind, assumptions, keepEverything)
@@ -767,8 +779,10 @@ function declaredNumberAssumption(declared: Extract<DeclaredKind, {kind: 'number
   return `a finite${integer} number from ${String(declared.interval.lower)} through ${String(declared.interval.upper)}`
 }
 
-// Per function, the module bindings whose declared-kind seeding the result rests on.
-// The dependency travels through calls so callers print their callees' assumptions too.
+// Per function, the module bindings whose trust the result rests on: a binding seeded from
+// its declared kind, or a published value holding a structure that other modules could
+// modify. The dependency travels through calls so callers print their callees' assumptions
+// too.
 function functionModuleAssumptions(
   program: ProgramIR,
   analysis: ProgramAnalysis,
@@ -777,7 +791,11 @@ function functionModuleAssumptions(
   const direct = usage.map(fn => {
     const reads = new Set<ModuleBindingID>()
     for (const bindingID of fn.moduleBindings) {
-      if (analysis.moduleValues[bindingID] != null) continue
+      const published = analysis.moduleValues[bindingID]
+      if (published != null) {
+        if (holdsStructure(published)) reads.add(bindingID)
+        continue
+      }
       const binding = program.moduleBindings[bindingID]
       if (binding == null) throw new Error(`Unknown module binding ${bindingID}`)
       if (declaredKindOf(binding.category) != null) reads.add(bindingID)

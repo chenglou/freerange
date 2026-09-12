@@ -22,6 +22,7 @@ import {
   type AbstractNumber,
 } from '../domain/number.ts'
 import {
+  holdsStructure,
   joinValues,
   recordProperty,
   recordPropertiesByName,
@@ -375,6 +376,21 @@ function evaluateInstructionKinded(
       state.shared[instruction.binding] = declaredKind == null
         ? null
         : coveringKindValue(declaredKind)
+      return value({kind: 'void'})
+    }
+    case 'moduleHavocStructures': {
+      // Decided from each slot's value rather than the declared kind: a binding typed
+      // through a declaration-file mapped type, e.g. `Readonly<{gap: number}>`, classifies as
+      // opaque yet holds a record. A string constant holds no structure and keeps its
+      // content, and a slot still uninitialized stays that way.
+      for (let index = 0; index < state.shared.length; index++) {
+        const slot = state.shared[index]
+        if (slot == null || !holdsStructure(slot)) continue
+        const binding = context.program.moduleBindings[index]
+        if (binding == null) throw new Error(`Unknown module binding ${index}`)
+        const declaredKind = declaredKindOf(binding.category)
+        state.shared[index] = declaredKind == null ? null : coveringKindValue(declaredKind)
+      }
       return value({kind: 'void'})
     }
     case 'object': {

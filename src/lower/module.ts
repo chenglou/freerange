@@ -1,8 +1,6 @@
 import * as ts from 'typescript'
 import type {ModuleBindingID} from '../ir/ids.ts'
 import {
-  declaredKindOf,
-  holdsMutableStructure,
   moduleInitializerName,
   type DeclaredKind,
   type DeclaredNumberInterval,
@@ -261,12 +259,13 @@ export function lowerModuleInitializer(
       // statement writes it directly, or when the statement can execute unknown code and
       // the whole-file scan demoted the scalar. Unknown code can reach this file's
       // functions and their writes; a scalar that only top-level code assigns again resets
-      // too, which is conservative. Structural bindings (records, tuples, arrays —
-      // nullish-wrapped included) are additionally ALL havocked: a skipped statement can
+      // too, which is conservative. Every slot holding a structure (records, tuples,
+      // arrays — nullish-wrapped included) additionally resets: a skipped statement can
       // mutate one without any write-position mention of its binding —
       // `Object.assign(config, overrides)` holds the binding in argument position,
       // `scores.push(999)` in receiver position, and an alias variant mentions it nowhere —
-      // so no mention scan is sound for them.
+      // so no mention scan is sound for them. The evaluator decides from each slot's value,
+      // so a record typed through a mapped type like `Readonly<T>` resets too.
       const effects = scanSkippedModuleEffects(
         statement,
         checker,
@@ -274,14 +273,12 @@ export function lowerModuleInitializer(
         scan.bindings,
       )
       for (let binding = 0; binding < scan.bindings.length; binding++) {
-        const category = scan.bindings[binding]!.category
-        const declared = declaredKindOf(category)
         if (effects.directWrites[binding] === true
-          || (category.kind === 'kind' && effects.invokesUnknownCode)
-          || (declared != null && holdsMutableStructure(declared))) {
+          || (scan.bindings[binding]!.category.kind === 'kind' && effects.invokesUnknownCode)) {
           addInstruction(context, statement, {kind: 'moduleHavoc', binding})
         }
       }
+      addInstruction(context, statement, {kind: 'moduleHavocStructures'})
     }
   }
   if (context.currentBlock.terminator == null) {

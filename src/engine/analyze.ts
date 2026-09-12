@@ -1,11 +1,11 @@
 import {constantNumber} from '../domain/number.ts'
-import {joinValues, type AbstractValue} from '../domain/value.ts'
+import {holdsStructure, joinValues, type AbstractValue} from '../domain/value.ts'
 import type {ValueIdentity, ValueIdentityOwner} from '../domain/value-identity.ts'
 import type {BlockID, FunctionID, SiteID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import {finiteInputExpression, finiteInputs} from '../ir/finite-inputs.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
-import {declaredKindOf, declaredKindValue, holdsMutableStructure, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import {declaredKindOf, declaredKindValue, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
   constantRequirementStatus,
@@ -221,29 +221,31 @@ function publishedModuleValues(
       ? evaluation.normal.sharedState
       : joinModuleSlots(run.moduleEnd, evaluation.normal.sharedState)
 
-  // Exact structural publishing (records, tuples, arrays — nullish-wrapped included)
-  // additionally requires the whole file to be fully analyzed. Analyzed code cannot write
-  // into an object, but rejected function bodies and skipped statements run at runtime
-  // too, and they can mutate a structure through any alias — `Object.assign(config, ...)`
-  // or `queue?.push(x)` inside a function that never lowered, invisible to the whole-file
-  // write scan because the binding sits in argument or receiver position, not write
-  // position. Scalars are unaffected: a number is copied on read, so only a write-position
-  // form on the binding itself can change it, and the scan sees those even in rejected
-  // bodies. When the file is not fully analyzed, structural bindings fall back to their
-  // declared-shape hedge with per-leaf assumes lines.
+  // Exact publishing of a value holding a structure (records, tuples, arrays — nullish-wrapped
+  // included) additionally requires the whole file to be fully analyzed. Analyzed code
+  // cannot write into an object, but rejected function bodies and skipped statements run at
+  // runtime too, and they can mutate a structure through any alias — `Object.assign(config,
+  // ...)` or `queue?.push(x)` inside a function that never lowered, invisible to the
+  // whole-file write scan because the binding sits in argument or receiver position, not
+  // write position. Scalars are unaffected: a number is copied on read, so only a
+  // write-position form on the binding itself can change it, and the scan sees those even
+  // in rejected bodies. When the file is not fully analyzed, a structural binding falls back
+  // to its declared kind: the declared-shape hedge with per-leaf assumes lines, or, for a
+  // record typed through a declaration-file mapped type, a claim-free value whose reads stop.
+  // Whether a binding holds a structure is decided from the value initialization built, not
+  // from the declared kind, because such a mapped type, e.g. `const config: Readonly<{gap:
+  // number}> = {gap: 8}`, classifies as opaque yet holds a record. Other modules can still
+  // modify a published structure after initialization; the report prints that assumption on
+  // every function whose result rests on such a structure.
   const fullyAnalyzed = evaluation.stops.length === 0
     && program.initializerSkips.length === 0
     && program.functions.every(lowered => lowered.kind === 'lowered')
 
   return program.moduleBindings.map((binding, index) => {
     if (binding.category.kind !== 'value' && binding.category.kind !== 'function') return null
-    // holdsMutableStructure, not a top-level tag check: a `number[] | null` binding is
-    // nullish at the top level yet the array inside is exactly as alias-mutable.
-    if (binding.category.kind === 'value'
-      && holdsMutableStructure(binding.category.declaredKind)
-      && !fullyAnalyzed) return null
-    const slot = end?.[index]
-    return slot ?? null
+    const slot = end?.[index] ?? null
+    if (slot != null && holdsStructure(slot) && !fullyAnalyzed) return null
+    return slot
   })
 }
 

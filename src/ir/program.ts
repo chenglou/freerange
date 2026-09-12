@@ -281,29 +281,6 @@ function exactTagValue(tagValue: string | boolean): AbstractValue {
   return {kind: 'boolean', canBeTrue: tagValue, canBeFalse: !tagValue}
 }
 
-// Whether values of this declared kind can be mutated through an alias: a record, tuple,
-// or array anywhere inside, including behind a nullish wrapper (`number[] | null`).
-// Rejected function bodies and skipped statements run at runtime too, and they can mutate
-// such a value with no write-position mention of its binding — `queue?.push(x)` and
-// `Object.assign(config, overrides)` both hold the binding in receiver or argument
-// position, invisible to the whole-file write scan. Scalars are copied on read, so only a
-// write-position form can change one, and the scan sees those even in rejected bodies.
-export function holdsMutableStructure(declared: DeclaredKind): boolean {
-  switch (declared.kind) {
-    case 'record':
-    case 'tuple':
-    case 'array':
-    case 'taggedUnion':
-      return true
-    case 'nullish':
-      return holdsMutableStructure(declared.inner)
-    case 'number':
-    case 'boolean':
-    case 'opaque':
-      return false
-  }
-}
-
 // The truly covering value of a declared kind: any number INCLUDING NaN and infinities.
 // This is what a havocked slot resets to — a skipped statement can put NaN in a number
 // binding (e.g. `scale = Number.parseFloat(text)`), and later top-level statements compute

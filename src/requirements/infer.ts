@@ -116,6 +116,7 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       // not caller-visible, so a requirement cannot name it.
       case 'moduleRead':
       case 'moduleHavoc':
+      case 'moduleHavocStructures':
       case 'platformValue':
       case 'booleanConstant':
       case 'not':

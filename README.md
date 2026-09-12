@@ -349,6 +349,8 @@ When a conditional or nullish expression chooses between different object types,
 
 Freerange assumes that property reads are stable and perform no work during one analyzed synchronous call. A getter or Proxy that changes its answer or performs work is outside the scope.
 
+Freerange also assumes that other modules don't modify a module's objects and arrays after initialization, e.g. `layoutConfig.gap = 100` in a file that imports `export const layoutConfig = {gap: 8, columns: 3}`. `fr --audit` prints that assumption on every function that reads such an object or array, directly or through a same-file call: `assumes: other modules do not modify layoutConfig or any object or array inside it`. A `readonly` type or `as const` doesn't remove the line, because type-checked code can still modify the value, e.g. by assigning a readonly property to a mutable property type or by passing the value to `Object.assign`.
+
 #### No object and array writes
 
 Freerange allows local variables to be reassigned but does not track writes through an object or array. Return a new value when the application does not require mutation or stable object identity:
@@ -439,7 +441,7 @@ Freerange uses a few terms consistently:
 
 - `requires`: a condition the caller must satisfy. The function's guarantees assume the condition is true.
 - `ensures`: a guarantee about the returned value whenever the function returns.
-- `assumes`: an input condition Freerange accepts without proving, such as an array being dense or every element of a `number[]` being finite.
+- `assumes`: an input condition Freerange accepts without proving, such as an array being dense, every element of a `number[]` being finite, or other modules not modifying a module-level object.
 - `proves`: a successful static `console.assert` check.
 - `unsupported`: Freerange cannot analyze the function because it uses code outside the analyzed subset. Freerange shows the first blocker you can potentially refactor.
 - `partially supported`: Freerange can analyze some, but not all, of the function.

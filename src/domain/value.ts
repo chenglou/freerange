@@ -119,6 +119,29 @@ export function unknownBoolean(): AbstractBoolean {
   return {kind: 'boolean', canBeTrue: true, canBeFalse: true}
 }
 
+// Whether the value holds a record, tuple, array, or tagged union, including behind a
+// nullish wrapper: the values that code holding a reference can modify at runtime, e.g.
+// `Object.assign(config, overrides)` or `widths.push(7)`. Numbers, booleans, and missing
+// values are copied on read. Opaque values carry no claims, so modifying one falsifies
+// nothing the analysis says.
+export function holdsStructure(value: AbstractValue): boolean {
+  switch (value.kind) {
+    case 'record':
+    case 'tuple':
+    case 'array':
+    case 'taggedUnion':
+      return true
+    case 'maybeNullish':
+      return holdsStructure(value.inner)
+    case 'number':
+    case 'boolean':
+    case 'void':
+    case 'nullish':
+    case 'opaque':
+      return false
+  }
+}
+
 export function recordValue(properties: Array<{name: string; value: AbstractValue}>): AbstractRecord {
   return {kind: 'record', properties}
 }

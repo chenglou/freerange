@@ -87,13 +87,152 @@ describe('module state and nullability', () => {
         return config.margins.left
       }
     `)
-    // The exact 48 proves the record's property values flowed in, not just its shape; and
-    // a trusted exact value needs no assumption line.
-    expect(analyzedFunction(report, 'cellCount').ensures)
+    // The exact 48 proves the record's property values flowed in, not just its shape. The
+    // exact value needs no per-field assumption, only that other modules leave it unmodified.
+    const cells = analyzedFunction(report, 'cellCount')
+    expect(cells.assumptions)
+      .toEqual(['other modules do not modify gridSize or any object or array inside it'])
+    expect(cells.ensures)
       .toEqual(['return is a finite integer number from 48 through 48'])
     // Module state is a tree of records hanging off roots; publishing reaches the leaves.
     expect(analyzedFunction(report, 'leftEdge').ensures)
       .toEqual(['return is a finite integer number from 4 through 4'])
+  })
+
+  test('published module structures assume other modules leave them unmodified', () => {
+    // A module holding a reference can modify a published structure after initialization,
+    // e.g. an importer running `layoutConfig.gap = 100` or `columnWidths.push(7)` makes
+    // these assertions fail. The line prints however the reference escapes — an export, a
+    // returned value, an object containing it — and readonly types do not remove it,
+    // because type-checked code can still modify them, e.g. by assigning a readonly property
+    // to a mutable one or by calling Object.assign. Callers print it too, while a scalar
+    // module constant is copied on read and needs no line.
+    const report = analyzeSource('module-published-structures.ts', `
+      export const layoutConfig = {gap: 8, columns: 3}
+      export const columnWidths: number[] = [100, 120, 140]
+      const defaultInsets = {left: 4, right: 12}
+      export const spacing = {small: 4, large: 24} as const
+      const pagePadding = 16
+      export function totalGap(): number {
+        const gap = layoutConfig.gap * (layoutConfig.columns - 1)
+        console.assert(gap === 16)
+        return gap
+      }
+      export function firstWidth(): number {
+        const first = columnWidths[0]!
+        console.assert(first >= 100)
+        return first
+      }
+      export function insets(): {left: number; right: number} {
+        return defaultInsets
+      }
+      export function largeSpacing(): number {
+        return spacing.large + pagePadding
+      }
+      export function doubledGap(): number {
+        return totalGap() * 2
+      }
+      export function padding(): number {
+        return pagePadding
+      }
+    `)
+    const unmodified = (name: string): string =>
+      `other modules do not modify ${name} or any object or array inside it`
+    const gap = analyzedFunction(report, 'totalGap')
+    expect(gap.assumptions).toEqual([unmodified('layoutConfig')])
+    expect(gap.assertions?.map(assertion => assertion.verdict)).toEqual(['proven'])
+    const first = analyzedFunction(report, 'firstWidth')
+    expect(first.assumptions).toEqual([unmodified('columnWidths')])
+    expect(first.assertions?.map(assertion => assertion.verdict)).toEqual(['proven'])
+    expect(analyzedFunction(report, 'insets').assumptions).toEqual([unmodified('defaultInsets')])
+    expect(analyzedFunction(report, 'largeSpacing').assumptions).toEqual([unmodified('spacing')])
+    expect(analyzedFunction(report, 'doubledGap').assumptions).toEqual([unmodified('layoutConfig')])
+    expect(analyzedFunction(report, 'padding').assumptions).toEqual([])
+
+    // An as const tuple prints the line like a record, and a partially analyzed reader and
+    // its caller print it alongside their evidence. A binding published as null holds no
+    // structure, and a number copied out of a record during initialization is a scalar, so
+    // neither needs the line.
+    const extras = analyzeSource('module-structure-extras.ts', `
+      export const layoutConfig = {gap: 8, columns: 3}
+      export const gapSizes = [4, 8, 24] as const
+      const defaultOverride: {gap: number} | null = null
+      const copiedGap = layoutConfig.gap
+      export function largestGap(): number {
+        return gapSizes[2]
+      }
+      export function overrideGap(): number {
+        return defaultOverride?.gap ?? 0
+      }
+      export function readCopiedGap(): number {
+        return copiedGap
+      }
+      export function countdownGap(steps: number): number {
+        if (steps <= 0) return layoutConfig.gap
+        return countdownGap(steps - 1)
+      }
+      export function countdownFromTwo(): number {
+        return countdownGap(2)
+      }
+    `)
+    expect(analyzedFunction(extras, 'largestGap').assumptions).toEqual([unmodified('gapSizes')])
+    expect(analyzedFunction(extras, 'overrideGap').assumptions).toEqual([])
+    expect(analyzedFunction(extras, 'readCopiedGap').assumptions).toEqual([])
+    for (const name of ['countdownGap', 'countdownFromTwo']) {
+      const partial = extras.functions.find(fn => fn.name === name)
+      expect(partial?.kind).toBe('partial')
+      expect(partial?.kind === 'partial' ? partial.assumptions : []).toContain(unmodified('layoutConfig'))
+    }
+  })
+
+  test('a published structure typed through a mapped type follows the same rules', () => {
+    // Readonly<...> and Record<...> classify as opaque, yet the binding holds the record its
+    // literal built, so publishing and the reset after a skipped statement both decide from
+    // the value. In a fully analyzed file the record publishes with the modification line.
+    // Once a rejected function or a skipped statement can mutate it, reads of the record
+    // carry no claims and stop, so nothing derived from its old contents publishes; at top
+    // level, declarations after such a read publish nothing either.
+    const analyzed = analyzeSource('module-mapped-type.ts', `
+      const settings: Readonly<{gap: number}> = {gap: 8}
+      export function readGap(): number {
+        return settings.gap
+      }
+    `)
+    const reader = analyzedFunction(analyzed, 'readGap')
+    expect(reader.assumptions)
+      .toEqual(['other modules do not modify settings or any object or array inside it'])
+    expect(reader.ensures).toEqual(['return is a finite integer number from 8 through 8'])
+
+    const mutated = analyzeSource('module-mapped-type-mutated.ts', `
+      const settings: Readonly<{gap: number}> = {gap: 8}
+      export function mutateSomehow(): void {
+        Object.assign(settings, {gap: 100})
+      }
+      export function readGap(): number {
+        return settings.gap
+      }
+    `)
+    expect(mutated.functions.find(fn => fn.name === 'readGap')).toEqual({
+      kind: 'partial',
+      name: 'readGap',
+      assumptions: [],
+      partialReasons: ['uses a value whose runtime kind the analysis cannot establish (at module-mapped-type-mutated.ts:7:16)'],
+      observed: [],
+    })
+
+    const skipped = analyzeSource('module-mapped-type-skip.ts', `
+      const sizes: Record<'small' | 'large', number> = {small: 4, large: 24}
+      Object.assign(sizes, {large: 1})
+      const largeSize = sizes.large
+      export function readLargeSize(): number {
+        const value = largeSize
+        console.assert(value === 24)
+        return value
+      }
+    `)
+    const largeReader = analyzedFunction(skipped, 'readLargeSize')
+    expect(largeReader.assumptions).toEqual(['largeSize is finite and not NaN'])
+    expect(largeReader.assertions?.map(assertion => assertion.verdict)).toEqual(['unproven'])
   })
 
   test('keeps only the declared shape of a module record that a function rebinds', () => {
