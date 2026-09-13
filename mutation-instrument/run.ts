@@ -14,6 +14,7 @@ import {appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFi
 import {dirname, join} from 'node:path'
 import {exportedEntries, loadProgram} from './analyze.ts'
 import {applyCallerRules, type CallerRule, type CallerRuleFile, type CallerRulePlan, type DropList} from './callers.ts'
+import {runChild, type ChildRun} from './children.ts'
 import {capUnboundedEnds, DOMAIN_VERSIONS, MAX_ARRAY_LENGTH, NUMBER_CAP, type Value} from './domain.ts'
 import {decodeJson, encodeJson, formatCall} from './encode.ts'
 import {framesHarnessCall} from './frames-harness.ts'
@@ -23,11 +24,10 @@ import {packingHarnessCall} from './packing-harness.ts'
 import {harnessCall} from './popovers-harness.ts'
 import {writeReport} from './report.ts'
 import {normalizedMutants, type CopyRule, type FramesReference, type KeyedMutantRule, type PackingReference, type PlantedReference, type Rules, type SysmutRow} from './rules.ts'
-import {CRITERION_RULE, type BaselineLine, type CallLine, type ChildLine, type CopyPlan, type DoneLine, type EntryPlan, type FilePlan, type Job, type MutantPlan, type Plan, type ReplayLine, type Site, type VerifyLine} from './types.ts'
+import {CRITERION_RULE, type BaselineLine, type CallLine, type CopyPlan, type EntryPlan, type FilePlan, type MutantPlan, type Plan, type ReplayLine, type Site, type VerifyLine} from './types.ts'
 
-const WORKER = realpathSync(new URL('./worker.ts', import.meta.url).pathname)
 const FR = realpathSync(new URL('../fr.ts', import.meta.url).pathname)
-const INSTRUMENT_DIR = dirname(WORKER)
+const INSTRUMENT_DIR = dirname(realpathSync(new URL(import.meta.url).pathname))
 const HEARTBEAT_EVERY_INPUTS = 1024
 const STARTUP_SECONDS = 0.3
 
@@ -315,44 +315,6 @@ if (planOnly) {
 }
 
 // -- child processes ------------------------------------------------------------
-
-type ChildRun = {exitCode: number | null; timedOut: string | null; stderr: string; done: DoneLine | null; ms: number}
-
-async function runChild(job: Job, hardLimitMs: number, heartbeatTimeoutMs: number, onLine: (line: ChildLine) => void): Promise<ChildRun> {
-  const childStart = performance.now()
-  const child = Bun.spawn(['bun', WORKER, encodeJson(job)], {stdout: 'pipe', stderr: 'pipe'})
-  let lastSeen = performance.now()
-  let timedOut: string | null = null
-  let done: DoneLine | null = null
-  const timer = setInterval(() => {
-    const now = performance.now()
-    if (now - lastSeen > heartbeatTimeoutMs) timedOut ??= `no output for ${Math.round((now - lastSeen) / 1000)} s`
-    if (now - childStart > hardLimitMs) timedOut ??= `past the hard limit of ${Math.round(hardLimitMs / 1000)} s`
-    if (timedOut != null) child.kill('SIGKILL')
-  }, 500)
-  const stderrText = new Response(child.stderr).text()
-  const reader = child.stdout.getReader()
-  const decoder = new TextDecoder()
-  let pending = ''
-  for (;;) {
-    const chunk = await reader.read()
-    if (chunk.done) break
-    lastSeen = performance.now()
-    pending += decoder.decode(chunk.value, {stream: true})
-    let newline = pending.indexOf('\n')
-    while (newline >= 0) {
-      const line = decodeJson(pending.slice(0, newline)) as ChildLine
-      pending = pending.slice(newline + 1)
-      if (line.type === 'done') done = line
-      onLine(line)
-      newline = pending.indexOf('\n')
-    }
-  }
-  const exitCode = await child.exited
-  clearInterval(timer)
-  const stderr = await stderrText
-  return {exitCode, timedOut, stderr: stderr.slice(-4000), done, ms: performance.now() - childStart}
-}
 
 const noteChild = (run: ChildRun) => {
   if (run.done != null) maxChildRssKb = Math.max(maxChildRssKb, run.done.maxRssKb)

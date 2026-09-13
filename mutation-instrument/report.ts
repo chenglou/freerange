@@ -2,108 +2,24 @@
 // small summary per mutant is kept. The reference sections differ per family: virtualization compares with the systematic
 // mutants' sweep record; popovers, frames and packing with the planted mutants' record and the registered kill clause.
 // usage: bun mutation-instrument/report.ts <run dir> <rules.json>   (rewrites the report of an existing run)
-import {createHash} from 'node:crypto'
-import {createReadStream, existsSync, readFileSync, writeFileSync} from 'node:fs'
+//        bun mutation-instrument/report.ts <run dir> <rules.json> --out <new dir>
+//        (writes the report into a new directory; the run directory is only read)
+import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
-import {createInterface} from 'node:readline'
 import {maxMagnitude, type Value} from './domain.ts'
+import {domainLines} from './domain-lines.ts'
 import {decodeJson, formatCall} from './encode.ts'
-import {decodePlan} from './plan-file.ts'
-import type {FramesReference, KnownFalseRule, PackingReference, PlantedReference, RecordedCatch, Rules, SysmutRow} from './rules.ts'
-import {CRITERION_RULE, NOISE_RULES, type BaselineLine, type CallLine, type CopyPlan, type FirstFiring, type Plan, type ReplayLine, type ResultLine, type Site, type VerifyLine} from './types.ts'
+import type {FramesReference, PackingReference, PlantedReference, RecordedCatch, Rules, SysmutRow} from './rules.ts'
+import {formatInput, jsonLines, killed, listOrNone, loadRun, PRODUCERS, readLines, siteLabel, siteOf, table, type AsWrittenReport, type KillClause, type Run} from './run-data.ts'
+import {CRITERION_RULE, NOISE_RULES, type CallLine, type CopyPlan, type FirstFiring, type ReplayLine, type Site} from './types.ts'
 
-type FailureLine = {type: 'failure'; mutant: string; base: string; exitCode: number | null; timedOut: string | null; stderr: string}
 type SweepReplayRecord = {mutant: string; sweepExit: number | null; sweepFirst: {fn: string; label: string; line: number; firstCall: string; firstArgs: string} | null; sweepEvaluations: number | null; replay: ReplayLine | null}
 type ExampleReplayRecord = {mutant: string; copy: string; id: string; source: string; helper: string; entry: string; args: string; replay: ReplayLine | null}
-type VerifyRecord = {base: string; entry: string; site: number; verify: VerifyLine | null}
 type CallRecord = {mutant: string; entry: string; site: number; input: string; call: CallLine | null}
-type KnownFalseEntry = {copy?: string; siteKey?: string; base?: string; function?: string; text?: string; occurrence?: number; cause: string}
-type KnownFalseList = {rule: KnownFalseRule; sha1: string | null; keys: Set<string>}
 type ProbeRow = {mutant: string; findings: {kind: string; count: number}[]}
-type Kill = {entry: string; site: number; first: FirstFiring}
-
-type MutantSummary = {
-  key: string
-  copy: string
-  entries: number
-  killSites: Set<number>[] // per rule
-  first: (Kill | null)[] // per rule, the killing input with the lowest index
-  laterProducer: boolean[] // per rule: some kill came from P1-P3
-  killEntries: Set<string>[] // per rule, the entries with a kill
-  cleanKill: boolean // criterion rule, through a site with 0 baseline firings for that entry
-  throws: number
-  throwFirst: string | null
-  nonFinite: number
-  nonFiniteFirst: string | null
-  behaviorDiffs: number
-  behaviorFirst: string | null
-  overBudget: number // inputs whose original call passed the step budget, summed over entries
-  mutantOverBudget: number
-  mutantOverBudgetFirst: string | null
-  digestMismatches: number
-  failure: string | null
-}
-
-type Run = {
-  outDir: string
-  rules: Rules
-  meta: Record<string, unknown>
-  plan: Plan
-  copyOf: Map<string, CopyPlan>
-  baseline: Map<string, BaselineLine>
-  baselineDigestMismatches: number
-  summaries: Map<string, MutantSummary>
-  resultLines: number
-  verifies: VerifyRecord[]
-  knownFalse: KnownFalseList[]
-}
-
 type Writer = (text?: string) => void
 
-async function* jsonLines(path: string): AsyncGenerator<unknown> {
-  if (!existsSync(path)) return
-  const reader = createInterface({input: createReadStream(path), crlfDelay: Infinity})
-  for await (const line of reader) if (line !== '') yield decodeJson(line)
-}
-
-async function readLines<T>(path: string): Promise<T[]> {
-  const result: T[] = []
-  for await (const value of jsonLines(path)) result.push(value as T)
-  return result
-}
-
-function formatInput(entry: string, first: FirstFiring | null): string {
-  if (first == null) return ''
-  return first.input == null ? '(input above 2 KB, not kept)' : formatCall(entry, decodeJson(first.input) as Value[])
-}
-
-const PRODUCERS = ['P0', 'P1', 'P2', 'P3']
 const RULE_LABELS = NOISE_RULES.map((rule) => `noise@${rule}`)
-
-function listOrNone(items: string[], separator = ', ') {
-  return items.length === 0 ? 'none' : items.join(separator)
-}
-
-function cell(text: string | number) {
-  return String(text).replaceAll('|', '\\|').replaceAll('\n', ' ')
-}
-
-function table(header: string[], rows: (string | number)[][]): string {
-  if (rows.length === 0) return 'None.'
-  return [`| ${header.join(' | ')} |`, `|${header.map(() => '---').join('|')}|`, ...rows.map((row) => `| ${row.map(cell).join(' | ')} |`)].join('\n')
-}
-
-function killed(run: Run, key: string, rule: number) {
-  return (run.summaries.get(key)?.killSites[rule]!.size ?? 0) > 0
-}
-
-function siteOf(run: Run, copy: string, site: number): Site {
-  return run.copyOf.get(copy)!.sites[site]!
-}
-
-function siteLabel(site: Site) {
-  return `${site.functionName}:${site.file}:${site.line} ${site.text}`
-}
 
 function killingLines(run: Run, key: string, rule: number): string[] {
   const summary = run.summaries.get(key)
@@ -111,88 +27,7 @@ function killingLines(run: Run, key: string, rule: number): string[] {
   return [...summary.killSites[rule]!].map((site) => siteOf(run, summary.copy, site)).sort((a, b) => a.index - b.index).map((site) => `${site.file}:${site.line}`)
 }
 
-function knownKey(entry: KnownFalseEntry): string {
-  if (entry.siteKey != null && entry.copy != null) return `${entry.copy}|${entry.siteKey}|${entry.cause}`
-  return `${entry.base}|${entry.base}|${entry.function}|${entry.text}|${entry.occurrence}|${entry.cause}`
-}
-
-async function loadRun(outDir: string, rules: Rules): Promise<Run> {
-  const meta = decodeJson(readFileSync(join(outDir, 'meta.json'), 'utf8')) as Record<string, unknown>
-  const plan = decodePlan(readFileSync(join(outDir, 'plan.json'), 'utf8'))
-  const copyOf = new Map(plan.copies.map((copy) => [copy.copy, copy]))
-  const digestOf = new Map<string, number>()
-  for (const copy of plan.copies) for (const entry of copy.entries) digestOf.set(`${copy.copy}.${entry.name}`, entry.digest)
-  const knownFalse: KnownFalseList[] = rules.data.knownFalse.map((rule) => {
-    const path = join(rules.data.scratch, rule.path)
-    if (!existsSync(path)) return {rule, sha1: null, keys: new Set<string>()}
-    const text = readFileSync(path)
-    const list = decodeJson(text.toString()) as {entries: KnownFalseEntry[]}
-    return {rule, sha1: createHash('sha1').update(text).digest('hex'), keys: new Set(list.entries.map(knownKey))}
-  })
-
-  const baseline = new Map<string, BaselineLine>()
-  let baselineDigestMismatches = 0
-  // Baseline lines written before domain@v3-callers have no callerDiscarded count, which is 0 there.
-  for (const recorded of await readLines<Omit<BaselineLine, 'callerDiscarded'> & {callerDiscarded?: number}>(join(outDir, 'baseline.jsonl'))) {
-    const line: BaselineLine = {...recorded, callerDiscarded: recorded.callerDiscarded ?? 0}
-    baseline.set(`${line.base}.${line.entry}`, line)
-    if (line.digest !== digestOf.get(`${line.base}.${line.entry}`)) baselineDigestMismatches += 1
-  }
-  const baselineFires = (copy: string, entry: string, site: number, rule: number) => {
-    const firing = baseline.get(`${copy}.${entry}`)?.firings.find((candidate) => candidate.site === site)
-    return firing == null ? 0 : firing.counts[rule]!.reduce((sum, count) => sum + count, 0)
-  }
-
-  const summaries = new Map<string, MutantSummary>()
-  const summaryOf = (key: string, copy: string) => {
-    let summary = summaries.get(key)
-    if (summary == null) {
-      summary = {
-        key, copy, entries: 0, killSites: NOISE_RULES.map(() => new Set<number>()), first: NOISE_RULES.map(() => null), laterProducer: NOISE_RULES.map(() => false),
-        killEntries: NOISE_RULES.map(() => new Set<string>()), cleanKill: false,
-        throws: 0, throwFirst: null, nonFinite: 0, nonFiniteFirst: null, behaviorDiffs: 0, behaviorFirst: null, overBudget: 0, mutantOverBudget: 0, mutantOverBudgetFirst: null, digestMismatches: 0, failure: null,
-      }
-      summaries.set(key, summary)
-    }
-    return summary
-  }
-  let resultLines = 0
-  for await (const value of jsonLines(join(outDir, 'results.jsonl'))) {
-    const line = value as ResultLine | FailureLine
-    if (line.type === 'failure') {
-      summaryOf(line.mutant, line.base).failure = line.timedOut ?? `exit ${line.exitCode}: ${line.stderr.slice(-300)}`
-      continue
-    }
-    resultLines += 1
-    const summary = summaryOf(line.mutant, line.base)
-    summary.entries += 1
-    if (line.digest !== digestOf.get(`${line.base}.${line.entry}`)) summary.digestMismatches += 1
-    for (const kill of line.kills) {
-      for (let rule = 0; rule < NOISE_RULES.length; rule++) {
-        const first = kill.first[rule]
-        if (first == null) continue
-        summary.killSites[rule]!.add(kill.site)
-        summary.killEntries[rule]!.add(line.entry)
-        const counts = kill.counts[rule]!
-        if (counts[1]! + counts[2]! + counts[3]! > 0) summary.laterProducer[rule] = true
-        const previous = summary.first[rule]
-        if (previous == null || first.index < previous.first.index) summary.first[rule] = {entry: line.entry, site: kill.site, first}
-        if (rule === CRITERION_RULE && baselineFires(line.base, line.entry, kill.site, rule) === 0) summary.cleanKill = true
-      }
-    }
-    summary.throws += line.throws.count
-    summary.throwFirst ??= line.throws.first == null ? null : `${line.entry}: ${line.throws.detail} at ${formatInput(line.entry, line.throws.first)}`
-    summary.nonFinite += line.nonFiniteReturns.count
-    summary.nonFiniteFirst ??= line.nonFiniteReturns.first == null ? null : `${line.entry}: ${line.nonFiniteReturns.detail} at ${formatInput(line.entry, line.nonFiniteReturns.first)}`
-    summary.behaviorDiffs += line.behavior.count
-    summary.behaviorFirst ??= line.behavior.first == null ? null : `${formatInput(line.entry, line.behavior.first)}: ${line.behavior.detail}`
-    summary.overBudget += line.overBudget
-    summary.mutantOverBudget += line.mutantOverBudget.count
-    summary.mutantOverBudgetFirst ??= line.mutantOverBudget.first == null ? null : `${formatInput(line.entry, line.mutantOverBudget.first)}: ${line.mutantOverBudget.detail}`
-  }
-  const verifies = await readLines<VerifyRecord>(join(outDir, 'verify.jsonl'))
-  return {outDir, rules, meta, plan, copyOf, baseline, baselineDigestMismatches, summaries, resultLines, verifies, knownFalse}
-}
+type FamilySections = {criterion: () => string[]; killClauses: KillClause[]; tsvColumns: string[]; tsv: (key: string) => (string | number | boolean)[]}
 
 // -- Common sections ----------------------------------------------------------
 
@@ -223,10 +58,7 @@ function baselineSection(run: Run, write: Writer): FalseAlarmVerdicts {
   for (const line of run.baseline.values()) {
     const copy = run.copyOf.get(line.base)!
     const entry = copy.entries.find((candidate) => candidate.name === line.entry)!
-    const domainLines = new Set([
-      ...entry.preconditions.filter((precondition) => precondition.origin === 'entry' || precondition.use !== 'unparsed').map((precondition) => `${precondition.file}:${precondition.line}`),
-      ...entry.leakSites.map((site) => `${copy.sites[site]!.file}:${copy.sites[site]!.line}`),
-    ])
+    const entryDomainLines = domainLines(copy, entry)
     for (const firing of line.firings) {
       const site = copy.sites[firing.site]!
       const totals = firing.counts.map((counts) => counts.reduce((sum, count) => sum + count, 0))
@@ -246,7 +78,7 @@ function baselineSection(run: Run, write: Writer): FalseAlarmVerdicts {
       const verify = run.verifies.find((record) => record.base === line.base && record.entry === line.entry && record.site === firing.site)?.verify ?? null
       let reproducible = ''
       if (criterionFirst != null) {
-        const reproduces = verify != null && verify.fired.includes(`${site.file}:${site.line}`) && !verify.fired.some((fired) => domainLines.has(fired))
+        const reproduces = verify != null && verify.fired.includes(`${site.file}:${site.line}`) && !verify.fired.some((fired) => entryDomainLines.has(fired))
         if (!reproduces) verdicts.notReproducible.set(line.base, (verdicts.notReproducible.get(line.base) ?? 0) + 1)
         reproducible = verify == null ? 'not verified' : reproduces ? 'reproduces' : `does not reproduce (fired ${verify.fired.join(',')})`
       }
@@ -394,7 +226,7 @@ function timingSection(run: Run, write: Writer) {
 
 // -- Virtualization: the systematic mutants' sweep record ----------------------
 
-async function virtualizationSections(run: Run, write: Writer): Promise<{criterion: string[]; tsvColumns: string[]; tsv: (key: string) => (string | number | boolean)[]}> {
+async function virtualizationSections(run: Run, write: Writer, title: string): Promise<FamilySections> {
   const {rules} = run
   const reference = decodeJson(readFileSync(join(rules.data.scratch, rules.data.reference), 'utf8')) as SysmutRow[]
   const byId = new Map(reference.map((row) => [row.id, row]))
@@ -426,7 +258,7 @@ async function virtualizationSections(run: Run, write: Writer): Promise<{criteri
     : criterionReproduced.length >= 288 ? 'go: >= 288' : criterionReproduced.length >= 260 ? 'diagnose: 260-287, replay misses and name each lattice gap' : 'stop: < 260, diagnose against the reference run'
   write(`- **Gate:** ${criterionReproduced.length} of ${recorded.length} under noise@abs1e-9 → ${gate}`)
   write()
-  const criterion = [`criterion 1 kill clause, virtualization sysmut (exposed development data; calibration)`, `reproduced under kill@perInput noise@abs1e-9: ${criterionReproduced.length} of ${recorded.length}`]
+  const criterion = [`${title} kill clause, virtualization sysmut (exposed development data; calibration)`, `reproduced under kill@perInput noise@abs1e-9: ${criterionReproduced.length} of ${recorded.length}`]
   for (let rule = 0; rule < NOISE_RULES.length; rule++) criterion.push(`  ${RULE_LABELS[rule]}: ${recorded.filter((row) => killed(run, row.id, rule)).length}`)
   criterion.push(`gate: ${gate}`)
 
@@ -493,7 +325,9 @@ async function virtualizationSections(run: Run, write: Writer): Promise<{criteri
   write(`- behavior-changing here but equivalent in the record: ${listOrNone(planned.filter((row) => row.diff.diffs === 0 && (summaryOf(row.id)?.behaviorDiffs ?? 0) > 0).map((row) => row.id))}`)
   write()
   return {
-    criterion,
+    criterion: () => criterion,
+    // The clause as design.md §6.4 gates it: at least 288 of the 303 recorded sweep kills, over all four bases together.
+    killClauses: [{copies: run.plan.copies.map((copy) => copy.copy), criterion: true, pass: criterionReproduced.length >= 288}],
     tsvColumns: ['family', 'fn', 'line', 'op', 'record_diffs', 'sweep_caught', 'sweep_label', 'sweep_line'],
     tsv: (key) => {
       const row = byId.get(key)!
@@ -555,7 +389,7 @@ function recordedAgreement(run: Run, copy: CopyPlan, key: string, catches: Pick<
   return results.join('; ')
 }
 
-async function popoversSections(run: Run, write: Writer, verdicts: () => FalseAlarmVerdicts | null): Promise<{criterion: () => string[]; tsvColumns: string[]; tsv: (key: string) => (string | number | boolean)[]}> {
+async function popoversSections(run: Run, write: Writer, verdicts: () => FalseAlarmVerdicts | null, title: string): Promise<FamilySections> {
   const {rules} = run
   const reference = decodeJson(readFileSync(join(rules.data.scratch, rules.data.reference), 'utf8')) as PlantedReference
   const byId = new Map(reference.mutants.map((mutant) => [mutant.id, mutant]))
@@ -655,7 +489,7 @@ async function popoversSections(run: Run, write: Writer, verdicts: () => FalseAl
   return {
     criterion: () => {
       const falseAlarms = verdicts()
-      const lines = ['criterion 1, popovers (exposed development data; calibration, not a benchmark)']
+      const lines = [`${title}, popovers (exposed development data; calibration, not a benchmark)`]
       for (const verdict of copyVerdicts) {
         lines.push(`kill clause ${verdict.copy}${verdict.criterion ? '' : ' (hindsight arm, not the criterion)'}: ${verdict.reproduced.length}/${verdict.expected.length} registered catches; ${verdict.staticOnly.map((check) => `${check.id} at its registered input: ${check.killed && check.atInput ? 'yes' : 'no'}`).join('; ')} → ${verdict.pass ? 'pass' : 'fail'}`)
       }
@@ -674,9 +508,10 @@ async function popoversSections(run: Run, write: Writer, verdicts: () => FalseAl
         }
       }
       lines.push(`false-alarm clause (criterion copies): ${falseAlarmClause ? 'pass' : 'fail'}`)
-      lines.push(`criterion 1 on popovers: ${killClause && falseAlarmClause ? 'pass' : 'fail'}`)
+      lines.push(`${title} on popovers: ${killClause && falseAlarmClause ? 'pass' : 'fail'}`)
       return lines
     },
+    killClauses: copyVerdicts.map((verdict) => ({copies: [verdict.copy], criterion: verdict.criterion, pass: verdict.pass})),
     tsvColumns: ['id', 'helper', 'author', 'registered_catch', 'static_only', 'recorded_sweep_caught'],
     tsv: (key) => {
       const mutant = run.plan.mutants.find((candidate) => candidate.key === key)!
@@ -689,7 +524,7 @@ async function popoversSections(run: Run, write: Writer, verdicts: () => FalseAl
 
 // -- Frames: the planted mutants' record, the skeptic's real-caller classification and the registered kill clause -------
 
-async function framesSections(run: Run, write: Writer, verdicts: () => FalseAlarmVerdicts | null): Promise<{criterion: () => string[]; tsvColumns: string[]; tsv: (key: string) => (string | number | boolean)[]}> {
+async function framesSections(run: Run, write: Writer, verdicts: () => FalseAlarmVerdicts | null, title: string): Promise<FamilySections> {
   const {rules} = run
   const reference = decodeJson(readFileSync(join(rules.data.scratch, rules.data.reference), 'utf8')) as FramesReference
   const byId = new Map(reference.mutants.map((mutant) => [mutant.id, mutant]))
@@ -792,7 +627,7 @@ async function framesSections(run: Run, write: Writer, verdicts: () => FalseAlar
   return {
     criterion: () => {
       const falseAlarms = verdicts()
-      const lines = ['criterion 1, frames (exposed development data; calibration, not a benchmark)']
+      const lines = [`${title}, frames (exposed development data; calibration, not a benchmark)`]
       for (const verdict of copyVerdicts) lines.push(`kill clause ${verdict.copy}${verdict.criterion ? '' : ' (not the criterion)'}: ${verdict.reproduced.length}/${verdict.expected.length} registered catches → ${verdict.pass ? 'pass' : 'fail'}`)
       lines.push(`kill clause (criterion copies): ${killClause ? 'pass' : 'fail'}`)
       let falseAlarmClause = true
@@ -809,9 +644,10 @@ async function framesSections(run: Run, write: Writer, verdicts: () => FalseAlar
         }
       }
       lines.push(`false-alarm clause (criterion copies): ${falseAlarmClause ? 'pass' : 'fail'}`)
-      lines.push(`criterion 1 on frames: ${killClause && falseAlarmClause ? 'pass' : 'fail'}`)
+      lines.push(`${title} on frames: ${killClause && falseAlarmClause ? 'pass' : 'fail'}`)
       return lines
     },
+    killClauses: copyVerdicts.map((verdict) => ({copies: [verdict.copy], criterion: verdict.criterion, pass: verdict.pass})),
     tsvColumns: ['id', 'file', 'bug_class', 'registered_catch', 'static_only', 'recorded_sweep_caught', 'changes_behavior_on_real_callers'],
     tsv: (key) => {
       const mutant = run.plan.mutants.find((candidate) => candidate.key === key)!
@@ -826,7 +662,7 @@ async function framesSections(run: Run, write: Writer, verdicts: () => FalseAlar
 
 type KnownFalseLine = {id: string; copy: string; siteKey: string; line: number; cause: string; recorded?: {input?: string; magnitude?: string}}
 
-async function packingSections(run: Run, write: Writer, verdicts: () => FalseAlarmVerdicts | null): Promise<{criterion: () => string[]; tsvColumns: string[]; tsv: (key: string) => (string | number | boolean)[]}> {
+async function packingSections(run: Run, write: Writer, verdicts: () => FalseAlarmVerdicts | null, title: string): Promise<FamilySections> {
   const {rules} = run
   const reference = decodeJson(readFileSync(join(rules.data.scratch, rules.data.reference), 'utf8')) as PackingReference
   const byId = new Map(reference.mutants.map((mutant) => [mutant.id, mutant]))
@@ -977,7 +813,7 @@ async function packingSections(run: Run, write: Writer, verdicts: () => FalseAla
   return {
     criterion: () => {
       const falseAlarms = verdicts()
-      const lines = ['criterion 1, packing (exposed development data; calibration, not a benchmark)']
+      const lines = [`${title}, packing (exposed development data; calibration, not a benchmark)`]
       for (const verdict of copyVerdicts) {
         lines.push(`kill clause ${verdict.copy}${verdict.criterion ? '' : ' (not the criterion)'}: ${verdict.reproduced.length}/${verdict.expected.length} registered catches; ${verdict.staticOnly.map((check) => `${check.id} killed: ${check.killed ? 'yes' : 'no'}, at its registered input shape: ${check.atInput ? 'yes' : 'no'}`).join('; ')} → ${verdict.pass ? 'pass' : 'fail'}`)
       }
@@ -996,9 +832,10 @@ async function packingSections(run: Run, write: Writer, verdicts: () => FalseAla
         }
       }
       lines.push(`false-alarm clause (criterion copies): ${falseAlarmClause ? 'pass' : 'fail'}`)
-      lines.push(`criterion 1 on packing: ${killClause && falseAlarmClause ? 'pass' : 'fail'}`)
+      lines.push(`${title} on packing: ${killClause && falseAlarmClause ? 'pass' : 'fail'}`)
       return lines
     },
+    killClauses: copyVerdicts.map((verdict) => ({copies: [verdict.copy], criterion: verdict.criterion, pass: verdict.pass})),
     tsvColumns: ['id', 'author', 'class', 'registered_catch', 'static_only', 'recorded_sweep_caught_in_domain', 'mutant_over_budget'],
     tsv: (key) => {
       const mutant = run.plan.mutants.find((candidate) => candidate.key === key)!
@@ -1009,15 +846,20 @@ async function packingSections(run: Run, write: Writer, verdicts: () => FalseAla
   }
 }
 
-export async function writeReport(outDir: string, rules: Rules) {
-  const run = await loadRun(outDir, rules)
+/**
+ * Writes report.md, criterion1.txt and kills.tsv for the run in `sourceDir` into `outDir`, and returns criterion 1 as written.
+ * `criterionTitle` replaces "criterion 1" in the criterion lines, e.g. for a domain@v3-callers run, whose clauses aren't criterion 1.
+ */
+export async function writeReport(sourceDir: string, rules: Rules, outDir = sourceDir, criterionTitle: string | null = null): Promise<AsWrittenReport> {
+  const run = await loadRun(sourceDir, rules)
+  const title = criterionTitle ?? 'criterion 1'
   const out: string[] = []
   const write: Writer = (text = '') => out.push(text)
   provenance(run, write, `Plan A ${rules.id}: ${rules.family} calibration run`)
   let falseAlarms: FalseAlarmVerdicts | null = null
-  const family = rules.family === 'virtualization' ? await virtualizationSections(run, write)
-    : rules.family === 'popovers' ? await popoversSections(run, write, () => falseAlarms)
-    : rules.family === 'frames' ? await framesSections(run, write, () => falseAlarms) : await packingSections(run, write, () => falseAlarms)
+  const family = rules.family === 'virtualization' ? await virtualizationSections(run, write, title)
+    : rules.family === 'popovers' ? await popoversSections(run, write, () => falseAlarms, title)
+    : rules.family === 'frames' ? await framesSections(run, write, () => falseAlarms, title) : await packingSections(run, write, () => falseAlarms, title)
   falseAlarms = baselineSection(run, write)
   domainSection(run, write)
   freerangeSection(run, write)
@@ -1026,7 +868,7 @@ export async function writeReport(outDir: string, rules: Rules) {
   perSiteSection(run, write)
   timingSection(run, write)
   writeFileSync(join(outDir, 'report.md'), `${out.join('\n')}\n`)
-  const criterion = Array.isArray(family.criterion) ? family.criterion : family.criterion()
+  const criterion = family.criterion()
   writeFileSync(join(outDir, 'criterion1.txt'), `${criterion.join('\n')}\n`)
 
   const tsv = [['mutant', 'copy', ...family.tsvColumns, ...RULE_LABELS.map((label) => `kill_${label}`), 'kill_cleanSite', 'first_producer', 'first_cause', 'killing_lines', 'throws', 'non_finite', 'behavior_diffs', 'failure'].join('\t')]
@@ -1040,10 +882,23 @@ export async function writeReport(outDir: string, rules: Rules) {
     ].join('\t'))
   }
   writeFileSync(join(outDir, 'kills.tsv'), `${tsv.join('\n')}\n`)
+  return {criterion, killClauses: family.killClauses}
 }
 
 if (import.meta.main) {
   const [runDir, rulesPath] = process.argv.slice(2)
-  if (runDir == null || rulesPath == null) throw new Error('usage: bun mutation-instrument/report.ts <run dir> <rules.json>')
-  await writeReport(runDir, decodeJson(readFileSync(rulesPath, 'utf8')) as Rules)
+  const optionValue = (name: string) => {
+    const index = process.argv.indexOf(name)
+    return index < 0 ? null : process.argv[index + 1] ?? null
+  }
+  if (runDir == null || rulesPath == null) throw new Error('usage: bun mutation-instrument/report.ts <run dir> <rules.json> [--out <new dir>]')
+  const rules = decodeJson(readFileSync(rulesPath, 'utf8')) as Rules
+  const outDir = optionValue('--out')
+  if (outDir == null) {
+    await writeReport(runDir, rules)
+  } else {
+    if (existsSync(outDir)) throw new Error(`refusing to overwrite ${outDir}`)
+    mkdirSync(outDir, {recursive: true})
+    await writeReport(runDir, rules, outDir)
+  }
 }
