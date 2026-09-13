@@ -8,7 +8,7 @@ import {join} from 'node:path'
 import {createInterface} from 'node:readline'
 import type {Value} from './domain.ts'
 import {decodeJson, formatCall} from './encode.ts'
-import type {KnownFalseRule, PlantedReference, RecordedCatch, Rules, SysmutRow} from './rules.ts'
+import type {FramesReference, KnownFalseRule, PlantedReference, RecordedCatch, Rules, SysmutRow} from './rules.ts'
 import {CRITERION_RULE, NOISE_RULES, type BaselineLine, type CallLine, type CopyPlan, type FirstFiring, type Plan, type ReplayLine, type ResultLine, type Site, type VerifyLine} from './types.ts'
 
 type FailureLine = {type: 'failure'; mutant: string; base: string; exitCode: number | null; timedOut: string | null; stderr: string}
@@ -523,7 +523,7 @@ function nanCheck(run: Run, record: CallRecord): NanCheck {
   return {record, nanInput, nanTop, line: `${siteOf(run, copy, record.site).file}:${siteOf(run, copy, record.site).line}`}
 }
 
-function recordedAgreement(run: Run, copy: CopyPlan, key: string, catches: RecordedCatch[]): string {
+function recordedAgreement(run: Run, copy: CopyPlan, key: string, catches: Pick<RecordedCatch, 'file' | 'line' | 'numbering'>[]): string {
   const killing = run.summaries.get(key)?.killSites[CRITERION_RULE]
   if (killing == null || killing.size === 0 || catches.length === 0) return ''
   const results = catches.map((recorded) => {
@@ -672,13 +672,149 @@ async function popoversSections(run: Run, write: Writer, verdicts: () => FalseAl
   }
 }
 
+// -- Frames: the planted mutants' record, the skeptic's real-caller classification and the registered kill clause -------
+
+async function framesSections(run: Run, write: Writer, verdicts: () => FalseAlarmVerdicts | null): Promise<{criterion: () => string[]; tsvColumns: string[]; tsv: (key: string) => (string | number | boolean)[]}> {
+  const {rules} = run
+  const reference = decodeJson(readFileSync(join(rules.data.scratch, rules.data.reference), 'utf8')) as FramesReference
+  const byId = new Map(reference.mutants.map((mutant) => [mutant.id, mutant]))
+  const replays = await readLines<ExampleReplayRecord>(join(run.outDir, 'replay.jsonl'))
+  const planned = new Set(run.plan.mutants.map((mutant) => mutant.key))
+  const ruleCells = (key: string) => NOISE_RULES.map((_rule, rule) => (killed(run, key, rule) ? 'y' : 'n')).join('/')
+  const realCallers = (id: string) => {
+    const planted = byId.get(id)
+    return planted == null ? '' : `${planted.realCallers.changesBehavior ? 'changes behavior' : 'no-op'}: ${planted.realCallers.basis}`
+  }
+
+  type CopyVerdict = {copy: string; criterion: boolean; expected: string[]; reproduced: string[]; pass: boolean}
+  const copyVerdicts: CopyVerdict[] = []
+  write('## Criterion 1 kill clause: registered kills per copy')
+  write()
+  const rows: (string | number)[][] = []
+  for (const copyRule of rules.data.copies) {
+    const expected = (copyRule.expectedKills ?? []).filter((id) => planned.has(`${copyRule.id}/${id}`))
+    const staticOnly = (copyRule.staticOnly ?? []).filter((id) => planned.has(`${copyRule.id}/${id}`))
+    const recordedSweep = reference.mutants.filter((mutant) => mutant.sweep.caught && planned.has(`${copyRule.id}/${mutant.id}`))
+    for (let rule = 0; rule < NOISE_RULES.length; rule++) {
+      const reproduced = expected.filter((id) => killed(run, `${copyRule.id}/${id}`, rule))
+      rows.push([copyRule.id, copyRule.criterion ? 'criterion' : `not scored (${copyRule.role})`, `${RULE_LABELS[rule]}${rule === CRITERION_RULE ? ' (criterion)' : ''}`, `${reproduced.length}/${expected.length}`, listOrNone(expected.filter((id) => !reproduced.includes(id))),
+        listOrNone(staticOnly.map((id) => `${id} ${killed(run, `${copyRule.id}/${id}`, rule) ? 'killed' : 'not killed'}`)),
+        `${recordedSweep.filter((mutant) => killed(run, `${copyRule.id}/${mutant.id}`, rule)).length}/${recordedSweep.length}`])
+    }
+    const reproduced = expected.filter((id) => killed(run, `${copyRule.id}/${id}`, CRITERION_RULE))
+    copyVerdicts.push({copy: copyRule.id, criterion: copyRule.criterion, expected, reproduced, pass: expected.length > 0 && reproduced.length === expected.length})
+  }
+  write(table(['copy', 'role', 'rule', 'registered catches reproduced', 'missed', 'static-only mutants (not scored)', 'recorded sweep catches reproduced (as run on inv/, real-caller no-ops included)'], rows))
+  write()
+  for (const verdict of copyVerdicts) {
+    write(`- **${verdict.copy}** (${verdict.criterion ? 'criterion' : 'not scored'}): ${verdict.reproduced.length} of ${verdict.expected.length} registered catches under kill@perInput noise@abs1e-9 → ${verdict.pass ? 'pass' : 'fail'}`)
+  }
+  const scored = copyVerdicts.filter((verdict) => verdict.criterion)
+  const killClause = scored.length > 0 && scored.every((verdict) => verdict.pass)
+  write(`- **Kill clause (criterion copies ${scored.map((verdict) => verdict.copy).join(', ')}):** ${killClause ? 'pass' : 'fail'}`)
+  write()
+
+  write('### Static-only catches (reported, not scored)')
+  write()
+  write(table(['mutant', 'static catches in the record', 'real callers', 'killed none/abs1e-9/literal', 'killing sites (criterion)', 'differing inputs', 'first output difference'], rules.data.copies.flatMap((copyRule) => (copyRule.staticOnly ?? []).filter((id) => planned.has(`${copyRule.id}/${id}`)).map((id) => {
+    const key = `${copyRule.id}/${id}`
+    const planted = byId.get(id)
+    const tools = planted == null ? '' : [planted.static.typescript ? 'TypeScript' : '', planted.static.freerangeAsWritten ? 'Freerange as written' : '', planted.static.freerangeReshaped ? 'Freerange reshaped' : ''].filter((tool) => tool !== '').join(', ')
+    return [key, tools, realCallers(id), ruleCells(key), listOrNone(killingLines(run, key, CRITERION_RULE)), run.summaries.get(key)?.behaviorDiffs ?? '', (run.summaries.get(key)?.behaviorFirst ?? '').slice(0, 300)]
+  }))))
+  write()
+
+  for (const copyRule of rules.data.copies) {
+    const copy = run.copyOf.get(copyRule.id)
+    if (copy == null) continue
+    write(`## Mutants on ${copyRule.id}`)
+    write()
+    const mutantRows = run.plan.mutants.filter((mutant) => mutant.copy === copyRule.id).map((mutant) => {
+      const planted = byId.get(mutant.id)
+      const summary = run.summaries.get(mutant.key)
+      const catches = planted?.sweep.catches ?? []
+      const role = (copyRule.expectedKills ?? []).includes(mutant.id) ? 'registered catch' : (copyRule.staticOnly ?? []).includes(mutant.id) ? 'static-only' : 'not registered'
+      const first = summary?.first[CRITERION_RULE] ?? null
+      const recordedSites = [...new Map(catches.map((recorded) => [`${recorded.file}:${recorded.line}`, recorded])).values()]
+      return [
+        mutant.id, planted == null ? mutant.family : `${planted.file} ${planted.bugClass}`, role, realCallers(mutant.id),
+        listOrNone(catches.map((recorded) => `${recorded.family}/${recorded.mode} ${recorded.file}:${recorded.line} x${recorded.count}${recorded.baselineCount > 0 ? ` (baseline x${recorded.baselineCount})` : ''}`), '; '),
+        ruleCells(mutant.key), listOrNone(killingLines(run, mutant.key, CRITERION_RULE)), recordedAgreement(run, copy, mutant.key, recordedSites),
+        first == null ? '' : formatInput(first.entry, first.first), first == null ? '' : PRODUCERS[first.first.producer]!, first?.first.cause ?? '', summary?.cleanKill === true ? 'yes' : 'no', summary?.behaviorDiffs ?? '',
+      ]
+    })
+    write(table(['mutant', 'change', 'role', 'real callers (skeptic)', 'recorded sweep catches (inv/ numbering)', 'killed none/abs1e-9/literal', 'killing sites (criterion)', 'recorded line among killing sites', 'first killing input (criterion)', 'producer', 'cause', 'kill@cleanSite', 'differing inputs'], mutantRows))
+    write()
+    const misses = replays.filter((record) => record.copy === copyRule.id)
+    if (misses.length > 0) {
+      write(`### Misses on ${copyRule.id}, with replay of recorded inputs`)
+      write()
+      write(table(['mutant', 'recorded input source', 'call', 'replay'], misses.map((record) => [record.id, record.source, formatCall(record.entry, decodeJson(record.args) as Value[]), record.replay == null ? 'not replayed: the frame call failed' : replayVerdict(run, copyRule.id, record.replay)])))
+      write()
+    }
+    const extras = run.plan.mutants.filter((mutant) => mutant.copy === copyRule.id && killed(run, mutant.key, CRITERION_RULE) && !(copyRule.expectedKills ?? []).includes(mutant.id))
+    write(`- Kills beyond the registered list on ${copyRule.id}: ${listOrNone(extras.map((mutant) => {
+      const first = run.summaries.get(mutant.key)!.first[CRITERION_RULE]!
+      return `${mutant.id} through ${siteLabel(siteOf(run, copyRule.id, first.site))} at ${formatInput(first.entry, first.first)} (${PRODUCERS[first.first.producer]}, ${first.first.cause})`
+    }), '; ')}`)
+    const killedHere = run.plan.mutants.filter((mutant) => mutant.copy === copyRule.id && killed(run, mutant.key, CRITERION_RULE))
+    const p0Only = killedHere.filter((mutant) => !run.summaries.get(mutant.key)!.laterProducer[CRITERION_RULE]!)
+    write(`- Killed only by P0 inputs (the exposure-informed phase): ${listOrNone(p0Only.map((mutant) => mutant.id))}`)
+    write(`- First killing input by producer: ${PRODUCERS.map((name, producer) => `${name} ${killedHere.filter((mutant) => run.summaries.get(mutant.key)!.first[CRITERION_RULE]!.first.producer === producer).length}`).join(', ')}`)
+    write()
+  }
+
+  write('## Mutants that change behavior on real callers (the skeptic\'s 11, by elimination)')
+  write()
+  write(table(['copy', 'killed (criterion)', 'not killed, with differing inputs on the lattice'], rules.data.copies.map((copyRule) => {
+    const eleven = reference.mutants.filter((mutant) => mutant.realCallers.changesBehavior && planned.has(`${copyRule.id}/${mutant.id}`))
+    const killedIds = eleven.filter((mutant) => killed(run, `${copyRule.id}/${mutant.id}`, CRITERION_RULE)).map((mutant) => mutant.id)
+    const survivors = eleven.filter((mutant) => !killed(run, `${copyRule.id}/${mutant.id}`, CRITERION_RULE)).map((mutant) => `${mutant.id} (${run.summaries.get(`${copyRule.id}/${mutant.id}`)?.behaviorDiffs ?? '?'})`)
+    return [copyRule.id, `${killedIds.length}/${eleven.length}: ${listOrNone(killedIds)}`, listOrNone(survivors)]
+  })))
+  write()
+
+  return {
+    criterion: () => {
+      const falseAlarms = verdicts()
+      const lines = ['criterion 1, frames (exposed development data; calibration, not a benchmark)']
+      for (const verdict of copyVerdicts) lines.push(`kill clause ${verdict.copy}${verdict.criterion ? '' : ' (not the criterion)'}: ${verdict.reproduced.length}/${verdict.expected.length} registered catches → ${verdict.pass ? 'pass' : 'fail'}`)
+      lines.push(`kill clause (criterion copies): ${killClause ? 'pass' : 'fail'}`)
+      let falseAlarmClause = true
+      if (falseAlarms != null) {
+        for (const copyRule of rules.data.copies.filter((candidate) => candidate.criterion)) {
+          for (const list of run.knownFalse.filter((candidate) => candidate.rule.copies.includes(copyRule.id))) {
+            const off = falseAlarms.offList.get(list.rule.label)!.get(copyRule.id) ?? 0
+            if (list.rule.criterion && off > 0) falseAlarmClause = false
+            lines.push(`falseAlarm@asWritten ${copyRule.id} against ${list.rule.label}${list.rule.criterion ? '' : ' (not scored)'}: ${off} off-list firing rows → ${off === 0 ? 'pass' : 'fail'}`)
+          }
+          const notReproducible = falseAlarms.notReproducible.get(copyRule.id) ?? 0
+          if (notReproducible > 0) falseAlarmClause = false
+          lines.push(`falseAlarm@reproducible ${copyRule.id}: ${notReproducible} → ${notReproducible === 0 ? 'pass' : 'fail'}`)
+        }
+      }
+      lines.push(`false-alarm clause (criterion copies): ${falseAlarmClause ? 'pass' : 'fail'}`)
+      lines.push(`criterion 1 on frames: ${killClause && falseAlarmClause ? 'pass' : 'fail'}`)
+      return lines
+    },
+    tsvColumns: ['id', 'file', 'bug_class', 'registered_catch', 'static_only', 'recorded_sweep_caught', 'changes_behavior_on_real_callers'],
+    tsv: (key) => {
+      const mutant = run.plan.mutants.find((candidate) => candidate.key === key)!
+      const planted = byId.get(mutant.id)
+      const copyRule = rules.data.copies.find((candidate) => candidate.id === mutant.copy)!
+      return [mutant.id, planted?.file ?? '', planted?.bugClass ?? mutant.family, (copyRule.expectedKills ?? []).includes(mutant.id), (copyRule.staticOnly ?? []).includes(mutant.id), planted?.sweep.caught ?? '', planted?.realCallers.changesBehavior ?? '']
+    },
+  }
+}
+
 export async function writeReport(outDir: string, rules: Rules) {
   const run = await loadRun(outDir, rules)
   const out: string[] = []
   const write: Writer = (text = '') => out.push(text)
-  provenance(run, write, rules.family === 'virtualization' ? `Plan A ${rules.id}: virtualization calibration run` : `Plan A ${rules.id}: popovers calibration run`)
+  provenance(run, write, `Plan A ${rules.id}: ${rules.family} calibration run`)
   let falseAlarms: FalseAlarmVerdicts | null = null
-  const family = rules.family === 'virtualization' ? await virtualizationSections(run, write) : await popoversSections(run, write, () => falseAlarms)
+  const family = rules.family === 'virtualization' ? await virtualizationSections(run, write)
+    : rules.family === 'popovers' ? await popoversSections(run, write, () => falseAlarms) : await framesSections(run, write, () => falseAlarms)
   falseAlarms = baselineSection(run, write)
   domainSection(run, write)
   freerangeSection(run, write)
