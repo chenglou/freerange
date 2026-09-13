@@ -31,7 +31,7 @@ export type KnownFalseRule = {label: string; path: string; stage: 'before-baseli
 
 export type Rules = {
   id: string
-  family: 'virtualization' | 'popovers' | 'frames'
+  family: 'virtualization' | 'popovers' | 'frames' | 'packing'
   measured_on: string
   domains_label: string
   data: {
@@ -100,6 +100,27 @@ export type FramesMutant = {
   realCallers: {changesBehavior: boolean; basis: string}
 }
 export type FramesReference = {sources: Record<string, {path: string; sha1: string}>; mutants: FramesMutant[]}
+
+// plan-a/m4-prep/reference-packing.json, built from the packing sweep's out/mutants.json and per-mutant sweep outputs
+// (mutants/<id>/sweep-<copy>.json and packing-skeptic/extra/<id>/sweep-<copy>.json, each run with --first), the static runs
+// recorded there, and the skeptic's notes on its six extra mutants. A recorded catch is one sweep section's first failing
+// tag on the mutant tree: in-domain, or degenerate and absent from the unmutated copy's sweep. Lines use `numbering`'s copy.
+export type PackingRecordedCatch = {section: string; tag: string; file: string; line: number; numbering: string; tier: 'in-domain' | 'degenerate'; count: number; example: Record<string, Value>}
+export type PackingMutant = {
+  id: string
+  author: 'experimenter' | 'skeptic'
+  klass: string
+  description: string
+  file: string // logical name of the changed copy file, e.g. `masonry`
+  copies: string[]
+  sweep: Record<string, {caughtInDomain: boolean; catches: PackingRecordedCatch[]}> // per copy the mutant exists on
+  static: {typescript: boolean; freerangeAsWritten: string[]; freerangeReshaped: string[]}
+  skepticNote: string | null
+}
+// A static-only catch is checked at its registered input shape: some criterion-rule first killing input of `entry` whose
+// argument `argumentIndex` is below `below`, e.g. m10 at a masonryCardHeight column width below 1 px.
+export type PackingStaticOnly = {id: string; entry: string; argumentIndex: number; below: number; condition: string; source: string}
+export type PackingReference = {sources: Record<string, {path: string; sha1: string}>; mutants: PackingMutant[]; staticOnly: PackingStaticOnly[]}
 
 export type KeyedMutantRule = MutantRule & {key: string}
 

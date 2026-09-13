@@ -8,7 +8,7 @@
 //   verify:   one recorded input through the uninstrumented original, console.assert overridden to record lines
 //   call:     one input through the uninstrumented original and mutant trees, recording lines and return values
 import {readFileSync, writeSync} from 'node:fs'
-import type {Value} from './domain.ts'
+import {maxMagnitude, type Value} from './domain.ts'
 import {decodeJson, encodeJson} from './encode.ts'
 import {compileLattice, DIGEST_START, digestValue, inputAt, type Input} from './lattice.ts'
 import {BUDGET, createRecorder, DISCARD, resetRecorder, type Recorder} from './recorder.ts'
@@ -33,14 +33,6 @@ function cloneValue(value: Value): Value {
     return result
   }
   return value
-}
-
-function maxMagnitude(value: Value): number {
-  if (typeof value === 'number') return Math.abs(value)
-  if (value == null || typeof value !== 'object') return 0
-  let result = 0
-  for (const child of Array.isArray(value) ? value : Object.values(value)) result = Math.max(result, maxMagnitude(child))
-  return result
 }
 
 function hasSubnormal(value: Value): boolean {

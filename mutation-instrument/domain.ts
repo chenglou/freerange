@@ -24,6 +24,15 @@ export const DOMAIN_VERSION = 'domain@v2'
 export const NUMBER_CAP = 1e6
 export const MAX_ARRAY_LENGTH = 6
 
+/** The largest |x| over every number in a value, e.g. 1e6 for `[{width: -1000000}, 2]`. */
+export function maxMagnitude(value: Value): number {
+  if (typeof value === 'number') return Math.abs(value)
+  if (value == null || typeof value !== 'object') return 0
+  let result = 0
+  for (const child of Array.isArray(value) ? value : Object.values(value)) result = Math.max(result, maxMagnitude(child))
+  return result
+}
+
 /** Every number: a parameter's domain before its leading asserts narrow it, e.g. `x <= 1e8` narrows it to [-Infinity, 1e8]. */
 export function unboundedNumber(): NumberDomain {
   return {kind: 'number', min: -Infinity, max: Infinity, minOpen: false, maxOpen: false, integer: false, excluded: null}

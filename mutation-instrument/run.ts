@@ -18,9 +18,10 @@ import {decodeJson, encodeJson, formatCall} from './encode.ts'
 import {framesHarnessCall} from './frames-harness.ts'
 import {instrumentSource} from './instrument.ts'
 import {compileLattice, DIGEST_START, digestValue, inputAt} from './lattice.ts'
+import {packingHarnessCall} from './packing-harness.ts'
 import {harnessCall} from './popovers-harness.ts'
 import {writeReport} from './report.ts'
-import {normalizedMutants, type CopyRule, type FramesReference, type KeyedMutantRule, type PlantedReference, type Rules, type SysmutRow} from './rules.ts'
+import {normalizedMutants, type CopyRule, type FramesReference, type KeyedMutantRule, type PackingReference, type PlantedReference, type Rules, type SysmutRow} from './rules.ts'
 import {CRITERION_RULE, type BaselineLine, type CallLine, type ChildLine, type CopyPlan, type DoneLine, type EntryPlan, type FilePlan, type Job, type MutantPlan, type Plan, type ReplayLine, type Site, type VerifyLine} from './types.ts'
 
 const WORKER = realpathSync(new URL('./worker.ts', import.meta.url).pathname)
@@ -466,6 +467,27 @@ if (rules.replay.kind === 'sweep-first') {
           replayed += 1
           appendFileSync(replayPath, `${encodeJson({mutant: key, copy: copyRule.id, id, source, helper: `${recorded.family}/${recorded.mode}`, entry: call.entry, args: encodeJson(args ?? call.args), replay: args == null ? null : await replay(key, call.entry, args)})}\n`)
         }
+      }
+    }
+  }
+  log(`replay: ${replayed} recorded inputs of missed expected kills`)
+} else if (rules.family === 'packing') {
+  // Each mutant tree's sweep ran on the same copy, so recorded lines and inputs apply to that copy directly. A registered
+  // catch replays its in-domain catches; a static-only mutant also replays its degenerate ones, the only inputs the sweep
+  // recorded for it.
+  const reference = decodeJson(readFileSync(join(scratch, rules.data.reference), 'utf8')) as PackingReference
+  let replayed = 0
+  for (const copyRule of rules.data.copies) {
+    for (const id of [...(copyRule.expectedKills ?? []), ...(copyRule.staticOnly ?? [])]) {
+      const key = `${copyRule.id}/${id}`
+      if (!plannedKeys.has(key) || criterionKilled.has(key)) continue
+      const staticOnly = (copyRule.staticOnly ?? []).includes(id)
+      for (const recorded of reference.mutants.find((candidate) => candidate.id === id)?.sweep[copyRule.id]?.catches ?? []) {
+        if (recorded.tier === 'degenerate' && !staticOnly) continue
+        const call = packingHarnessCall(recorded.section, recorded.example)
+        replayed += 1
+        const source = `sweep ${recorded.section} ${recorded.tag} x${recorded.count} (${recorded.tier}; the section's first failing input with --first)`
+        appendFileSync(replayPath, `${encodeJson({mutant: key, copy: copyRule.id, id, source, helper: recorded.section, entry: call.entry, args: encodeJson(call.args), replay: await replay(key, call.entry, call.args)})}\n`)
       }
     }
   }
