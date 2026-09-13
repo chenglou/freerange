@@ -1,7 +1,7 @@
-// Input domains and number value sources for domain@v1b and lattice@v1, forked from the replay input-range prototype
+// Input domains and number value sources for domain@v2 and lattice@v1, forked from the replay input-range prototype
 // (domain.ts). A domain is what an entry function accepts: its parameter types narrowed by the entry's leading
-// console.assert bounds. A side of a number that no leading assert bounds is capped at ±1e6, so every number domain is
-// finite.
+// console.assert bounds, and under domain@v2 by same-file callees' leading asserts through pass-through calls
+// (analyze.ts). A side of a number that no leading assert bounds is capped at ±1e6, so every number domain is finite.
 import {nextFloat, nextIndex, type Random} from './random.ts'
 
 export type Scalar = number | boolean | string | null | undefined
@@ -20,7 +20,7 @@ export type Domain = NumberDomain | ChoiceDomain | RecordDomain | ArrayDomain | 
 
 export type Comparison = '<' | '<=' | '>' | '>=' | '===' | '!=='
 
-export const DOMAIN_VERSION = 'domain@v1b'
+export const DOMAIN_VERSION = 'domain@v2'
 export const NUMBER_CAP = 1e6
 export const MAX_ARRAY_LENGTH = 6
 

@@ -1,0 +1,93 @@
+// The registered rules file a milestone runs under (plan-a/registered/<milestone>.json), its reference records, and the
+// mutant list both run.ts and report.ts derive from it.
+import {readFileSync} from 'node:fs'
+import {basename, join} from 'node:path'
+import type {Value} from './domain.ts'
+import {decodeJson} from './encode.ts'
+import type {HarnessSignature} from './popovers-harness.ts'
+
+// A copy is a directory of files that import each other; each file has a logical name that site keys carry.
+export type CopyRule = {
+  id: string
+  dir: string
+  files: {name: string; path: string}[]
+  role: string
+  criterion: boolean // scored for criterion 1; a hindsight copy is reported, not scored
+  signature?: HarnessSignature // popovers: which entry signatures recorded sweep inputs replay through
+  expectedKills?: string[] // popovers: mutant ids the registered kill clause requires on this copy
+  staticOnly?: string[] // popovers: mutant ids whose only recorded catch is static, checked at their registered input
+}
+
+type MutantBase = {id: string; copy: string; family: string; author: string}
+// tree: a directory holding every file of the copy under the same names; replace: the copy with one file swapped;
+// changes: exact text edits applied to the copy's files, each `from` occurring exactly once.
+export type MutantRule = MutantBase & ({tree: string} | {replace: {file: string; path: string}} | {changes: {file: string; from: string; to: string}[]})
+type MutantsRule = {kind: 'list'; items: MutantRule[]} | {kind: 'sysmut-record'; record: string; dir: string}
+
+// stage before-baseline: published before any run of the milestone; after-baseline: frozen from the baseline-only run.
+export type KnownFalseRule = {label: string; path: string; stage: 'before-baseline' | 'after-baseline'; criterion: boolean; copies: string[]}
+
+export type Rules = {
+  id: string
+  family: 'virtualization' | 'popovers'
+  measured_on: string
+  domains_label: string
+  data: {
+    scratch: string
+    copies: CopyRule[]
+    mutants: MutantsRule
+    reference: string
+    knownFalse: KnownFalseRule[]
+    referenceRun?: string
+    sweepEntries?: string[]
+    designSweepEntries?: string[]
+  }
+  domain: {version: string; cap: number; maxArrayLength: number}
+  lattice: {budget: number; seed: number; p0Inputs: number; p2ProductMax: number}
+  rules: {noise: {criterion: string}}
+  execution: {children: number; heartbeatEveryInputs: number; heartbeatTimeoutSeconds: number; projectionMaxMinutes: number}
+  replay: {kind: 'sweep-first'; sweepCopyDir: string} | {kind: 'recorded-examples'}
+  firstKillCalls: {mutants: string[]; entry: string}[]
+  predictions: Record<string, unknown>
+}
+
+// virtualization-skeptic/rerun/sysmut_results.json
+export type SysmutRow = {
+  id: string
+  family: string
+  base: string
+  fn: string
+  line: number
+  op: string
+  after: string
+  path: string
+  diff: {n: number; diffs: number}
+  sweep: {caught: boolean; label?: string; fn?: string; line?: number; evals?: number}
+}
+
+// plan-a/m2-prep/reference-popovers.json, built from the dense sweep's results/mutants.json and the skeptic's files.
+export type RecordedCatch = {helper: string; kind: string; file: string; line: number; numbering: string; source: string; count: number; phases: string[]; example: Record<string, Value>}
+export type PlantedMutant = {
+  id: string
+  helper: string
+  bugClass: string
+  description: string
+  author: string
+  copies: string[]
+  sweep: {caught: boolean; catches: RecordedCatch[]} | null
+  hindsightSweep: {caught: boolean; catches: RecordedCatch[]; note: string} | null
+  sparse: {key: string; n: number}[] | null
+  static: Record<string, boolean | null>
+  behaviorExample: {entry: string; args: Value[]; original: Value; mutant: Value} | null
+}
+export type PlantedReference = {sources: Record<string, {path: string; sha1: string}>; mutants: PlantedMutant[]; staticOnly: {id: string; entry: string; rule: string; args: Value[]; source: string}[]}
+
+export type KeyedMutantRule = MutantRule & {key: string}
+
+/** Every mutant the rules name, with its key: the sysmut id for a record, `copy/id` for a list. */
+export function normalizedMutants(rules: Rules): KeyedMutantRule[] {
+  const mutants = rules.data.mutants
+  if (mutants.kind === 'list') return mutants.items.map((item) => ({...item, key: `${item.copy}/${item.id}`}))
+  const rows = decodeJson(readFileSync(join(rules.data.scratch, mutants.record), 'utf8')) as SysmutRow[]
+  return rows.map((row) => ({id: row.id, copy: row.base, family: row.family, author: 'skeptic_sysmut.ts', replace: {file: row.base, path: join(rules.data.scratch, mutants.dir, basename(row.path))}, key: row.id}))
+}

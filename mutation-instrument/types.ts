@@ -4,16 +4,23 @@ import type {Comparison, TupleDomain} from './domain.ts'
 export type Path = (string | number)[] // path[0] is the argument index, e.g. [1, 'cell'] for `geometry.cell`
 export type RelationPlan = {left: Path; op: Comparison; right: Path}
 export type PreconditionUse = 'bound' | 'integer' | 'finite' | 'relation' | 'unparsed'
-export type Precondition = {text: string; line: number; use: PreconditionUse}
+// origin 'entry': one conjunct of the entry's own leading assert. origin 'callee': one conjunct of a same-file callee's
+// leading assert, rewritten through an unconditional call whose arguments are entry parameter paths (domain@v2).
+export type Precondition = {text: string; file: string; line: number; use: PreconditionUse; origin: 'entry' | 'callee'; callee: string | null}
 
 export type EntryPlan = {
   name: string
-  ordinal: number // position among the base's exported functions, in source order
+  file: string // logical name of the copy file that exports the entry, e.g. `menuGeometry`
+  ordinal: number // position among the copy's exported functions: files in registered order, then source order
   line: number
   parameterNames: string[]
   args: TupleDomain
   relations: RelationPlan[]
   preconditions: Precondition[]
+  // Sites whose firing during a call of this entry discards the input: the entry's own leading asserts, and the leading
+  // asserts of same-file callees that receive only entry parameter paths at every call (domain@v2 leak rule).
+  discardSites: number[]
+  leakSites: number[] // the second group above, also listed separately for the report
   unsupported: string | null
   phases: {p0: number; p1: number; p2: number} // input counts per phase within the budget; P3 is the rest
   digest: number // digest of the entry's whole input sequence, see lattice.ts digestValue
@@ -21,21 +28,25 @@ export type EntryPlan = {
 
 export type SiteKind = 'cmp' | 'int' | 'bool'
 export type Site = {
-  index: number
+  index: number // global within the copy: files in registered order
+  file: string
   line: number
   column: number
   functionName: string | null // the enclosing top-level function
   leading: boolean // part of that function's leading console.assert prefix
   text: string
   kind: SiteKind
-  key: string // base | function | condition text | occurrence
+  key: string // file | function | condition text | occurrence
 }
 
-export type BasePlan = {base: string; source: string; sourceSha1: string; instrumented: string; sites: Site[]; entries: EntryPlan[]}
-export type MutantPlan = {id: string; base: string; family: string; source: string; sourceSha1: string; instrumented: string}
+// One file of a copy or of a mutant tree. `source` is the uninstrumented file, `instrumented` the spliced one.
+export type FilePlan = {file: string; source: string; sourceSha1: string; instrumented: string}
+export type CopyPlan = {copy: string; files: FilePlan[]; sites: Site[]; entries: EntryPlan[]}
+// A mutant is a whole tree of the copy's files; `changedFiles` lists the files whose text differs from the copy's.
+export type MutantPlan = {key: string; id: string; copy: string; family: string; files: FilePlan[]; changedFiles: string[]}
 
 export type LatticeSettings = {budget: number; seed: number; p0Inputs: number; p2ProductMax: number}
-export type Plan = {settings: LatticeSettings; bases: BasePlan[]; mutants: MutantPlan[]}
+export type Plan = {settings: LatticeSettings; copies: CopyPlan[]; mutants: MutantPlan[]}
 
 // Firing levels per site per call, see recorder.ts. A rule fires at or above its threshold.
 export type NoiseRule = 'none' | 'abs1e-9' | 'abs1e-9-literal'
@@ -60,11 +71,11 @@ export type Difference = {count: number; first: FirstFiring | null; detail: stri
 
 export type ResultLine = {
   type: 'result'
-  mutant: string
-  base: string
+  mutant: string // the mutant key
+  base: string // the copy
   entry: string
   inputs: number
-  discarded: number // original's entry leading assert failed
+  discarded: number // an input the original's call discarded (discardSites)
   mutantOnlyDiscards: number
   digest: number
   kills: SiteFirings[] // sites in F_mutant \ F_original, per rule
@@ -76,7 +87,7 @@ export type ResultLine = {
 
 export type BaselineLine = {
   type: 'baseline'
-  base: string
+  base: string // the copy
   entry: string
   inputs: number
   discarded: number
@@ -91,15 +102,19 @@ export type BaselineLine = {
 
 // One input through the instrumented original and mutant: the highest level of every reached site, as [site, level].
 export type ReplayLine = {type: 'replay'; mutant: string; entry: string; discarded: boolean; original: [number, number][]; mutated: [number, number][]; originalThrew: string | null; mutantThrew: string | null}
-// One input through the uninstrumented original with console.assert overridden to record the failing lines.
-export type VerifyLine = {type: 'verify'; base: string; entry: string; firedLines: number[]; thrown: string | null}
+// One input through the uninstrumented original with console.assert overridden to record the failing lines, as `file:line`.
+export type VerifyLine = {type: 'verify'; base: string; entry: string; fired: string[]; thrown: string | null}
+// One input through the uninstrumented original and mutant trees: failing lines and the encoded return value of each.
+export type CallOutcome = {fired: string[]; thrown: string | null; value: string | null}
+export type CallLine = {type: 'call'; mutant: string; entry: string; original: CallOutcome; mutated: CallOutcome}
 
 export type DoneLine = {type: 'done'; maxRssKb: number; ms: number}
 export type HeartbeatLine = {type: 'heartbeat'; entry: string; index: number}
-export type ChildLine = ResultLine | BaselineLine | ReplayLine | VerifyLine | DoneLine | HeartbeatLine
+export type ChildLine = ResultLine | BaselineLine | ReplayLine | VerifyLine | CallLine | DoneLine | HeartbeatLine
 
 export type Job =
   | {mode: 'baseline'; plan: string}
   | {mode: 'mutant'; plan: string; mutant: string}
   | {mode: 'replay'; plan: string; mutant: string; entry: string; args: string}
   | {mode: 'verify'; plan: string; base: string; entry: string; args: string}
+  | {mode: 'call'; plan: string; mutant: string; entry: string; args: string}

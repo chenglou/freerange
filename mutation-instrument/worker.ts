@@ -1,17 +1,18 @@
 // A child process: runs one job and writes JSON lines to stdout. It loads no TypeScript library and no Bun plugin; it
-// imports the instrumented files run.ts wrote to disk, regenerates every input from its index, and keeps only
+// imports the instrumented trees run.ts wrote to disk, regenerates every input from its index, and keeps only
 // per-site counters and one first input per site and rule.
 // usage: bun worker.ts '<job json>'
-//   baseline: every entry of every base, originals only
-//   mutant:   every entry of the mutant's base, original then mutant on each input
+//   baseline: every entry of every copy, originals only
+//   mutant:   every entry of the mutant's copy, original then mutant on each input
 //   replay:   one recorded input through the instrumented original and mutant
 //   verify:   one recorded input through the uninstrumented original, console.assert overridden to record lines
+//   call:     one input through the uninstrumented original and mutant trees, recording lines and return values
 import {readFileSync, writeSync} from 'node:fs'
 import type {Value} from './domain.ts'
 import {decodeJson, encodeJson} from './encode.ts'
 import {compileLattice, DIGEST_START, digestValue, inputAt, type Input} from './lattice.ts'
 import {createRecorder, DISCARD, resetRecorder, type Recorder} from './recorder.ts'
-import {CRITERION_RULE, RULE_THRESHOLDS, type BasePlan, type CauseClass, type ChildLine, type Difference, type EntryPlan, type FirstFiring, type Job, type Plan, type SiteFirings} from './types.ts'
+import {CRITERION_RULE, RULE_THRESHOLDS, type CallOutcome, type CauseClass, type ChildLine, type CopyPlan, type Difference, type EntryPlan, type FilePlan, type FirstFiring, type Job, type MutantPlan, type Plan, type SiteFirings} from './types.ts'
 
 const started = performance.now()
 const RULES = RULE_THRESHOLDS.length
@@ -96,10 +97,11 @@ function describeError(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : `threw ${String(error)}`
 }
 
-// -- Calls ------------------------------------------------------------------
+// -- Modules and calls ------------------------------------------------------
 
 type EntryFunction = (...args: Value[]) => unknown
 type Outcome = {discarded: boolean; thrown: string | null; value: unknown}
+type Modules = Map<string, Record<string, unknown>>
 
 function callEntry(fn: EntryFunction, args: Value[]): Outcome {
   try {
@@ -114,15 +116,17 @@ function installRecorder(recorder: Recorder) {
   ;(globalThis as Record<string, unknown>)['__fr'] = recorder
 }
 
-async function loadEntries(path: string, entries: EntryPlan[]): Promise<Map<string, EntryFunction>> {
-  const module = (await import(path)) as Record<string, unknown>
-  const result = new Map<string, EntryFunction>()
-  for (const entry of entries) {
-    const fn = module[entry.name]
-    if (typeof fn !== 'function') throw new Error(`${path} has no function ${entry.name}`)
-    result.set(entry.name, fn as EntryFunction)
-  }
+/** Imports every file of a tree, instrumented or not. Distinct paths give the original and the mutant separate module instances. */
+async function loadModules(files: FilePlan[], which: 'instrumented' | 'source'): Promise<Modules> {
+  const result: Modules = new Map()
+  for (const file of files) result.set(file.file, (await import(file[which])) as Record<string, unknown>)
   return result
+}
+
+function entryFunction(modules: Modules, entry: EntryPlan): EntryFunction {
+  const fn = modules.get(entry.file)?.[entry.name]
+  if (typeof fn !== 'function') throw new Error(`the tree has no function ${entry.name} in ${entry.file}`)
+  return fn as EntryFunction
 }
 
 function newDifference(): Difference {
@@ -148,24 +152,37 @@ function siteFirings(site: number, counts: Uint32Array, firsts: (FirstFiring | n
   return {site, counts: ruleCounts, first: ruleFirsts}
 }
 
-function supportedEntries(base: BasePlan) {
-  return base.entries.filter((entry) => entry.unsupported == null)
+function supportedEntries(copy: CopyPlan) {
+  return copy.entries.filter((entry) => entry.unsupported == null)
+}
+
+function findMutant(plan: Plan, key: string): {mutant: MutantPlan; copy: CopyPlan} {
+  const mutant = plan.mutants.find((candidate) => candidate.key === key)
+  const copy = plan.copies.find((candidate) => candidate.copy === mutant?.copy)
+  if (mutant == null || copy == null) throw new Error(`no mutant ${key} in the plan`)
+  return {mutant, copy}
+}
+
+function findEntry(copy: CopyPlan, name: string): EntryPlan {
+  const entry = copy.entries.find((candidate) => candidate.name === name)
+  if (entry == null) throw new Error(`no entry ${name} in copy ${copy.copy}`)
+  return entry
 }
 
 // -- Modes ------------------------------------------------------------------
 
 async function runBaseline(plan: Plan) {
-  for (const base of plan.bases) {
-    const recorder = createRecorder(base.sites)
+  for (const copy of plan.copies) {
+    const recorder = createRecorder(copy.sites)
     installRecorder(recorder)
-    const entries = supportedEntries(base)
-    const functions = await loadEntries(base.instrumented, entries)
-    const siteCount = base.sites.length
+    const entries = supportedEntries(copy)
+    const modules = await loadModules(copy.files, 'instrumented')
+    const siteCount = copy.sites.length
     for (const entry of entries) {
-      const fn = functions.get(entry.name)!
+      const fn = entryFunction(modules, entry)
       const entryStarted = performance.now()
       const lattice = compileLattice(entry, plan.settings)
-      recorder.entry = entry.name
+      recorder.setEntry(entry.discardSites)
       const reached = new Uint32Array(siteCount)
       const counts = new Uint32Array(siteCount * RULES * PRODUCERS)
       const firsts = new Array<FirstFiring | null>(siteCount * RULES).fill(null)
@@ -210,28 +227,26 @@ async function runBaseline(plan: Plan) {
         firings.push({...siteFirings(site, counts, firsts), byCause: byCause[site]!})
       }
       const ms = performance.now() - entryStarted
-      emit({type: 'baseline', base: base.base, entry: entry.name, inputs: plan.settings.budget, discarded, digest, nsPerCall: (ms * 1e6) / plan.settings.budget, reached: [...reached], firings, throws, nonFiniteReturns, ms})
+      emit({type: 'baseline', base: copy.copy, entry: entry.name, inputs: plan.settings.budget, discarded, digest, nsPerCall: (ms * 1e6) / plan.settings.budget, reached: [...reached], firings, throws, nonFiniteReturns, ms})
     }
   }
 }
 
-async function runMutant(plan: Plan, mutantId: string) {
-  const mutant = plan.mutants.find((candidate) => candidate.id === mutantId)
-  const base = plan.bases.find((candidate) => candidate.base === mutant?.base)
-  if (mutant == null || base == null) throw new Error(`no mutant ${mutantId} in the plan`)
-  const recorder = createRecorder(base.sites)
+async function runMutant(plan: Plan, key: string) {
+  const {mutant, copy} = findMutant(plan, key)
+  const recorder = createRecorder(copy.sites)
   installRecorder(recorder)
-  const entries = supportedEntries(base)
-  const originals = await loadEntries(base.instrumented, entries)
-  const mutants = await loadEntries(mutant.instrumented, entries)
-  const siteCount = base.sites.length
+  const entries = supportedEntries(copy)
+  const originals = await loadModules(copy.files, 'instrumented')
+  const mutants = await loadModules(mutant.files, 'instrumented')
+  const siteCount = copy.sites.length
   const originalLevels = new Uint8Array(siteCount)
   for (const entry of entries) {
-    const originalFn = originals.get(entry.name)!
-    const mutantFn = mutants.get(entry.name)!
+    const originalFn = entryFunction(originals, entry)
+    const mutantFn = entryFunction(mutants, entry)
     const entryStarted = performance.now()
     const lattice = compileLattice(entry, plan.settings)
-    recorder.entry = entry.name
+    recorder.setEntry(entry.discardSites)
     const counts = new Uint32Array(siteCount * RULES * PRODUCERS)
     const firsts = new Array<FirstFiring | null>(siteCount * RULES).fill(null)
     const throws = newDifference()
@@ -283,7 +298,7 @@ async function runMutant(plan: Plan, mutantId: string) {
     }
     const kills: SiteFirings[] = []
     for (let site = 0; site < siteCount; site++) if (firsts[site * RULES] != null) kills.push(siteFirings(site, counts, firsts))
-    emit({type: 'result', mutant: mutant.id, base: base.base, entry: entry.name, inputs: plan.settings.budget, discarded, mutantOnlyDiscards, digest, kills, throws, nonFiniteReturns, behavior, ms: performance.now() - entryStarted})
+    emit({type: 'result', mutant: mutant.key, base: copy.copy, entry: entry.name, inputs: plan.settings.budget, discarded, mutantOnlyDiscards, digest, kills, throws, nonFiniteReturns, behavior, ms: performance.now() - entryStarted})
   }
 }
 
@@ -296,44 +311,74 @@ function levelPairs(recorder: Recorder): [number, number][] {
   return result
 }
 
-async function runReplay(plan: Plan, mutantId: string, entryName: string, args: Value[]) {
-  const mutant = plan.mutants.find((candidate) => candidate.id === mutantId)
-  const base = plan.bases.find((candidate) => candidate.base === mutant?.base)
-  const entry = base?.entries.find((candidate) => candidate.name === entryName)
-  if (mutant == null || base == null || entry == null) throw new Error(`no entry ${entryName} for mutant ${mutantId}`)
-  const recorder = createRecorder(base.sites)
+async function runReplay(plan: Plan, key: string, entryName: string, args: Value[]) {
+  const {mutant, copy} = findMutant(plan, key)
+  const entry = findEntry(copy, entryName)
+  const recorder = createRecorder(copy.sites)
   installRecorder(recorder)
-  const originalFn = (await loadEntries(base.instrumented, [entry])).get(entry.name)!
-  const mutantFn = (await loadEntries(mutant.instrumented, [entry])).get(entry.name)!
-  recorder.entry = entry.name
+  const originalFn = entryFunction(await loadModules(copy.files, 'instrumented'), entry)
+  const mutantFn = entryFunction(await loadModules(mutant.files, 'instrumented'), entry)
+  recorder.setEntry(entry.discardSites)
   resetRecorder(recorder)
   const original = callEntry(originalFn, args)
   const originalPairs = levelPairs(recorder)
   resetRecorder(recorder)
   const mutated = callEntry(mutantFn, args)
-  emit({type: 'replay', mutant: mutantId, entry: entryName, discarded: original.discarded, original: originalPairs, mutated: levelPairs(recorder), originalThrew: original.thrown, mutantThrew: mutated.thrown})
+  emit({type: 'replay', mutant: key, entry: entryName, discarded: original.discarded, original: originalPairs, mutated: levelPairs(recorder), originalThrew: original.thrown, mutantThrew: mutated.thrown})
 }
 
-async function runVerify(plan: Plan, baseName: string, entryName: string, args: Value[]) {
-  const base = plan.bases.find((candidate) => candidate.base === baseName)
-  const entry = base?.entries.find((candidate) => candidate.name === entryName)
-  if (base == null || entry == null) throw new Error(`no entry ${entryName} in base ${baseName}`)
-  const firedLines: number[] = []
+// console.assert overridden to record `file:line` of the innermost stack frame in one of the trees' files.
+let firedLines: string[] = []
+let recordedFiles: FilePlan[] = []
+function recordFailingAsserts() {
   console.assert = (condition?: unknown) => {
     const held = Boolean(condition)
     if (held) return
-    const frame = (new Error().stack ?? '').split('\n').find((line) => line.includes(`${base.source}:`))
-    const match = frame == null ? null : new RegExp(`${base.source.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')}:(\\d+)`).exec(frame)
-    firedLines.push(match == null ? 0 : Number(match[1]))
+    const frames = (new Error().stack ?? '').split('\n')
+    for (const frame of frames) {
+      const file = recordedFiles.find((candidate) => frame.includes(`${candidate.source}:`))
+      if (file == null) continue
+      const match = new RegExp(`${file.source.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')}:(\\d+)`).exec(frame)
+      firedLines.push(`${file.file}:${match == null ? 0 : Number(match[1])}`)
+      return
+    }
+    firedLines.push('unknown:0')
   }
-  const fn = (await loadEntries(base.source, [entry])).get(entry.name)!
+}
+
+function uninstrumentedCall(fn: EntryFunction, args: Value[]): CallOutcome {
+  firedLines = []
   let thrown: string | null = null
+  let value: string | null = null
   try {
-    fn(...args)
+    const text = encodeJson(fn(...args.map(cloneValue)))
+    value = text.length <= MAX_INPUT_CHARACTERS ? text : `${text.slice(0, MAX_INPUT_CHARACTERS)}…`
   } catch (error) {
     thrown = describeError(error)
   }
-  emit({type: 'verify', base: baseName, entry: entryName, firedLines, thrown})
+  return {fired: firedLines, thrown, value}
+}
+
+async function runVerify(plan: Plan, copyName: string, entryName: string, args: Value[]) {
+  const copy = plan.copies.find((candidate) => candidate.copy === copyName)
+  if (copy == null) throw new Error(`no copy ${copyName} in the plan`)
+  const entry = findEntry(copy, entryName)
+  recordedFiles = copy.files
+  recordFailingAsserts()
+  const outcome = uninstrumentedCall(entryFunction(await loadModules(copy.files, 'source'), entry), args)
+  emit({type: 'verify', base: copyName, entry: entryName, fired: outcome.fired, thrown: outcome.thrown})
+}
+
+async function runCall(plan: Plan, key: string, entryName: string, args: Value[]) {
+  const {mutant, copy} = findMutant(plan, key)
+  const entry = findEntry(copy, entryName)
+  recordedFiles = [...copy.files, ...mutant.files]
+  recordFailingAsserts()
+  const originalFn = entryFunction(await loadModules(copy.files, 'source'), entry)
+  const mutantFn = entryFunction(await loadModules(mutant.files, 'source'), entry)
+  const original = uninstrumentedCall(originalFn, args)
+  const mutated = uninstrumentedCall(mutantFn, args)
+  emit({type: 'call', mutant: key, entry: entryName, original, mutated})
 }
 
 const job = decodeJson(process.argv[2] ?? '') as Job
@@ -343,5 +388,6 @@ switch (job.mode) {
   case 'mutant': await runMutant(plan, job.mutant); break
   case 'replay': await runReplay(plan, job.mutant, job.entry, decodeJson(job.args) as Value[]); break
   case 'verify': await runVerify(plan, job.base, job.entry, decodeJson(job.args) as Value[]); break
+  case 'call': await runCall(plan, job.mutant, job.entry, decodeJson(job.args) as Value[]); break
 }
 emit({type: 'done', maxRssKb: process.resourceUsage().maxRSS, ms: performance.now() - started})

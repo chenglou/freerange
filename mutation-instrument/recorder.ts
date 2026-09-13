@@ -6,7 +6,8 @@
 //   3 a strict comparison failed with equal operands, e.g. `index < endIndex` with index === endIndex
 //   4 any other failure: a NaN operand, a violation above 1e-9, a false int or bool site, a false `!==`
 // noise@none fires at level >= 2, noise@abs1e-9 at >= 3, noise@abs1e-9-literal at 4 (types.ts RULE_THRESHOLDS).
-// A failing leading assert of the entry being called throws DISCARD: the input is outside the entry's domain.
+// A firing site in the current entry's discard set (its own leading asserts, and pass-through callee requirements under
+// domain@v2) throws DISCARD: the input is outside the entry's domain.
 import type {Site} from './types.ts'
 
 export const DISCARD = {sentinel: 'discard'}
@@ -16,25 +17,23 @@ export type Recorder = {
   margins: Float64Array // the violation at the site's highest level in this call, NaN when unknown
   touched: Uint16Array // sites reached in this call, touchedCount of them
   touchedCount: number
-  entry: string
+  setEntry: (discardSites: number[]) => void
   cmp: (site: number, left: unknown, op: string, right: unknown) => void
   int: (site: number, value: unknown) => void
   bool: (site: number, condition: unknown) => void
 }
 
 export function createRecorder(sites: Site[]): Recorder {
-  const leading = new Uint8Array(sites.length)
-  const functions: (string | null)[] = []
-  for (const site of sites) {
-    leading[site.index] = site.leading ? 1 : 0
-    functions[site.index] = site.functionName
-  }
+  const discard = new Uint8Array(sites.length)
   const recorder: Recorder = {
     levels: new Uint8Array(sites.length),
     margins: new Float64Array(sites.length),
     touched: new Uint16Array(sites.length),
     touchedCount: 0,
-    entry: '',
+    setEntry(discardSites) {
+      discard.fill(0)
+      for (const site of discardSites) discard[site] = 1
+    },
     cmp(site, left, op, right) {
       let ok: boolean
       switch (op) {
@@ -83,7 +82,7 @@ export function createRecorder(sites: Site[]): Recorder {
       recorder.levels[site] = level
       recorder.margins[site] = margin
     }
-    if (level >= 2 && leading[site] === 1 && functions[site] === recorder.entry) throw DISCARD
+    if (level >= 2 && discard[site] === 1) throw DISCARD
   }
   return recorder
 }

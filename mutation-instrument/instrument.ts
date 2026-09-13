@@ -5,6 +5,8 @@
 //   console.assert(Number.isInteger(value)) -> __fr.int(8, value)
 //   console.assert(anything else)          -> __fr.bool(9, anything else)
 // Line numbers don't move: a call spanning several lines is padded with the newlines its replacement lost.
+// Site indices are global within a copy, so one recorder covers every file of a tree: a callee's asserts in another file
+// are sites of the same table.
 import * as ts from 'typescript'
 import {isConsoleAssertCall, leadingAssertStatements} from './analyze.ts'
 import type {Site, SiteKind} from './types.ts'
@@ -40,8 +42,11 @@ function newlines(text: string) {
   return count
 }
 
-/** The instrumented text and its site table. `base` names the logical file, e.g. `grid` for base_grid.ts and s042.ts. */
-export function instrumentSource(text: string, path: string, base: string): {output: string; sites: Site[]} {
+/**
+ * The instrumented text and its site table. `file` names the logical file, e.g. `grid` for base_grid.ts and s042.ts,
+ * or `menuGeometry` for menuGeometry.ts in any tree; `siteOffset` is the number of sites in the copy's earlier files.
+ */
+export function instrumentSource(text: string, path: string, file: string, siteOffset: number): {output: string; sites: Site[]} {
   const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const sites: Site[] = []
   const edits: {start: number; end: number; replacement: string}[] = []
@@ -56,7 +61,7 @@ export function instrumentSource(text: string, path: string, base: string): {out
     const owner = topLevelFunction(node)
     const start = node.getStart(sourceFile)
     const position = sourceFile.getLineAndCharacterOfPosition(start)
-    const index = sites.length
+    const index = siteOffset + sites.length
     let unwrapped: ts.Expression = condition
     while (ts.isParenthesizedExpression(unwrapped)) unwrapped = unwrapped.expression
     let kind: SiteKind = 'bool'
@@ -77,8 +82,8 @@ export function instrumentSource(text: string, path: string, base: string): {out
     const occurrence = occurrences.get(occurrenceKey) ?? 0
     occurrences.set(occurrenceKey, occurrence + 1)
     sites.push({
-      index, line: position.line + 1, column: position.character + 1, functionName,
-      leading: owner != null && isLeading(node, owner.body), text: conditionText, kind, key: `${base}|${functionName}|${conditionText}|${occurrence}`,
+      index, file, line: position.line + 1, column: position.character + 1, functionName,
+      leading: owner != null && isLeading(node, owner.body), text: conditionText, kind, key: `${file}|${functionName}|${conditionText}|${occurrence}`,
     })
     edits.push({start, end: node.end, replacement})
   }

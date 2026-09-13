@@ -1,14 +1,22 @@
-// domain@v1b, run in the parent only: finds a file's exported functions, derives each parameter's domain from its
-// TypeScript type, and narrows the domains with the simple shapes of the function's leading console.assert calls.
-// Forked from the replay input-range prototype (analyze.ts). A side of a number that no leading assert bounds is capped
-// at ±1e6 instead of every finite double.
+// domain@v2, run in the parent only: finds a file's exported functions, derives each parameter's domain from its
+// TypeScript type, and narrows the domains with the simple shapes of leading console.assert calls. Forked from the replay
+// input-range prototype (analyze.ts). A side of a number that no leading assert bounds is capped at ±1e6.
+// domain@v2 adds three rules to domain@v1b:
+//   1 a leading assert `a && b` narrows through each conjunct
+//   2 callee substitution: for an unconditional call to a same-file function whose arguments are entry parameter paths,
+//     the callee's leading asserts are rewritten through the argument mapping and narrow the entry's domain, e.g.
+//     `menuHoverContains(anchorCenter, exit, anchor, panel)` adds `anchor.width >= 0` to the caller's domain
+//   3 leak rule: a same-file callee's leading assert whose referenced parameters receive entry parameter paths at every
+//     call from the entry discards the input when it fires, like the entry's own leading asserts
 import {dirname} from 'node:path'
 import * as ts from 'typescript'
 import {applyBound, applyIntegerRule, capUnboundedEnds, MAX_ARRAY_LENGTH, unboundedNumber, type Comparison, type Domain, type NumberDomain, type TupleDomain} from './domain.ts'
 import {numberLeaves} from './lattice.ts'
 import type {EntryPlan, Path, Precondition, PreconditionUse, RelationPlan} from './types.ts'
 
-export type AnalyzedEntry = Omit<EntryPlan, 'phases' | 'digest'>
+// Positions are 1-based, as instrument.ts records sites.
+export type AssertPosition = {line: number; column: number}
+export type AnalyzedEntry = Omit<EntryPlan, 'phases' | 'digest' | 'discardSites' | 'leakSites'> & {leakAsserts: AssertPosition[]}
 
 /** One program for all files, with the compiler options of the nearest tsconfig.json of the first file. */
 export function loadProgram(files: string[]): ts.Program {
@@ -168,7 +176,17 @@ function applyCondition(checker: ts.TypeChecker, condition: ts.Expression, bindi
   return 'bound'
 }
 
+/** domain@v2 rule 1: `a && (b && c)` is the conjuncts a, b, c; any other condition is itself. */
+function conjuncts(condition: ts.Expression): ts.Expression[] {
+  const expression = unwrap(condition)
+  if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) return [...conjuncts(expression.left), ...conjuncts(expression.right)]
+  return [condition]
+}
+
 // -- Functions --------------------------------------------------------------
+
+type FunctionLike = ts.SignatureDeclaration & {body?: ts.ConciseBody | undefined}
+type NamedFunction = {name: string; node: FunctionLike}
 
 function hasExport(node: ts.Node) {
   return ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
@@ -188,9 +206,114 @@ function collectBindings(name: ts.BindingName, path: Path, bindings: Map<string,
   })
 }
 
-function analyzeFunction(checker: ts.TypeChecker, sourceFile: ts.SourceFile, name: string, ordinal: number, node: ts.SignatureDeclaration & {body?: ts.ConciseBody | undefined}): AnalyzedEntry {
-  const line = sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1
-  const entry: AnalyzedEntry = {name, ordinal, line, parameterNames: [], args: {kind: 'tuple', elements: []}, relations: [], preconditions: [], unsupported: null}
+function bindingNames(name: ts.BindingName, output: string[]) {
+  if (ts.isIdentifier(name)) {
+    output.push(name.text)
+    return
+  }
+  for (const element of name.elements) if (!ts.isOmittedExpression(element)) bindingNames(element.name, output)
+}
+
+/** Every top-level function of the file, exported or not, by the declaration node its name resolves to. */
+function sameFileFunctions(sourceFile: ts.SourceFile): Map<ts.Node, NamedFunction> {
+  const result = new Map<ts.Node, NamedFunction>()
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name != null) result.set(statement, {name: statement.name.text, node: statement})
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        const initializer = declaration.initializer
+        if (ts.isIdentifier(declaration.name) && initializer != null && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) {
+          result.set(declaration, {name: declaration.name.text, node: initializer})
+        }
+      }
+    }
+  }
+  return result
+}
+
+function calleeOf(checker: ts.TypeChecker, call: ts.CallExpression, functions: Map<ts.Node, NamedFunction>): NamedFunction | null {
+  if (!ts.isIdentifier(call.expression)) return null
+  const declaration = checker.getSymbolAtLocation(call.expression)?.valueDeclaration
+  return declaration == null ? null : functions.get(declaration) ?? null
+}
+
+function containsExit(node: ts.Node): boolean {
+  if (ts.isFunctionLike(node) || ts.isClassLike(node)) return false
+  if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) return true
+  return ts.forEachChild(node, containsExit) === true
+}
+
+/**
+ * Calls that run on every path through the body before any statement that can return or throw: calls inside top-level
+ * expression, variable and return statements, excluding nested functions, the branches of `?:`, and the right side of
+ * `&&`, `||` and `??`.
+ */
+function unconditionalCalls(body: ts.Block): ts.CallExpression[] {
+  const result: ts.CallExpression[] = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return
+    if (ts.isConditionalExpression(node)) {
+      visit(node.condition)
+      return
+    }
+    if (ts.isBinaryExpression(node)) {
+      const kind = node.operatorToken.kind
+      if (kind === ts.SyntaxKind.AmpersandAmpersandToken || kind === ts.SyntaxKind.BarBarToken || kind === ts.SyntaxKind.QuestionQuestionToken
+        || kind === ts.SyntaxKind.AmpersandAmpersandEqualsToken || kind === ts.SyntaxKind.BarBarEqualsToken || kind === ts.SyntaxKind.QuestionQuestionEqualsToken) {
+        visit(node.left)
+        return
+      }
+    }
+    if (ts.isCallExpression(node)) result.push(node)
+    ts.forEachChild(node, visit)
+  }
+  for (const statement of body.statements) {
+    if (ts.isExpressionStatement(statement) || ts.isVariableStatement(statement) || ts.isReturnStatement(statement)) {
+      visit(statement)
+      if (ts.isReturnStatement(statement)) break
+      continue
+    }
+    if (containsExit(statement)) break
+  }
+  return result
+}
+
+/** Every call in the body, on any path, excluding nested functions. */
+function allCalls(body: ts.Block): ts.CallExpression[] {
+  const result: ts.CallExpression[] = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return
+    if (ts.isCallExpression(node)) result.push(node)
+    ts.forEachChild(node, visit)
+  }
+  for (const statement of body.statements) visit(statement)
+  return result
+}
+
+/** Indices of the callee parameters that a condition references, e.g. {2, 3} for `anchor.width >= 0 && panel.height >= 0`. */
+function referencedParameters(condition: ts.Expression, parameterOf: Map<string, number>): Set<number> {
+  const result = new Set<number>()
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      const parent = node.parent
+      if ((ts.isPropertyAccessExpression(parent) && parent.name === node) || (ts.isPropertyAssignment(parent) && parent.name === node)) return
+      const index = parameterOf.get(node.text)
+      if (index != null) result.add(index)
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(condition)
+  return result
+}
+
+function sameRelation(left: RelationPlan, right: RelationPlan) {
+  return left.op === right.op && JSON.stringify(left.left) === JSON.stringify(right.left) && JSON.stringify(left.right) === JSON.stringify(right.right)
+}
+
+function analyzeFunction(checker: ts.TypeChecker, sourceFile: ts.SourceFile, file: string, name: string, ordinal: number, node: FunctionLike, functions: Map<ts.Node, NamedFunction>): AnalyzedEntry {
+  const lineOf = (target: ts.Node) => sourceFile.getLineAndCharacterOfPosition(target.getStart()).line + 1
+  const entry: AnalyzedEntry = {name, file, ordinal, line: lineOf(node), parameterNames: [], args: {kind: 'tuple', elements: []}, relations: [], preconditions: [], unsupported: null, leakAsserts: []}
   const bindings = new Map<string, Path>()
   for (const parameter of node.parameters) {
     if (parameter.dotDotDotToken != null) {
@@ -208,36 +331,106 @@ function analyzeFunction(checker: ts.TypeChecker, sourceFile: ts.SourceFile, nam
     collectBindings(parameter.name, [entry.args.elements.length - 1], bindings)
   }
   if (node.body == null || !ts.isBlock(node.body)) return entry
+  const body = node.body
   const preconditions: Precondition[] = []
-  for (const statement of leadingAssertStatements(node.body)) {
+  for (const statement of leadingAssertStatements(body)) {
     const call = statement.expression as ts.CallExpression
     const condition = call.arguments[0]
-    const use = condition == null ? 'unparsed' : applyCondition(checker, condition, bindings, entry.args, entry.relations)
-    preconditions.push({text: condition?.getText() ?? '', line: sourceFile.getLineAndCharacterOfPosition(call.getStart()).line + 1, use})
+    if (condition == null) {
+      preconditions.push({text: '', file, line: lineOf(call), use: 'unparsed', origin: 'entry', callee: null})
+      continue
+    }
+    for (const conjunct of conjuncts(condition)) {
+      preconditions.push({text: conjunct.getText(), file, line: lineOf(call), use: applyCondition(checker, conjunct, bindings, entry.args, entry.relations), origin: 'entry', callee: null})
+    }
+  }
+
+  // domain@v2 rule 2: callee substitution through unconditional pass-through calls, once per distinct argument mapping.
+  const substituted = new Set<string>()
+  for (const call of unconditionalCalls(body)) {
+    const callee = calleeOf(checker, call, functions)
+    if (callee == null || callee.name === name || callee.node.body == null || !ts.isBlock(callee.node.body)) continue
+    const calleeBindings = new Map<string, Path>()
+    const mapping: (Path | null)[] = []
+    callee.node.parameters.forEach((parameter, index) => {
+      const argument = call.arguments[index]
+      const path = argument == null || ts.isSpreadElement(argument) || call.arguments.slice(0, index).some(ts.isSpreadElement) ? null : pathOf(argument, bindings)
+      mapping.push(path)
+      if (path != null) collectBindings(parameter.name, path, calleeBindings)
+    })
+    const signature = `${callee.name}|${JSON.stringify(mapping)}`
+    if (substituted.has(signature) || calleeBindings.size === 0) continue
+    substituted.add(signature)
+    for (const statement of leadingAssertStatements(callee.node.body)) {
+      const condition = (statement.expression as ts.CallExpression).arguments[0]
+      if (condition == null) continue
+      for (const conjunct of conjuncts(condition)) {
+        const before = entry.relations.length
+        const use = applyCondition(checker, conjunct, calleeBindings, entry.args, entry.relations)
+        if (use === 'relation' && entry.relations.length > before && entry.relations.slice(0, before).some((relation) => sameRelation(relation, entry.relations[before]!))) entry.relations.pop()
+        preconditions.push({text: conjunct.getText(), file, line: lineOf(statement), use, origin: 'callee', callee: callee.name})
+      }
+    }
   }
   entry.preconditions = preconditions
+
+  // domain@v2 rule 3: leak asserts, whose referenced callee parameters are entry parameter paths at every call.
+  const callsByCallee = new Map<NamedFunction, ts.CallExpression[]>()
+  for (const call of allCalls(body)) {
+    const callee = calleeOf(checker, call, functions)
+    if (callee == null || callee.name === name) continue
+    const calls = callsByCallee.get(callee) ?? []
+    calls.push(call)
+    callsByCallee.set(callee, calls)
+  }
+  for (const [callee, calls] of callsByCallee) {
+    if (callee.node.body == null || !ts.isBlock(callee.node.body)) continue
+    const parameterOf = new Map<string, number>()
+    callee.node.parameters.forEach((parameter, index) => {
+      const names: string[] = []
+      bindingNames(parameter.name, names)
+      for (const bindingName of names) parameterOf.set(bindingName, index)
+    })
+    for (const statement of leadingAssertStatements(callee.node.body)) {
+      const assertCall = statement.expression as ts.CallExpression
+      const condition = assertCall.arguments[0]
+      if (condition == null) continue
+      const referenced = referencedParameters(condition, parameterOf)
+      if (referenced.size === 0) continue
+      const passThrough = calls.every((call) => !call.arguments.some(ts.isSpreadElement)
+        && [...referenced].every((index) => call.arguments[index] != null && pathOf(call.arguments[index], bindings) != null))
+      if (!passThrough) continue
+      const position = sourceFile.getLineAndCharacterOfPosition(assertCall.getStart(sourceFile))
+      entry.leakAsserts.push({line: position.line + 1, column: position.character + 1})
+    }
+  }
   return entry
 }
 
-/** Every exported function declaration and exported `const name = (...) => ...` of the file, in source order. */
-export function exportedEntries(program: ts.Program, file: string): AnalyzedEntry[] {
-  const sourceFile = program.getSourceFile(file)
-  if (sourceFile == null) throw new Error(`TypeScript did not load ${file}`)
+/**
+ * Every exported function declaration and exported `const name = (...) => ...` of the file, in source order, numbered
+ * from `ordinalStart`. `file` is the logical file name the entries and their preconditions carry.
+ */
+export function exportedEntries(program: ts.Program, path: string, file: string, ordinalStart: number): AnalyzedEntry[] {
+  const sourceFile = program.getSourceFile(path)
+  if (sourceFile == null) throw new Error(`TypeScript did not load ${path}`)
   const checker = program.getTypeChecker()
+  const functions = sameFileFunctions(sourceFile)
   const result: AnalyzedEntry[] = []
   for (const statement of sourceFile.statements) {
     if (!hasExport(statement)) continue
-    if (ts.isFunctionDeclaration(statement) && statement.name != null) result.push(analyzeFunction(checker, sourceFile, statement.name.text, result.length, statement))
+    if (ts.isFunctionDeclaration(statement) && statement.name != null) result.push(analyzeFunction(checker, sourceFile, file, statement.name.text, ordinalStart + result.length, statement, functions))
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
         const initializer = declaration.initializer
         if (ts.isIdentifier(declaration.name) && initializer != null && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) {
-          result.push(analyzeFunction(checker, sourceFile, declaration.name.text, result.length, initializer))
+          result.push(analyzeFunction(checker, sourceFile, file, declaration.name.text, ordinalStart + result.length, initializer, functions))
         }
       }
     }
   }
-  // The cap goes last, after every leading assert has narrowed the domains, so a declared bound replaces the cap on its side.
+  // The cap goes last, after every leading assert and substituted callee assert has narrowed the domains, so a declared
+  // bound replaces the cap on its side.
   for (const entry of result) capUnboundedEnds(entry.args)
   return result
 }
