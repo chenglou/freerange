@@ -8,7 +8,7 @@ import type {Value} from './domain.ts'
 import {decodeJson, formatCall} from './encode.ts'
 import {decodePlan} from './plan-file.ts'
 import type {KnownFalseRule, Rules} from './rules.ts'
-import {CRITERION_RULE, NOISE_RULES, type BaselineLine, type CopyPlan, type FirstFiring, type Plan, type ResultLine, type Site, type VerifyLine} from './types.ts'
+import {CRITERION_RULE, NOISE_RULES, type BaselineLine, type CopyPlan, type Difference, type FirstFiring, type Plan, type ResultLine, type Site, type VerifyLine} from './types.ts'
 
 // The kill clause of criterion 1 as written, per group of copies it covers: one per copy for popovers, frames and packing,
 // and one for all four virtualization bases.
@@ -121,9 +121,10 @@ export async function loadRun(outDir: string, rules: Rules): Promise<Run> {
 
   const baseline = new Map<string, BaselineLine>()
   let baselineDigestMismatches = 0
-  // Baseline lines written before domain@v3-callers have no callerDiscarded count, which is 0 there.
-  for (const recorded of await readLines<Omit<BaselineLine, 'callerDiscarded'> & {callerDiscarded?: number}>(join(outDir, 'baseline.jsonl'))) {
-    const line: BaselineLine = {...recorded, callerDiscarded: recorded.callerDiscarded ?? 0}
+  // Lines written by earlier commits lack later counts, which are 0 there: callerDiscarded before domain@v3-callers, and
+  // overBudget and mutantOverBudget before the step budget (e50f5aa), e.g. in the m1c, m2 and m3 runs.
+  for (const recorded of await readLines<Omit<BaselineLine, 'callerDiscarded' | 'overBudget'> & {callerDiscarded?: number; overBudget?: number}>(join(outDir, 'baseline.jsonl'))) {
+    const line: BaselineLine = {...recorded, callerDiscarded: recorded.callerDiscarded ?? 0, overBudget: recorded.overBudget ?? 0}
     baseline.set(`${line.base}.${line.entry}`, line)
     if (line.digest !== digestOf.get(`${line.base}.${line.entry}`)) baselineDigestMismatches += 1
   }
@@ -146,12 +147,14 @@ export async function loadRun(outDir: string, rules: Rules): Promise<Run> {
     return summary
   }
   let resultLines = 0
+  type RecordedResultLine = Omit<ResultLine, 'callerDiscarded' | 'overBudget' | 'mutantOverBudget'> & {callerDiscarded?: number; overBudget?: number; mutantOverBudget?: Difference}
   for await (const value of jsonLines(join(outDir, 'results.jsonl'))) {
-    const line = value as ResultLine | FailureLine
-    if (line.type === 'failure') {
-      summaryOf(line.mutant, line.base).failure = line.timedOut ?? `exit ${line.exitCode}: ${line.stderr.slice(-300)}`
+    const recorded = value as RecordedResultLine | FailureLine
+    if (recorded.type === 'failure') {
+      summaryOf(recorded.mutant, recorded.base).failure = recorded.timedOut ?? `exit ${recorded.exitCode}: ${recorded.stderr.slice(-300)}`
       continue
     }
+    const line: ResultLine = {...recorded, callerDiscarded: recorded.callerDiscarded ?? 0, overBudget: recorded.overBudget ?? 0, mutantOverBudget: recorded.mutantOverBudget ?? {count: 0, first: null, detail: null}}
     resultLines += 1
     const summary = summaryOf(line.mutant, line.base)
     summary.entries += 1
