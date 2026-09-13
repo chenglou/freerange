@@ -10,7 +10,9 @@ import type {HarnessSignature} from './popovers-harness.ts'
 export type CopyRule = {
   id: string
   dir: string
-  files: {name: string; path: string}[]
+  files: {name: string; path: string}[] // path: inside the copy directory, e.g. `src/MidUI/PageFrame.ts`
+  // A tsconfig.json inside the copy, copied to the root of every spliced tree so the copy's `@/…` path aliases resolve there
+  tsconfig?: string
   role: string
   criterion: boolean // scored for criterion 1; a hindsight copy is reported, not scored
   signature?: HarnessSignature // popovers: which entry signatures recorded sweep inputs replay through

@@ -39,8 +39,9 @@ export type Site = {
   key: string // file | function | condition text | occurrence
 }
 
-// One file of a copy or of a mutant tree. `source` is the uninstrumented file, `instrumented` the spliced one.
-export type FilePlan = {file: string; source: string; sourceSha1: string; instrumented: string}
+// One file of a copy or of a mutant tree. `path` is where the file sits inside the tree, e.g. `src/MidUI/PageFrame.ts`, and
+// spliced trees keep that layout; `source` is the uninstrumented file, `instrumented` the spliced one.
+export type FilePlan = {file: string; path: string; source: string; sourceSha1: string; instrumented: string}
 export type CopyPlan = {copy: string; files: FilePlan[]; sites: Site[]; entries: EntryPlan[]}
 // A mutant is a whole tree of the copy's files; `changedFiles` lists the files whose text differs from the copy's.
 export type MutantPlan = {key: string; id: string; copy: string; family: string; files: FilePlan[]; changedFiles: string[]}

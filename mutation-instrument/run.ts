@@ -10,8 +10,8 @@
 //   7 Freerange's own findings on the copies, then the report
 // usage: bun mutation-instrument/run.ts --rules <rules.json> --out <run dir> [--mutants key,key] [--baseline-only | --plan-only]
 import {createHash} from 'node:crypto'
-import {appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync} from 'node:fs'
-import {basename, dirname, join} from 'node:path'
+import {appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync} from 'node:fs'
+import {dirname, join} from 'node:path'
 import {exportedEntries, loadProgram} from './analyze.ts'
 import {DOMAIN_VERSION, MAX_ARRAY_LENGTH, NUMBER_CAP, type Value} from './domain.ts'
 import {decodeJson, encodeJson} from './encode.ts'
@@ -101,20 +101,27 @@ function writeFileWithDirs(path: string, text: string) {
   writeFileSync(path, text)
 }
 
+function copyFileWithDirs(from: string, to: string) {
+  mkdirSync(dirname(to), {recursive: true})
+  copyFileSync(from, to)
+}
+
 function planCopy(rule: CopyRule): CopyPlan {
   const dir = realpathSync(join(scratch, rule.dir))
   const sources = rule.files.map((file) => join(dir, file.path))
   const program = loadProgram(sources)
   const files: FilePlan[] = []
+  const root = join(realOut, 'work', 'original', rule.id)
+  if (rule.tsconfig != null) copyFileWithDirs(join(dir, rule.tsconfig), join(root, rule.tsconfig))
   const sites: Site[] = []
   const entries: EntryPlan[] = []
   rule.files.forEach((fileRule, index) => {
     const source = sources[index]!
     const text = readFileSync(source, 'utf8')
-    const instrumented = join(realOut, 'work', 'original', rule.id, basename(source))
+    const instrumented = join(root, fileRule.path)
     const {output, sites: fileSites} = instrumentSource(text, source, fileRule.name, sites.length)
     writeFileWithDirs(instrumented, output)
-    files.push({file: fileRule.name, source, sourceSha1: sha1(text), instrumented})
+    files.push({file: fileRule.name, path: fileRule.path, source, sourceSha1: sha1(text), instrumented})
     sites.push(...fileSites)
     for (const analyzed of exportedEntries(program, source, fileRule.name, entries.length)) {
       const {leakAsserts, ...entry} = analyzed
@@ -142,10 +149,11 @@ function applyChanges(text: string, changes: {from: string; to: string}[], label
   return result
 }
 
-function planMutant(item: KeyedMutantRule, copy: CopyPlan): MutantPlan {
+function planMutant(item: KeyedMutantRule, copy: CopyPlan, copyRule: CopyRule): MutantPlan {
+  const root = join(realOut, 'work', 'mutants', item.key)
   const tree = copy.files.map((file) => {
     if ('tree' in item) {
-      const source = join(scratch, item.tree, basename(file.source))
+      const source = join(scratch, item.tree, file.path)
       return {base: file, source, text: readFileSync(source, 'utf8')}
     }
     if ('replace' in item) {
@@ -153,22 +161,27 @@ function planMutant(item: KeyedMutantRule, copy: CopyPlan): MutantPlan {
       return {base: file, source, text: readFileSync(source, 'utf8')}
     }
     // Change-table mutants are written out, every file of the tree, so the uninstrumented tree can be imported.
-    const changes = item.changes.filter((change) => change.file === basename(file.source))
+    const changes = item.changes.filter((change) => change.file === file.path)
     const text = applyChanges(readFileSync(file.source, 'utf8'), changes, `${item.key}/${file.file}`)
-    const source = join(realOut, 'work', 'mutants', item.key, 'source', basename(file.source))
+    const source = join(root, 'source', file.path)
     writeFileWithDirs(source, text)
     return {base: file, source, text}
   })
   const changedFiles = tree.filter((file) => sha1(file.text) !== file.base.sourceSha1).map((file) => file.base.file)
   if (changedFiles.length === 0) throw new Error(`${item.key}: the mutant tree is identical to copy ${copy.copy}`)
   const files: FilePlan[] = []
+  if (copyRule.tsconfig != null) {
+    const tsconfig = join(realpathSync(join(scratch, copyRule.dir)), copyRule.tsconfig)
+    copyFileWithDirs(tsconfig, join(root, copyRule.tsconfig))
+    if (!('tree' in item) && !('replace' in item)) copyFileWithDirs(tsconfig, join(root, 'source', copyRule.tsconfig))
+  }
   const mutantSites: Site[] = []
   for (const file of tree) {
     const {output, sites} = instrumentSource(file.text, file.source, file.base.file, mutantSites.length)
     mutantSites.push(...sites)
-    const instrumented = join(realOut, 'work', 'mutants', item.key, basename(file.base.source))
+    const instrumented = join(root, file.base.path)
     writeFileWithDirs(instrumented, output)
-    files.push({file: file.base.file, source: file.source, sourceSha1: sha1(file.text), instrumented})
+    files.push({file: file.base.file, path: file.base.path, source: file.source, sourceSha1: sha1(file.text), instrumented})
   }
   const differs = mutantSites.length !== copy.sites.length || mutantSites.some((site, index) => site.key !== copy.sites[index]!.key || site.line !== copy.sites[index]!.line)
   if (differs) throw new Error(`site check: ${item.key} has ${mutantSites.length} sites against ${copy.sites.length} in copy ${copy.copy}, or different keys or lines; aborting before any child starts`)
@@ -183,8 +196,9 @@ const mutants: MutantPlan[] = []
 const mutantHashes = createHash('sha1')
 for (const item of selected) {
   const copy = copies.find((candidate) => candidate.copy === item.copy)
-  if (copy == null) throw new Error(`${item.key}: unknown copy ${item.copy}`)
-  const mutant = planMutant(item, copy)
+  const copyRule = rules.data.copies.find((candidate) => candidate.id === item.copy)
+  if (copy == null || copyRule == null) throw new Error(`${item.key}: unknown copy ${item.copy}`)
+  const mutant = planMutant(item, copy, copyRule)
   mutantHashes.update(`${mutant.key}\n${mutant.files.map((file) => file.sourceSha1).join('\n')}\n`)
   mutants.push(mutant)
 }
@@ -457,7 +471,9 @@ const frRevision = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], {cwd: dirname(FR)
 for (const copy of plan.copies) {
   for (const file of copy.files) {
     if (!copy.entries.some((entry) => entry.file === file.file)) continue
-    const findings = Bun.spawnSync(['bun', FR, basename(file.source)], {cwd: dirname(file.source), timeout: 300_000})
+    // From the copy directory, as the families' own runs call fr, e.g. `bun fr.ts src/MidUI/PageFrame.ts` in frames/inv.
+    const copyDir = file.source.slice(0, file.source.length - file.path.length)
+    const findings = Bun.spawnSync(['bun', FR, file.path], {cwd: copyDir, timeout: 300_000})
     writeFileSync(join(outDir, `fr-${copy.copy}-${file.file}.txt`), `fr revision ${frRevision}\n${findings.stdout.toString()}${findings.stderr.toString()}`)
   }
 }
