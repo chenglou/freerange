@@ -62,6 +62,7 @@ export const RULE_THRESHOLDS = [2, 3, 4]
 export const CRITERION_RULE = 1 // index of noise@abs1e-9 in NOISE_RULES
 
 export type CauseClass = 'subnormal' | 'drift' | 'large' | 'ordinary'
+export const CAUSES: CauseClass[] = ['subnormal', 'drift', 'large', 'ordinary']
 
 // First firing of a site under one rule: lowest input index, its producer (0-3 for P0-P3), the margin when known,
 // the cause class, and the encoded input when at most 2 KB.
@@ -121,9 +122,55 @@ export type VerifyLine = {type: 'verify'; base: string; entry: string; fired: st
 export type CallOutcome = {fired: string[]; thrown: string | null; value: string | null}
 export type CallLine = {type: 'call'; mutant: string; entry: string; original: CallOutcome; mutated: CallOutcome}
 
+// One item of a verify-batch job: the lines the uninstrumented original records for items[item].
+export type VerifyItemLine = {type: 'verify-item'; item: number; fired: string[]; thrown: string | null}
+
+// scoring@witness-v1's instrument gates for one entry (worker.ts score mode, R-S4). A row is (site, cause class) with at
+// least one criterion-rule firing on the instrumented original. `ordinal` numbers the rows of one copy: entries in
+// ordinal order, sites in index order, causes in CAUSES order.
+export type ScoreFailure = {index: number; reason: string; fired: string[]; thrown: string | null}
+export type ScoreRow = {
+  site: number
+  cause: CauseClass
+  ordinal: number
+  count: number
+  producers: number[]
+  firstIndex: number
+  firstInput: string | null // at most 2 KB
+  verified: number // regenerated inputs called on the uninstrumented copy: the first, plus every firing index or a seeded 1,000
+  failureCount: number
+  failures: ScoreFailure[] // the first 20
+  features: Record<string, number> // firing inputs where each boolean triage feature is true (scan-features.ts)
+}
+// missedFiring: sampled in-domain inputs with no criterion-rule firing and within the step budget, called on the
+// uninstrumented copy. A miss is a recorded line whose sites all stayed at level 1 or below on the instrumented original.
+export type MissedFiring = {sampled: number; draws: number; missCount: number; misses: {index: number; lines: string[]}[]}
+export type ScoreLine = {type: 'score'; base: string; entry: string; digest: number; inputs: number; discarded: number; callerDiscarded: number; overBudget: number; rows: ScoreRow[]; missed: MissedFiring}
+
+// -- scoring@witness-v1 witness sets (witness-run.ts, witness.ts) ----------------------------
+
+// witness-run.ts -> witness.ts: one witness set on one copy. `args` and `substitute` have their placeholders resolved.
+export type WitnessJob = {plan: string; family: string; copy: string; set: string; script: string; args: string[]; substitute: {from: string; to: string} | null; derivedScript: string; tiers: 'all' | 'packing-in-domain'; callerRules: string; reservoir: number; out: string}
+// A caller rule checked on every in-domain witness call of its entry (R-D1(ii)).
+export type WitnessRuleCheck = {id: string; checked: number; violations: number; firstViolation: string | null}
+// Witness calls of an entry that record a site at level 3 or above and fire no domain line, grouped by the bit mask of the
+// entry's caller rules they violate (bit i = rules[i]); `inputs` keeps the first `reservoir` encoded argument lists.
+export type WitnessReservoirOutput = {mask: number; count: number; inputs: string[]}
+export type WitnessSiteOutput = {site: number; key: string; file: string; line: number; firing: number; withoutDomainLine: number; reservoirs: WitnessReservoirOutput[]}
+// calls: every wrapped call; inDomain, degenerate, unclassified: the calls per sweep tier (only packing's sweep has a
+// degenerate tier); overBudget, threw and domainLineFired count in-domain calls.
+export type WitnessEntryOutput = {name: string; rules: string[]; calls: number; inDomain: number; degenerate: number; unclassified: number; overBudget: number; threw: number; domainLineFired: number; sites: WitnessSiteOutput[]; ruleChecks: WitnessRuleCheck[]}
+export type WitnessSetOutput = {family: string; copy: string; set: string; script: string; scriptSha1: string; executed: string; executedSha1: string; args: string[]; ms: number; maxRssKb: number; entries: WitnessEntryOutput[]}
+// witness-run.ts's table per copy, merged over the copy's witness sets, with each stored input called on the uninstrumented
+// copy: `verified` counts inputs that record the site's line and no domain line of the entry.
+export type WitnessReservoir = {mask: number; count: number; stored: number; verified: number; firstVerified: string | null; failures: {input: string; fired: string[]; thrown: string | null}[]}
+export type WitnessSite = {key: string; file: string; line: number; firing: number; withoutDomainLine: number; reservoirs: WitnessReservoir[]}
+export type WitnessEntry = {name: string; rules: string[]; calls: number; inDomain: number; degenerate: number; unclassified: number; overBudget: number; threw: number; domainLineFired: number; sites: WitnessSite[]; ruleChecks: WitnessRuleCheck[]}
+export type WitnessTable = {family: string; copy: string; sets: {set: string; output: string; outputSha1: string}[]; entries: WitnessEntry[]}
+
 export type DoneLine = {type: 'done'; maxRssKb: number; ms: number}
 export type HeartbeatLine = {type: 'heartbeat'; entry: string; index: number}
-export type ChildLine = ResultLine | BaselineLine | ReplayLine | VerifyLine | CallLine | DoneLine | HeartbeatLine
+export type ChildLine = ResultLine | BaselineLine | ReplayLine | VerifyLine | CallLine | VerifyItemLine | ScoreLine | DoneLine | HeartbeatLine
 
 export type Job =
   | {mode: 'baseline'; plan: string}
@@ -131,3 +178,6 @@ export type Job =
   | {mode: 'replay'; plan: string; mutant: string; entry: string; args: string}
   | {mode: 'verify'; plan: string; base: string; entry: string; args: string}
   | {mode: 'call'; plan: string; mutant: string; entry: string; args: string}
+  // items: a JSON file of {entry, args} with args encoded, e.g. [{"entry": "packRows", "args": "[[], 320, 8]"}]
+  | {mode: 'verify-batch'; plan: string; base: string; items: string}
+  | {mode: 'score'; plan: string; base: string; samplesPerRow: number; missedSamples: number; maxDrawsPerEntry: number}

@@ -7,14 +7,19 @@
 //   replay:   one recorded input through the instrumented original and mutant
 //   verify:   one recorded input through the uninstrumented original, console.assert overridden to record lines
 //   call:     one input through the uninstrumented original and mutant trees, recording lines and return values
+//   verify-batch: a list of recorded inputs through the uninstrumented original, one line per input
+//   score:    scoring@witness-v1's instrument gates over every entry of one copy (falseAlarm@instrument, missedFiring)
 import {readFileSync, writeSync} from 'node:fs'
 import {isCallerDiscard} from './callers.ts'
 import {maxMagnitude, type Value} from './domain.ts'
+import {domainLines} from './domain-lines.ts'
 import {decodeJson, encodeJson} from './encode.ts'
 import {compileLattice, DIGEST_START, digestValue, inputAt, type Input} from './lattice.ts'
 import {decodePlan} from './plan-file.ts'
+import {lowbias32} from './random.ts'
 import {BUDGET, createRecorder, DISCARD, resetRecorder, type Recorder} from './recorder.ts'
-import {CRITERION_RULE, RULE_THRESHOLDS, type CallOutcome, type CauseClass, type ChildLine, type CopyPlan, type Difference, type EntryPlan, type FilePlan, type FirstFiring, type Job, type MutantPlan, type Plan, type SiteFirings} from './types.ts'
+import {scanFeatures} from './scan-features.ts'
+import {CAUSES, CRITERION_RULE, RULE_THRESHOLDS, type CallOutcome, type CauseClass, type ChildLine, type CopyPlan, type Difference, type EntryPlan, type FilePlan, type FirstFiring, type Job, type MutantPlan, type Plan, type ScoreFailure, type ScoreRow, type SiteFirings} from './types.ts'
 
 const started = performance.now()
 const RULES = RULE_THRESHOLDS.length
@@ -156,6 +161,12 @@ function findMutant(plan: Plan, key: string): {mutant: MutantPlan; copy: CopyPla
   const copy = plan.copies.find((candidate) => candidate.copy === mutant?.copy)
   if (mutant == null || copy == null) throw new Error(`no mutant ${key} in the plan`)
   return {mutant, copy}
+}
+
+function findCopy(plan: Plan, name: string): CopyPlan {
+  const copy = plan.copies.find((candidate) => candidate.copy === name)
+  if (copy == null) throw new Error(`no copy ${name} in the plan`)
+  return copy
 }
 
 function findEntry(copy: CopyPlan, name: string): EntryPlan {
@@ -380,8 +391,7 @@ function uninstrumentedCall(fn: EntryFunction, args: Value[]): CallOutcome {
 }
 
 async function runVerify(plan: Plan, copyName: string, entryName: string, args: Value[]) {
-  const copy = plan.copies.find((candidate) => candidate.copy === copyName)
-  if (copy == null) throw new Error(`no copy ${copyName} in the plan`)
+  const copy = findCopy(plan, copyName)
   const entry = findEntry(copy, entryName)
   recordedFiles = copy.files
   recordFailingAsserts()
@@ -401,6 +411,173 @@ async function runCall(plan: Plan, key: string, entryName: string, args: Value[]
   emit({type: 'call', mutant: key, entry: entryName, original, mutated})
 }
 
+async function runVerifyBatch(plan: Plan, copyName: string, itemsPath: string) {
+  const copy = findCopy(plan, copyName)
+  recordedFiles = copy.files
+  recordFailingAsserts()
+  const modules = await loadModules(copy.files, 'source')
+  const items = decodeJson(readFileSync(itemsPath, 'utf8')) as {entry: string; args: string}[]
+  for (let item = 0; item < items.length; item++) {
+    const {entry, args} = items[item]!
+    if ((item & 1023) === 0) emit({type: 'heartbeat', entry, index: item})
+    const outcome = uninstrumentedCall(entryFunction(modules, findEntry(copy, entry)), decodeJson(args) as Value[])
+    emit({type: 'verify-item', item, fired: outcome.fired, thrown: outcome.thrown})
+  }
+}
+
+// -- scoring@witness-v1 instrument gates ----------------------------------------------------
+
+// Per input of an entry: in the domain with no criterion-rule firing, firing, or outside the domain (discarded by a
+// leading assert, a leak site or a caller rule, or past the step budget).
+const QUIET = 0
+const FIRING = 1
+const OUTSIDE = 2
+const LISTED_FAILURES = 20
+
+type RowBuilder = {site: number; cause: CauseClass; indexes: number[]; producers: number[]; firstInput: string | null; features: Record<string, number>}
+
+/**
+ * The firing indexes a row verifies: all of them when there are at most `samples`, otherwise the first plus `samples`
+ * distinct others at positions lowbias32(1 ^ row ordinal ^ k) modulo the count, for k = 0, 1, 2, ...
+ */
+function verifiedIndexes(indexes: number[], samples: number, ordinal: number): number[] {
+  if (indexes.length <= samples) return indexes.slice()
+  const picked = new Uint8Array(indexes.length)
+  picked[0] = 1
+  const result = [indexes[0]!]
+  for (let k = 0; result.length <= samples; k++) {
+    if (k > 100_000_000) throw new Error(`row ${ordinal}: seeded sampling found ${result.length - 1} distinct firing indexes in 1e8 draws`)
+    const position = lowbias32((1 ^ ordinal ^ k) >>> 0) % indexes.length
+    if (picked[position] === 1) continue
+    picked[position] = 1
+    result.push(indexes[position]!)
+  }
+  return result
+}
+
+async function runScore(plan: Plan, copyName: string, samplesPerRow: number, missedSamples: number, maxDrawsPerEntry: number) {
+  const copy = findCopy(plan, copyName)
+  const recorder = createRecorder(copy.sites, plan.stepBudget)
+  installRecorder(recorder)
+  const instrumented = await loadModules(copy.files, 'instrumented')
+  const sources = await loadModules(copy.files, 'source')
+  recordedFiles = copy.files
+  recordFailingAsserts()
+  const budget = plan.settings.budget
+  const threshold = RULE_THRESHOLDS[CRITERION_RULE]!
+  let ordinal = 0
+  for (const entry of supportedEntries(copy)) {
+    const fn = entryFunction(instrumented, entry)
+    const sourceFn = entryFunction(sources, entry)
+    const lattice = compileLattice(entry, plan.settings)
+    recorder.setEntry(entry.discardSites)
+    const domain = domainLines(copy, entry)
+    const status = new Uint8Array(budget)
+    const builders = new Array<RowBuilder | null>(copy.sites.length * CAUSES.length).fill(null)
+    let digest = DIGEST_START
+    let discarded = 0
+    let callerDiscarded = 0
+    let overBudget = 0
+    for (let index = 0; index < budget; index++) {
+      if ((index & 1023) === 0) emit({type: 'heartbeat', entry: entry.name, index})
+      const input = inputAt(lattice, index)
+      digest = digestValue(digest, input.args)
+      if (isCallerDiscard(entry.callerRules, input.args)) {
+        callerDiscarded += 1
+        status[index] = OUTSIDE
+        continue
+      }
+      resetRecorder(recorder)
+      const outcome = callEntry(fn, input.args)
+      if (outcome.discarded || outcome.overBudget) {
+        if (outcome.discarded) discarded += 1
+        else overBudget += 1
+        status[index] = OUTSIDE
+        continue
+      }
+      let features: Record<string, boolean> | null = null
+      let featuresComputed = false
+      for (let touchedIndex = 0; touchedIndex < recorder.touchedCount; touchedIndex++) {
+        const site = recorder.touched[touchedIndex]!
+        if (recorder.levels[site]! < threshold) continue
+        status[index] = FIRING
+        const cause = causeOf(input.args, recorder.margins[site]!)
+        const slot = site * CAUSES.length + CAUSES.indexOf(cause)
+        let builder = builders[slot] ?? null
+        if (builder == null) {
+          builder = {site, cause, indexes: [], producers: [0, 0, 0, 0], firstInput: encodedInput(input.args), features: {}}
+          builders[slot] = builder
+        }
+        builder.indexes.push(index)
+        builder.producers[input.producer]! += 1
+        if (!featuresComputed) {
+          features = scanFeatures(entry.name, input.args)
+          featuresComputed = true
+        }
+        if (features == null) continue
+        for (const name of Object.keys(features)) if (features[name] === true) builder.features[name] = (builder.features[name] ?? 0) + 1
+      }
+    }
+
+    // falseAlarm@instrument: regenerate each chosen firing input, check it fires the site with its cause again on the
+    // instrumented original, then call the uninstrumented copy.
+    const rows: ScoreRow[] = []
+    for (const builder of builders) {
+      if (builder == null) continue
+      const site = copy.sites[builder.site]!
+      const siteLine = `${site.file}:${site.line}`
+      const chosen = verifiedIndexes(builder.indexes, samplesPerRow, ordinal)
+      const failures: ScoreFailure[] = []
+      let failureCount = 0
+      for (const index of chosen) {
+        const input = inputAt(lattice, index)
+        resetRecorder(recorder)
+        const again = callEntry(fn, input.args)
+        const refires = !again.discarded && !again.overBudget && recorder.levels[builder.site]! >= threshold && causeOf(input.args, recorder.margins[builder.site]!) === builder.cause
+        const call = uninstrumentedCall(sourceFn, input.args)
+        const reason = digest !== entry.digest ? `input digest ${digest} differs from the plan's ${entry.digest}`
+          : !refires ? 'the regenerated input does not fire the site with this cause on the instrumented original'
+          : !call.fired.includes(siteLine) ? 'the uninstrumented copy does not record the site line'
+          : call.fired.some((line) => domain.has(line)) ? 'the uninstrumented copy records a domain line' : null
+        if (reason == null) continue
+        failureCount += 1
+        if (failures.length < LISTED_FAILURES) failures.push({index, reason, fired: call.fired, thrown: call.thrown})
+      }
+      rows.push({site: builder.site, cause: builder.cause, ordinal, count: builder.indexes.length, producers: builder.producers, firstIndex: builder.indexes[0]!, firstInput: builder.firstInput, verified: chosen.length, failureCount, failures, features: builder.features})
+      ordinal += 1
+    }
+
+    // missedFiring: quiet in-domain indexes at lowbias32(2 ^ entry ordinal ^ k) modulo the budget, for k = 0, 1, 2, ...
+    const sampled: number[] = []
+    const seen = new Uint8Array(budget)
+    let draws = 0
+    for (; sampled.length < missedSamples && draws < maxDrawsPerEntry; draws++) {
+      const index = lowbias32((2 ^ entry.ordinal ^ draws) >>> 0) % budget
+      if (seen[index] === 1 || status[index] !== QUIET) continue
+      seen[index] = 1
+      sampled.push(index)
+    }
+    let missCount = 0
+    const misses: {index: number; lines: string[]}[] = []
+    for (const index of sampled) {
+      const input = inputAt(lattice, index)
+      resetRecorder(recorder)
+      callEntry(fn, input.args)
+      const lineLevels = new Map<string, number>()
+      for (let touchedIndex = 0; touchedIndex < recorder.touchedCount; touchedIndex++) {
+        const site = copy.sites[recorder.touched[touchedIndex]!]!
+        const line = `${site.file}:${site.line}`
+        lineLevels.set(line, Math.max(lineLevels.get(line) ?? 0, recorder.levels[site.index]!))
+      }
+      const lines = uninstrumentedCall(sourceFn, input.args).fired.filter((line) => (lineLevels.get(line) ?? 0) <= 1)
+      if (lines.length === 0) continue
+      missCount += 1
+      if (misses.length < LISTED_FAILURES) misses.push({index, lines})
+    }
+    emit({type: 'score', base: copy.copy, entry: entry.name, digest, inputs: budget, discarded, callerDiscarded, overBudget, rows, missed: {sampled: sampled.length, draws, missCount, misses}})
+  }
+}
+
 const job = decodeJson(process.argv[2] ?? '') as Job
 const plan = decodePlan(readFileSync(job.plan, 'utf8'))
 switch (job.mode) {
@@ -409,5 +586,7 @@ switch (job.mode) {
   case 'replay': await runReplay(plan, job.mutant, job.entry, decodeJson(job.args) as Value[]); break
   case 'verify': await runVerify(plan, job.base, job.entry, decodeJson(job.args) as Value[]); break
   case 'call': await runCall(plan, job.mutant, job.entry, decodeJson(job.args) as Value[]); break
+  case 'verify-batch': await runVerifyBatch(plan, job.base, job.items); break
+  case 'score': await runScore(plan, job.base, job.samplesPerRow, job.missedSamples, job.maxDrawsPerEntry); break
 }
 emit({type: 'done', maxRssKb: process.resourceUsage().maxRSS, ms: performance.now() - started})

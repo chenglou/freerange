@@ -2,8 +2,8 @@
 // small summary per mutant is kept. The reference sections differ per family: virtualization compares with the systematic
 // mutants' sweep record; popovers, frames and packing with the planted mutants' record and the registered kill clause.
 // usage: bun mutation-instrument/report.ts <run dir> <rules.json>   (rewrites the report of an existing run)
-//        bun mutation-instrument/report.ts <run dir> <rules.json> --out <new dir>
-//        (writes the report into a new directory; the run directory is only read)
+//        bun mutation-instrument/report.ts <run dir> <rules.json> --out <new dir> [--scoring <registered/w1-scoring.json>]
+//        (writes the report, and the scoring@witness-v1 rescoring, into a new directory; the run directory is only read)
 import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
 import {maxMagnitude, type Value} from './domain.ts'
@@ -11,6 +11,7 @@ import {domainLines} from './domain-lines.ts'
 import {decodeJson, formatCall} from './encode.ts'
 import type {FramesReference, PackingReference, PlantedReference, RecordedCatch, Rules, SysmutRow} from './rules.ts'
 import {formatInput, jsonLines, killed, listOrNone, loadRun, PRODUCERS, readLines, siteLabel, siteOf, table, type AsWrittenReport, type KillClause, type Run} from './run-data.ts'
+import {writeScoring} from './scoring.ts'
 import {CRITERION_RULE, NOISE_RULES, type CallLine, type CopyPlan, type FirstFiring, type ReplayLine, type Site} from './types.ts'
 
 type SweepReplayRecord = {mutant: string; sweepExit: number | null; sweepFirst: {fn: string; label: string; line: number; firstCall: string; firstArgs: string} | null; sweepEvaluations: number | null; replay: ReplayLine | null}
@@ -891,14 +892,17 @@ if (import.meta.main) {
     const index = process.argv.indexOf(name)
     return index < 0 ? null : process.argv[index + 1] ?? null
   }
-  if (runDir == null || rulesPath == null) throw new Error('usage: bun mutation-instrument/report.ts <run dir> <rules.json> [--out <new dir>]')
+  if (runDir == null || rulesPath == null) throw new Error('usage: bun mutation-instrument/report.ts <run dir> <rules.json> [--out <new dir> [--scoring <w1-scoring.json>]]')
   const rules = decodeJson(readFileSync(rulesPath, 'utf8')) as Rules
   const outDir = optionValue('--out')
+  const scoringPath = optionValue('--scoring')
   if (outDir == null) {
+    if (scoringPath != null) throw new Error('--scoring writes into a new directory: pass --out')
     await writeReport(runDir, rules)
   } else {
     if (existsSync(outDir)) throw new Error(`refusing to overwrite ${outDir}`)
     mkdirSync(outDir, {recursive: true})
-    await writeReport(runDir, rules, outDir)
+    const asWritten = await writeReport(runDir, rules, outDir)
+    if (scoringPath != null) await writeScoring({sourceDir: runDir, outDir, rules, rulesPath, asWritten, registrationPath: scoringPath, registrationSha1: null, carried: null})
   }
 }

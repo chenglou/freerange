@@ -195,6 +195,13 @@ export function conditionHolds(condition: CallerCondition, args: Value[]): boole
   }
 }
 
+/** Ids of the rules one input violates, in rule order, e.g. ['R-pack-2'] for packMasonry([{width: 0.5, height: 2, isStyle: false}], …). */
+export function violatedRules(rules: CallerRulePlan[], args: Value[]): string[] {
+  const result: string[] = []
+  for (const rule of rules) if (rule.conditions.some((condition) => !conditionHolds(condition, args))) result.push(rule.id)
+  return result
+}
+
 /** Whether a generated input is a caller discard: an offset relation that repair couldn't satisfy, or a false discard predicate. */
 export function isCallerDiscard(rules: CallerRulePlan[], args: Value[]): boolean {
   for (const rule of rules) {

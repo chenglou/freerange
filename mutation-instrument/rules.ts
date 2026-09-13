@@ -53,6 +53,25 @@ export type Rules = {
   replay: {kind: 'sweep-first'; sweepCopyDir: string} | {kind: 'recorded-examples'}
   firstKillCalls: {mutants: string[]; entry: string}[]
   predictions: Record<string, unknown>
+  // A domain@v3-callers milestone scores itself under scoring@witness-v1 after its report (scoring.ts), next to the as-written
+  // verdict carried from the domain@v2 run it reruns (`run`, its registration `rules`, and that run's rescoring `rescored`).
+  scoring?: RunScoring
+}
+
+export type RunScoring = {registration: string; sha1: string; carried: {run: string; rules: string; rescored: string}}
+
+// A recorded caller-derived sweep of plan-a/registered/w1-scoring.json, run unchanged against a copy's spliced original tree
+// (witness-run.ts). In `args`, {wrapper} names the copy's wrapper tree and {outputs} a directory for the sweep's own output
+// files. `substitute` replaces one exact line of the script first, e.g. probe-field.ts's hard-coded copy path. `tiers`:
+// packing-in-domain drops the calls of packing sweep.ts's degenerate widths (witness.ts packingTier).
+export type WitnessSet = {family: string; name: string; script: string; scriptSha1: string; args: string[]; substitute: {from: string; to: string} | null; tiers: 'all' | 'packing-in-domain'; copies: string[]}
+export type ScoringRegistration = {
+  id: string
+  version: string
+  data: {scratch: string}
+  // plans: per family, the domain@v2 run whose plan.json and spliced original trees the witness sets run against
+  witness: {runDir: string; plans: Record<string, string>; callerRules: {path: string; sha1: string}; reservoir: number; childHardLimitMinutes: number; sets: WitnessSet[]}
+  gates: {samplesPerRow: number; missedSamples: number; maxDrawsPerEntry: number; budgetStarvationMinimum: number; childHardLimitMinutes: number; heartbeatTimeoutSeconds: number}
 }
 
 // virtualization-skeptic/rerun/sysmut_results.json

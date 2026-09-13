@@ -7,7 +7,7 @@
 //     known-false lists can be frozen from the originals' firings before any mutant runs.
 //   5 mutant pass: at most `children` child processes, one per mutant
 //   6 replay the recorded kills this run missed, and call the registered first killing inputs on the uninstrumented trees
-//   7 Freerange's own findings on the copies, then the report
+//   7 Freerange's own findings on the copies, then the report; a domain@v3-callers run then scores itself (scoring.ts)
 // usage: bun mutation-instrument/run.ts --rules <rules.json> --out <run dir> [--mutants key,key] [--baseline-only | --plan-only]
 import {createHash} from 'node:crypto'
 import {appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync} from 'node:fs'
@@ -24,6 +24,7 @@ import {packingHarnessCall} from './packing-harness.ts'
 import {harnessCall} from './popovers-harness.ts'
 import {writeReport} from './report.ts'
 import {normalizedMutants, type CopyRule, type FramesReference, type KeyedMutantRule, type PackingReference, type PlantedReference, type Rules, type SysmutRow} from './rules.ts'
+import {ORACLE_AS_WRITTEN_TITLE, writeScoring} from './scoring.ts'
 import {CRITERION_RULE, type BaselineLine, type CallLine, type CopyPlan, type EntryPlan, type FilePlan, type MutantPlan, type Plan, type ReplayLine, type Site, type VerifyLine} from './types.ts'
 
 const FR = realpathSync(new URL('../fr.ts', import.meta.url).pathname)
@@ -555,5 +556,9 @@ for (const copy of plan.copies) {
 meta['freerange'] = {revision: frRevision, command: 'bun fr.ts <file> (cwd: the copy directory)'}
 finishMeta('complete')
 log('report')
-await writeReport(outDir, rules)
+const asWritten = await writeReport(outDir, rules, outDir, rules.domain.version === 'domain@v3-callers' ? ORACLE_AS_WRITTEN_TITLE : null)
+if (rules.scoring != null) {
+  log('scoring@witness-v1')
+  await writeScoring({sourceDir: outDir, outDir, rules, rulesPath, asWritten, registrationPath: join(scratch, rules.scoring.registration), registrationSha1: rules.scoring.sha1, carried: rules.scoring.carried})
+}
 log(`done in ${((performance.now() - wallStart) / 1000).toFixed(1)} s`)
