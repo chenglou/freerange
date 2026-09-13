@@ -14,12 +14,13 @@ import {appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFi
 import {dirname, join} from 'node:path'
 import {exportedEntries, loadProgram} from './analyze.ts'
 import {DOMAIN_VERSION, MAX_ARRAY_LENGTH, NUMBER_CAP, type Value} from './domain.ts'
-import {decodeJson, encodeJson} from './encode.ts'
+import {decodeJson, encodeJson, formatCall} from './encode.ts'
+import {framesHarnessCall} from './frames-harness.ts'
 import {instrumentSource} from './instrument.ts'
 import {compileLattice, DIGEST_START, digestValue, inputAt} from './lattice.ts'
 import {harnessCall} from './popovers-harness.ts'
 import {writeReport} from './report.ts'
-import {normalizedMutants, type CopyRule, type KeyedMutantRule, type PlantedReference, type Rules, type SysmutRow} from './rules.ts'
+import {normalizedMutants, type CopyRule, type FramesReference, type KeyedMutantRule, type PlantedReference, type Rules, type SysmutRow} from './rules.ts'
 import {CRITERION_RULE, type BaselineLine, type CallLine, type ChildLine, type CopyPlan, type DoneLine, type EntryPlan, type FilePlan, type Job, type MutantPlan, type Plan, type ReplayLine, type Site, type VerifyLine} from './types.ts'
 
 const WORKER = realpathSync(new URL('./worker.ts', import.meta.url).pathname)
@@ -110,9 +111,9 @@ function planCopy(rule: CopyRule): CopyPlan {
   const dir = realpathSync(join(scratch, rule.dir))
   const sources = rule.files.map((file) => join(dir, file.path))
   const program = loadProgram(sources)
-  const files: FilePlan[] = []
   const root = join(realOut, 'work', 'original', rule.id)
   if (rule.tsconfig != null) copyFileWithDirs(join(dir, rule.tsconfig), join(root, rule.tsconfig))
+  const files: FilePlan[] = []
   const sites: Site[] = []
   const entries: EntryPlan[] = []
   rule.files.forEach((fileRule, index) => {
@@ -169,12 +170,12 @@ function planMutant(item: KeyedMutantRule, copy: CopyPlan, copyRule: CopyRule): 
   })
   const changedFiles = tree.filter((file) => sha1(file.text) !== file.base.sourceSha1).map((file) => file.base.file)
   if (changedFiles.length === 0) throw new Error(`${item.key}: the mutant tree is identical to copy ${copy.copy}`)
-  const files: FilePlan[] = []
   if (copyRule.tsconfig != null) {
     const tsconfig = join(realpathSync(join(scratch, copyRule.dir)), copyRule.tsconfig)
     copyFileWithDirs(tsconfig, join(root, copyRule.tsconfig))
     if (!('tree' in item) && !('replace' in item)) copyFileWithDirs(tsconfig, join(root, 'source', copyRule.tsconfig))
   }
+  const files: FilePlan[] = []
   const mutantSites: Site[] = []
   for (const file of tree) {
     const {output, sites} = instrumentSource(file.text, file.source, file.base.file, mutantSites.length)
@@ -413,6 +414,15 @@ async function replay(key: string, entry: string, args: Value[]): Promise<Replay
   return result
 }
 
+/** One encoded input through the uninstrumented original and mutant trees of `key`. */
+async function uninstrumentedCall(key: string, entry: string, args: string): Promise<CallLine | null> {
+  let call: CallLine | null = null
+  await runChild({mode: 'call', plan: planPath, mutant: key, entry, args}, 60_000, 60_000, (line) => {
+    if (line.type === 'call') call = line
+  })
+  return call
+}
+
 if (rules.replay.kind === 'sweep-first') {
   type SweepOutput = {failures: {fn: string; label: string; line: number; firstCall: string; firstArgs: string}[]; evaluations: number}
   const reference = decodeJson(readFileSync(join(scratch, rules.data.reference), 'utf8')) as SysmutRow[]
@@ -431,6 +441,33 @@ if (rules.replay.kind === 'sweep-first') {
     const outcome = first == null ? null : await replay(row.id, first.firstCall, JSON.parse(first.firstArgs) as Value[])
     appendFileSync(replayPath, `${encodeJson({mutant: row.id, sweepExit: sweep.exitCode, sweepFirst: first, sweepEvaluations: parsed?.evaluations ?? null, replay: outcome})}\n`)
   }
+} else if (rules.family === 'frames') {
+  // Recorded catches come from the inv/ sweep. A field input recorded through a sidebar frame replays on the frame the
+  // uninstrumented original returns for that sidebar call, so original and mutant receive one argument list.
+  const reference = decodeJson(readFileSync(join(scratch, rules.data.reference), 'utf8')) as FramesReference
+  let replayed = 0
+  for (const copyRule of rules.data.copies) {
+    for (const id of copyRule.expectedKills ?? []) {
+      const key = `${copyRule.id}/${id}`
+      if (!plannedKeys.has(key) || criterionKilled.has(key)) continue
+      for (const recorded of reference.mutants.find((candidate) => candidate.id === id)?.sweep.catches ?? []) {
+        for (const example of recorded.examples) {
+          const call = framesHarnessCall(recorded.family, example)
+          let source = `sweep ${recorded.family}/${recorded.mode} ${recorded.file}:${recorded.line} (${recorded.numbering} numbering)`
+          let args: Value[] | null = call.args
+          if (call.frameFrom != null) {
+            const frameCall = await uninstrumentedCall(key, call.frameFrom.entry, encodeJson(call.frameFrom.args))
+            const frame = frameCall?.original.value ?? null
+            source += `; frame returned by the uninstrumented original's ${formatCall(call.frameFrom.entry, call.frameFrom.args)}`
+            args = frame == null || frame.endsWith('…') ? null : [decodeJson(frame) as Value, ...call.args.slice(1)]
+          }
+          replayed += 1
+          appendFileSync(replayPath, `${encodeJson({mutant: key, copy: copyRule.id, id, source, helper: `${recorded.family}/${recorded.mode}`, entry: call.entry, args: encodeJson(args ?? call.args), replay: args == null ? null : await replay(key, call.entry, args)})}\n`)
+        }
+      }
+    }
+  }
+  log(`replay: ${replayed} recorded inputs of missed expected kills`)
 } else {
   const reference = decodeJson(readFileSync(join(scratch, rules.data.reference), 'utf8')) as PlantedReference
   let replayed = 0
@@ -457,10 +494,7 @@ if (rules.replay.kind === 'sweep-first') {
 
 const callsPath = join(outDir, 'calls.jsonl')
 for (const target of firstKills) {
-  let call: CallLine | null = null
-  await runChild({mode: 'call', plan: planPath, mutant: target.mutant, entry: target.entry, args: target.input}, 60_000, 60_000, (line) => {
-    if (line.type === 'call') call = line
-  })
+  const call = await uninstrumentedCall(target.mutant, target.entry, target.input)
   appendFileSync(callsPath, `${encodeJson({...target, call})}\n`)
 }
 log(`first-kill calls: ${firstKills.length}`)

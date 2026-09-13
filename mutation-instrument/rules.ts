@@ -31,7 +31,7 @@ export type KnownFalseRule = {label: string; path: string; stage: 'before-baseli
 
 export type Rules = {
   id: string
-  family: 'virtualization' | 'popovers'
+  family: 'virtualization' | 'popovers' | 'frames'
   measured_on: string
   domains_label: string
   data: {
@@ -83,6 +83,22 @@ export type PlantedMutant = {
   behaviorExample: {entry: string; args: Value[]; original: Value; mutant: Value} | null
 }
 export type PlantedReference = {sources: Record<string, {path: string; sha1: string}>; mutants: PlantedMutant[]; staticOnly: {id: string; entry: string; rule: string; args: Value[]; source: string}[]}
+
+// plan-a/m3-prep/reference-frames.json, built from the frames sweep's results/mutants.json and results/sweep-M*.json, the
+// static runs recorded there, and the skeptic's real-caller classification (experiment-frames-skeptic.md correction 4).
+// A recorded catch is one (sweep family, mode, assert line) whose failure count rose above the unmutated inv/ sweep; lines
+// use inv/ numbering and `file` is the copy file's logical name, e.g. `NewSidebarLayout`.
+export type FramesRecordedCatch = {family: string; mode: string; file: string; line: number; numbering: string; label: string; count: number; baselineCount: number; examples: Value[][]}
+export type FramesMutant = {
+  id: string
+  bugClass: string
+  file: string
+  note: string
+  sweep: {caught: boolean; caughtOnlyOutOfDomain: boolean; evaluations: number; catches: FramesRecordedCatch[]; outOfDomain: FramesRecordedCatch[]}
+  static: {typescript: boolean; freerangeAsWritten: boolean; freerangeReshaped: boolean}
+  realCallers: {changesBehavior: boolean; basis: string}
+}
+export type FramesReference = {sources: Record<string, {path: string; sha1: string}>; mutants: FramesMutant[]}
 
 export type KeyedMutantRule = MutantRule & {key: string}
 
