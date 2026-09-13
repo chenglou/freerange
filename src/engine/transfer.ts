@@ -919,7 +919,11 @@ function refineFiniteCallArgument(
   if (declared.kind !== 'record') return
   const producer = expressionContext.instructionByValue[resolveStoredValue(value, expressionContext)]
   if (producer?.kind !== 'object') return
-  const declaredProperties = new Map(declared.properties.map(property => [property.name, property.declared]))
+  // A field declared only in a declaration file carries no finite requirement (see
+  // finiteInputPaths), so a completed call proves nothing about it.
+  const declaredProperties = new Map(declared.properties
+    .filter(property => property.external !== true)
+    .map(property => [property.name, property.declared]))
   for (const field of producer.properties) {
     const fieldKind = declaredProperties.get(field.name)
     if (fieldKind != null) refineFiniteCallArgument(state, field.value, fieldKind, expressionContext)
@@ -949,7 +953,11 @@ function refineFiniteValue(value: AbstractValue, declared: DeclaredKind): Abstra
 }
 
 function refineFiniteRecord(value: AbstractRecord, declared: Extract<DeclaredKind, {kind: 'record'}>): AbstractRecord | null {
-  const declaredProperties = new Map(declared.properties.map(property => [property.name, property.declared]))
+  // A field declared only in a declaration file carries no finite requirement (see
+  // finiteInputPaths), so a completed call proves nothing about it.
+  const declaredProperties = new Map(declared.properties
+    .filter(property => property.external !== true)
+    .map(property => [property.name, property.declared]))
   let changed = false
   const properties: AbstractRecord['properties'] = []
   for (const property of value.properties) {

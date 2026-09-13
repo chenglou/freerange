@@ -350,6 +350,22 @@ describe('accessed record fields', () => {
     expect(analyzedFunction(report, 'ignoreEvent').assumptions).toEqual([])
   })
 
+  test('keeps external numeric fields unrefined after a completed call', () => {
+    // A call requires finite numbers only in project fields, so it checks nothing about
+    // highWaterMark, which is declared in lib.dom.d.ts. Number.parseFloat('abc') is NaN.
+    const report = analyzeSource('external-after-call.ts', `
+      function ignore(strategy: QueuingStrategyInit): void {}
+      function parsedHighWaterMark(text: string): number {
+        const strategy: QueuingStrategyInit = {highWaterMark: Number.parseFloat(text)}
+        ignore(strategy)
+        return strategy.highWaterMark
+      }
+    `)
+    expect(analyzedFunction(report, 'parsedHighWaterMark').ensures).toEqual([
+      'return is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at external-after-call.ts:4:63)',
+    ])
+  })
+
   test('does not manufacture fields through predicates, mapped types, or recursion', () => {
     const report = analyzeSource('external-boundaries.ts', `
       function claimsMouseEvent(event: Event): event is MouseEvent {
