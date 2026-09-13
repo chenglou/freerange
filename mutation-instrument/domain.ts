@@ -1,6 +1,7 @@
-// Input domains and number value sources for domain@v1 and lattice@v1, forked from the replay input-range prototype
+// Input domains and number value sources for domain@v1b and lattice@v1, forked from the replay input-range prototype
 // (domain.ts). A domain is what an entry function accepts: its parameter types narrowed by the entry's leading
-// console.assert bounds. Every number is capped at ±1e6, so every number domain is finite.
+// console.assert bounds. A side of a number that no leading assert bounds is capped at ±1e6, so every number domain is
+// finite.
 import {nextFloat, nextIndex, type Random} from './random.ts'
 
 export type Scalar = number | boolean | string | null | undefined
@@ -19,11 +20,41 @@ export type Domain = NumberDomain | ChoiceDomain | RecordDomain | ArrayDomain | 
 
 export type Comparison = '<' | '<=' | '>' | '>=' | '===' | '!=='
 
+export const DOMAIN_VERSION = 'domain@v1b'
 export const NUMBER_CAP = 1e6
 export const MAX_ARRAY_LENGTH = 6
 
-export function cappedNumber(): NumberDomain {
-  return {kind: 'number', min: -NUMBER_CAP, max: NUMBER_CAP, minOpen: false, maxOpen: false, integer: false, excluded: null}
+/** Every number: a parameter's domain before its leading asserts narrow it, e.g. `x <= 1e8` narrows it to [-Infinity, 1e8]. */
+export function unboundedNumber(): NumberDomain {
+  return {kind: 'number', min: -Infinity, max: Infinity, minOpen: false, maxOpen: false, integer: false, excluded: null}
+}
+
+/**
+ * Caps, in place, every number end that no leading assert bounded: -1e6 below and 1e6 above. A declared bound replaces
+ * the cap on its side, whether it's narrower or wider than the cap. E.g. after `x >= 0` and `x <= 1e8` the domain is
+ * [0, 1e8], after only `x >= 0` it's [0, 1e6], and with no leading assert it's [-1e6, 1e6].
+ */
+export function capUnboundedEnds(domain: Domain) {
+  switch (domain.kind) {
+    case 'number':
+      if (domain.min === -Infinity) domain.min = -NUMBER_CAP
+      if (domain.max === Infinity) domain.max = NUMBER_CAP
+      break
+    case 'choice':
+      break
+    case 'record':
+      for (const field of domain.fields) capUnboundedEnds(field.domain)
+      break
+    case 'array':
+      capUnboundedEnds(domain.element)
+      break
+    case 'tuple':
+      for (const element of domain.elements) capUnboundedEnds(element)
+      break
+    case 'union':
+      for (const member of domain.members) capUnboundedEnds(member)
+      break
+  }
 }
 
 export function numberInDomain(domain: NumberDomain, value: number): boolean {

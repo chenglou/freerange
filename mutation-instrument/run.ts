@@ -10,7 +10,7 @@ import {createHash} from 'node:crypto'
 import {appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync} from 'node:fs'
 import {basename, dirname, join} from 'node:path'
 import {exportedEntries, loadProgram} from './analyze.ts'
-import {MAX_ARRAY_LENGTH, NUMBER_CAP, type Value} from './domain.ts'
+import {DOMAIN_VERSION, MAX_ARRAY_LENGTH, NUMBER_CAP, type Value} from './domain.ts'
 import {decodeJson, encodeJson} from './encode.ts'
 import {instrumentSource} from './instrument.ts'
 import {compileLattice, DIGEST_START, digestValue, inputAt} from './lattice.ts'
@@ -51,7 +51,7 @@ const scratch = rules.data.scratch
 const basesDir = realpathSync(join(scratch, rules.data.basesDir))
 const knownFalsePath = join(scratch, rules.data.knownFalse)
 const checks: [string, unknown, unknown][] = [
-  ['domain.cap', rules.domain.cap, NUMBER_CAP], ['domain.maxArrayLength', rules.domain.maxArrayLength, MAX_ARRAY_LENGTH],
+  ['domain.version', rules.domain.version, DOMAIN_VERSION], ['domain.cap', rules.domain.cap, NUMBER_CAP], ['domain.maxArrayLength', rules.domain.maxArrayLength, MAX_ARRAY_LENGTH],
   ['execution.heartbeatEveryInputs', rules.execution.heartbeatEveryInputs, HEARTBEAT_EVERY_INPUTS], ['noise criterion', rules.rules.noise.criterion, 'noise@abs1e-9'],
 ]
 for (const [name, registered, implemented] of checks) if (registered !== implemented) throw new Error(`registered ${name} ${String(registered)} differs from the implementation's ${String(implemented)}`)

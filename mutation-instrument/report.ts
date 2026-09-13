@@ -12,7 +12,7 @@ export type Rules = {
   measured_on: string
   domains_label: string
   data: {scratch: string; basesDir: string; bases: string[]; referenceRecord: string; referenceRun: string; sweepCopyDir: string; knownFalse: string; sweepEntries: string[]; designSweepEntries: string[]}
-  domain: {cap: number; maxArrayLength: number}
+  domain: {version: string; cap: number; maxArrayLength: number}
   lattice: {budget: number; seed: number; p0Inputs: number; p2ProductMax: number}
   rules: {noise: {criterion: string}}
   execution: {children: number; heartbeatEveryInputs: number; heartbeatTimeoutSeconds: number; projectionMaxMinutes: number}
@@ -181,7 +181,7 @@ export async function writeReport(outDir: string, rules: Rules, reference: Refer
   write(`- **domains:** ${rules.domains_label}`)
   for (const key of ['instrumentCommit', 'instrumentDirty', 'instrumentSha1', 'bun', 'rulesPath', 'rulesSha1', 'knownFalsePath', 'knownFalseSha1', 'started', 'finished', 'status', 'subset', 'siteCheck']) write(`- **${key}:** ${JSON.stringify(meta[key])}`)
   write(`- **inputSha1:** ${JSON.stringify(meta['inputSha1'])}`)
-  write(`- **settings:** ${JSON.stringify(plan.settings)}; cap ±${rules.domain.cap}; ${rules.execution.children} children`)
+  write(`- **settings:** ${JSON.stringify(plan.settings)}; ${rules.domain.version}: cap ±${rules.domain.cap} on sides with no declared bound; ${rules.execution.children} children`)
   write(`- **Freerange findings:** ${JSON.stringify(meta['freerange'])}`)
   const failures = [...summaries.values()].filter((summary) => summary.failure != null)
   const digestMismatches = [...summaries.values()].reduce((sum, summary) => sum + summary.digestMismatches, 0) + baselineDigestMismatches

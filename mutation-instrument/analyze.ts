@@ -1,9 +1,10 @@
-// domain@v1, run in the parent only: finds a file's exported functions, derives each parameter's domain from its
+// domain@v1b, run in the parent only: finds a file's exported functions, derives each parameter's domain from its
 // TypeScript type, and narrows the domains with the simple shapes of the function's leading console.assert calls.
-// Forked from the replay input-range prototype (analyze.ts); numbers are capped at ±1e6 instead of every finite double.
+// Forked from the replay input-range prototype (analyze.ts). A side of a number that no leading assert bounds is capped
+// at ±1e6 instead of every finite double.
 import {dirname} from 'node:path'
 import * as ts from 'typescript'
-import {applyBound, applyIntegerRule, cappedNumber, MAX_ARRAY_LENGTH, type Comparison, type Domain, type NumberDomain, type TupleDomain} from './domain.ts'
+import {applyBound, applyIntegerRule, capUnboundedEnds, MAX_ARRAY_LENGTH, unboundedNumber, type Comparison, type Domain, type NumberDomain, type TupleDomain} from './domain.ts'
 import {numberLeaves} from './lattice.ts'
 import type {EntryPlan, Path, Precondition, PreconditionUse, RelationPlan} from './types.ts'
 
@@ -54,7 +55,7 @@ function classify(checker: ts.TypeChecker, type: ts.Type, node: ts.Node, depth: 
   if (flags & ts.TypeFlags.BooleanLiteral) return {kind: 'choice', values: [checker.typeToString(type) === 'true']}
   if (flags & ts.TypeFlags.Null) return {kind: 'choice', values: [null]}
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) return {kind: 'choice', values: [undefined]}
-  if (flags & ts.TypeFlags.Number) return cappedNumber()
+  if (flags & ts.TypeFlags.Number) return unboundedNumber()
   if (flags & ts.TypeFlags.Union) {
     const members: Domain[] = []
     for (const member of (type as ts.UnionType).types) {
@@ -65,7 +66,7 @@ function classify(checker: ts.TypeChecker, type: ts.Type, node: ts.Node, depth: 
     return merge(members)
   }
   // A branded number, e.g. `number & {__brand: 'px'}`, generates like a plain number.
-  if (flags & ts.TypeFlags.Intersection && (type as ts.IntersectionType).types.some((member) => member.flags & ts.TypeFlags.Number)) return cappedNumber()
+  if (flags & ts.TypeFlags.Intersection && (type as ts.IntersectionType).types.some((member) => member.flags & ts.TypeFlags.Number)) return unboundedNumber()
   if (checker.isTupleType(type)) {
     const target = (type as ts.TupleTypeReference).target
     if (target.elementFlags.some((elementFlags) => elementFlags & (ts.ElementFlags.Optional | ts.ElementFlags.Variable))) return 'a tuple with optional or rest elements'
@@ -236,5 +237,7 @@ export function exportedEntries(program: ts.Program, file: string): AnalyzedEntr
       }
     }
   }
+  // The cap goes last, after every leading assert has narrowed the domains, so a declared bound replaces the cap on its side.
+  for (const entry of result) capUnboundedEnds(entry.args)
   return result
 }
