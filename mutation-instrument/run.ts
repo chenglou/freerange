@@ -1,11 +1,13 @@
 // The parent, and the only process that loads the TypeScript library. One command runs a whole milestone:
 //   1 plan domains per exported function of each base, and splice asserts to disk for bases and mutants
 //   2 abort if a mutant's sites differ from its base; digest every entry's input sequence twice
-//   3 baseline pass over the originals, then project the mutant pass and refuse past the registered maximum
-//   4 mutant pass: at most `children` child processes, one per mutant
-//   5 replay the recorded sweep kills this run missed; verify baseline firings on the uninstrumented originals
-//   6 Freerange's own findings on the bases, then the report
-// usage: bun mutation-instrument/run.ts --rules <m1.json> --out <run dir> [--mutants s001,s158]
+//   3 baseline pass over the originals, and verify its firings on the uninstrumented originals
+//   4 project the mutant pass and refuse past the registered maximum. With --baseline-only the run stops here, so the
+//     known-false list can be frozen from the originals' firings before any mutant runs.
+//   5 mutant pass: at most `children` child processes, one per mutant
+//   6 replay the recorded sweep kills this run missed
+//   7 Freerange's own findings on the bases, then the report
+// usage: bun mutation-instrument/run.ts --rules <m1.json> --out <run dir> [--mutants s001,s158] [--baseline-only]
 import {createHash} from 'node:crypto'
 import {appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync} from 'node:fs'
 import {basename, dirname, join} from 'node:path'
@@ -39,22 +41,25 @@ function log(line: string) {
 const wallStart = performance.now()
 const rulesPath = option('--rules')
 const outDir = option('--out')
-if (rulesPath == null || outDir == null) throw new Error('usage: bun mutation-instrument/run.ts --rules <m1.json> --out <run dir> [--mutants s001,s158]')
+if (rulesPath == null || outDir == null) throw new Error('usage: bun mutation-instrument/run.ts --rules <m1.json> --out <run dir> [--mutants s001,s158] [--baseline-only]')
 if (existsSync(outDir)) throw new Error(`refusing to overwrite ${outDir}`)
 const subset = option('--mutants')?.split(',') ?? null
-mkdirSync(join(outDir, 'work', 'original'), {recursive: true})
-mkdirSync(join(outDir, 'work', 'mutants'))
+const baselineOnly = process.argv.includes('--baseline-only')
 
 const rulesText = readFileSync(rulesPath, 'utf8')
 const rules = decodeJson(rulesText) as Rules
 const scratch = rules.data.scratch
 const basesDir = realpathSync(join(scratch, rules.data.basesDir))
 const knownFalsePath = join(scratch, rules.data.knownFalse)
+// The known-false list is frozen from a baseline-only run's firings, so only a run with a mutant pass requires it.
+if (!baselineOnly && !existsSync(knownFalsePath)) throw new Error(`the known-false list ${knownFalsePath} must be frozen before a run with a mutant pass`)
 const checks: [string, unknown, unknown][] = [
   ['domain.version', rules.domain.version, DOMAIN_VERSION], ['domain.cap', rules.domain.cap, NUMBER_CAP], ['domain.maxArrayLength', rules.domain.maxArrayLength, MAX_ARRAY_LENGTH],
   ['execution.heartbeatEveryInputs', rules.execution.heartbeatEveryInputs, HEARTBEAT_EVERY_INPUTS], ['noise criterion', rules.rules.noise.criterion, 'noise@abs1e-9'],
 ]
 for (const [name, registered, implemented] of checks) if (registered !== implemented) throw new Error(`registered ${name} ${String(registered)} differs from the implementation's ${String(implemented)}`)
+mkdirSync(join(outDir, 'work', 'original'), {recursive: true})
+mkdirSync(join(outDir, 'work', 'mutants'))
 const settings = {budget: rules.lattice.budget, seed: rules.lattice.seed, p0Inputs: rules.lattice.p0Inputs, p2ProductMax: rules.lattice.p2ProductMax}
 
 const instrumentFiles = readdirSync(INSTRUMENT_DIR).filter((name) => name.endsWith('.ts')).sort()
@@ -64,6 +69,7 @@ const meta: Record<string, unknown> = {
   measured_on: rules.measured_on,
   domains: rules.domains_label,
   subset,
+  baselineOnly,
   instrumentSha1: sha1(instrumentFiles.map((name) => `${name}\n${readFileSync(join(INSTRUMENT_DIR, name), 'utf8')}`).join('\n')),
   instrumentCommit: gitHead,
   instrumentDirty: gitDirty !== '',
@@ -71,7 +77,7 @@ const meta: Record<string, unknown> = {
   rulesPath,
   rulesSha1: sha1(rulesText),
   knownFalsePath,
-  knownFalseSha1: sha1(readFileSync(knownFalsePath)),
+  knownFalseSha1: existsSync(knownFalsePath) ? sha1(readFileSync(knownFalsePath)) : null,
   settings,
   children: rules.execution.children,
   started: new Date().toISOString(),
@@ -186,7 +192,18 @@ const noteChild = (run: ChildRun) => {
 }
 const heartbeatTimeoutMs = rules.execution.heartbeatTimeoutSeconds * 1000
 
-// -- 3: baseline and projection -------------------------------------------------
+function finishMeta(status: string) {
+  const parentMaxRssKb = process.resourceUsage().maxRSS
+  meta['wallSeconds'] = (performance.now() - wallStart) / 1000
+  meta['parentMaxRssKb'] = parentMaxRssKb
+  meta['maxChildRssKb'] = maxChildRssKb
+  meta['concurrentRssBoundKb'] = parentMaxRssKb + rules.execution.children * maxChildRssKb
+  meta['finished'] = new Date().toISOString()
+  meta['status'] = status
+  writeMeta()
+}
+
+// -- 3: baseline, and its firings on the uninstrumented originals ----------------
 
 log('baseline pass')
 const baselinePath = join(outDir, 'baseline.jsonl')
@@ -200,6 +217,23 @@ noteChild(baselineRun)
 meta['baselineChild'] = {exitCode: baselineRun.exitCode, timedOut: baselineRun.timedOut, ms: baselineRun.ms, maxRssKb: baselineRun.done?.maxRssKb ?? null, stderr: baselineRun.stderr}
 writeMeta()
 if (baselineRun.exitCode !== 0 || baselineRun.timedOut != null) throw new Error(`baseline child failed: exit ${baselineRun.exitCode}, ${baselineRun.timedOut ?? ''}\n${baselineRun.stderr}`)
+
+const verifyPath = join(outDir, 'verify.jsonl')
+for (const line of baselineLines) {
+  for (const firing of line.firings) {
+    const first = firing.first[CRITERION_RULE]
+    if (first == null) continue
+    let verify: VerifyLine | null = null
+    if (first.input != null) {
+      await runChild({mode: 'verify', plan: planPath, base: line.base, entry: line.entry, args: first.input}, 60_000, 60_000, (childLine) => {
+        if (childLine.type === 'verify') verify = childLine
+      })
+    }
+    appendFileSync(verifyPath, `${encodeJson({base: line.base, entry: line.entry, site: firing.site, verify})}\n`)
+  }
+}
+
+// -- 4: projection -----------------------------------------------------------------
 
 const costNs = new Map(baselineLines.map((line) => [`${line.base}.${line.entry}`, line.nsPerCall]))
 const childProjectionSeconds = (mutant: MutantPlan) => {
@@ -221,7 +255,17 @@ if (projectedSeconds > rules.execution.projectionMaxMinutes * 60) {
   throw new Error(`refusing: projected ${projectedSeconds.toFixed(0)} s is above ${rules.execution.projectionMaxMinutes} minutes`)
 }
 
-// -- 4: mutant pass --------------------------------------------------------------
+if (baselineOnly) {
+  for (const line of baselineLines) {
+    const criterionSites = line.firings.filter((firing) => firing.first[CRITERION_RULE] != null).length
+    log(`baseline ${line.base}.${line.entry}: ${line.discarded} of ${line.inputs} inputs discarded; firing sites: ${line.firings.length} under noise@none, ${criterionSites} under noise@abs1e-9; throws ${line.throws.count}; non-finite returns ${line.nonFiniteReturns.count}`)
+  }
+  finishMeta('complete: baseline only, no mutant pass')
+  log(`done in ${((performance.now() - wallStart) / 1000).toFixed(1)} s`)
+  process.exit(0)
+}
+
+// -- 5: mutant pass --------------------------------------------------------------
 
 log('mutant pass')
 const resultsPath = join(outDir, 'results.jsonl')
@@ -250,7 +294,7 @@ writeFileSync(join(outDir, 'children.json'), `${JSON.stringify(mutantRuns, null,
 meta['mutantPass'] = {seconds: (performance.now() - mutantPassStart) / 1000, projectedSeconds, children: mutantRuns.length}
 writeMeta()
 
-// -- 5: replay misses, verify baseline firings ----------------------------------------
+// -- 6: replay misses ---------------------------------------------------------------------
 
 type SweepOutput = {failures: {fn: string; label: string; line: number; firstCall: string; firstArgs: string}[]; evaluations: number}
 const replayPath = join(outDir, 'replay.jsonl')
@@ -276,22 +320,7 @@ for (const row of misses) {
   appendFileSync(replayPath, `${encodeJson({mutant: row.id, sweepExit: sweep.exitCode, sweepFirst: first, sweepEvaluations: parsed?.evaluations ?? null, replay})}\n`)
 }
 
-const verifyPath = join(outDir, 'verify.jsonl')
-for (const line of baselineLines) {
-  for (const firing of line.firings) {
-    const first = firing.first[CRITERION_RULE]
-    if (first == null) continue
-    let verify: VerifyLine | null = null
-    if (first.input != null) {
-      await runChild({mode: 'verify', plan: planPath, base: line.base, entry: line.entry, args: first.input}, 60_000, 60_000, (childLine) => {
-        if (childLine.type === 'verify') verify = childLine
-      })
-    }
-    appendFileSync(verifyPath, `${encodeJson({base: line.base, entry: line.entry, site: firing.site, verify})}\n`)
-  }
-}
-
-// -- 6: Freerange findings on the bases, report ------------------------------------------
+// -- 7: Freerange findings on the bases, report ------------------------------------------
 
 const frRevision = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], {cwd: dirname(FR)}).stdout.toString().trim()
 for (const base of plan.bases) {
@@ -299,14 +328,7 @@ for (const base of plan.bases) {
   writeFileSync(join(outDir, `fr-${base.base}.txt`), `fr revision ${frRevision}\n${findings.stdout.toString()}${findings.stderr.toString()}`)
 }
 meta['freerange'] = {revision: frRevision, command: 'bun fr.ts base_<base>.ts (cwd basesDir)'}
-
-meta['wallSeconds'] = (performance.now() - wallStart) / 1000
-meta['parentMaxRssKb'] = process.resourceUsage().maxRSS
-meta['maxChildRssKb'] = maxChildRssKb
-meta['concurrentRssBoundKb'] = (meta['parentMaxRssKb'] as number) + rules.execution.children * maxChildRssKb
-meta['finished'] = new Date().toISOString()
-meta['status'] = 'complete'
-writeMeta()
+finishMeta('complete')
 log('report')
 await writeReport(outDir, rules, reference)
 log(`done in ${((performance.now() - wallStart) / 1000).toFixed(1)} s`)
