@@ -44,7 +44,8 @@ export type Rules = {
     sweepEntries?: string[]
     designSweepEntries?: string[]
   }
-  domain: {version: string; cap: number; maxArrayLength: number}
+  // domain@v3-callers adds callerRules (the rule file and its sha1) and dropList (the witness run's list of dropped rules)
+  domain: {version: string; cap: number; maxArrayLength: number; callerRules?: {path: string; sha1: string}; dropList?: string}
   lattice: {budget: number; seed: number; p0Inputs: number; p2ProductMax: number}
   rules: {noise: {criterion: string}}
   // stepBudget: the most loop body entries one call may run; absent in registrations before m4-packing, which had no loops

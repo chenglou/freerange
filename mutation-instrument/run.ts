@@ -13,7 +13,8 @@ import {createHash} from 'node:crypto'
 import {appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync} from 'node:fs'
 import {dirname, join} from 'node:path'
 import {exportedEntries, loadProgram} from './analyze.ts'
-import {DOMAIN_VERSION, MAX_ARRAY_LENGTH, NUMBER_CAP, type Value} from './domain.ts'
+import {applyCallerRules, type CallerRule, type CallerRuleFile, type CallerRulePlan, type DropList} from './callers.ts'
+import {capUnboundedEnds, DOMAIN_VERSIONS, MAX_ARRAY_LENGTH, NUMBER_CAP, type Value} from './domain.ts'
 import {decodeJson, encodeJson, formatCall} from './encode.ts'
 import {framesHarnessCall} from './frames-harness.ts'
 import {instrumentSource} from './instrument.ts'
@@ -61,11 +62,39 @@ for (const list of rules.data.knownFalse) {
   const required = list.stage === 'before-baseline' ? !planOnly : !planOnly && !baselineOnly
   if (required && !existsSync(join(scratch, list.path))) throw new Error(`the known-false list ${list.path} (${list.stage}) must exist before this run`)
 }
+if (!DOMAIN_VERSIONS.includes(rules.domain.version)) throw new Error(`registered domain.version ${rules.domain.version} is not one of the implementation's ${DOMAIN_VERSIONS.join(', ')}`)
 const checks: [string, unknown, unknown][] = [
-  ['domain.version', rules.domain.version, DOMAIN_VERSION], ['domain.cap', rules.domain.cap, NUMBER_CAP], ['domain.maxArrayLength', rules.domain.maxArrayLength, MAX_ARRAY_LENGTH],
+  ['domain.cap', rules.domain.cap, NUMBER_CAP], ['domain.maxArrayLength', rules.domain.maxArrayLength, MAX_ARRAY_LENGTH],
   ['execution.heartbeatEveryInputs', rules.execution.heartbeatEveryInputs, HEARTBEAT_EVERY_INPUTS], ['noise criterion', rules.rules.noise.criterion, 'noise@abs1e-9'],
 ]
 for (const [name, registered, implemented] of checks) if (registered !== implemented) throw new Error(`registered ${name} ${String(registered)} differs from the implementation's ${String(implemented)}`)
+
+type CallerRulesRecord = {path: string; sha1: string; dropList: string; dropListSha1: string | null; dropped: string[] | null; active: string[]}
+
+/**
+ * domain@v3-callers: the registered caller rules minus the rules the witness check dropped (runs/w1-witness/drop-list.json).
+ * A plan-only preview may run before the drop list exists, and then applies every registered rule.
+ */
+function loadCallerRules(): {active: CallerRule[]; record: CallerRulesRecord | null} {
+  if (rules.domain.version !== 'domain@v3-callers') return {active: [], record: null}
+  const registered = rules.domain.callerRules
+  const dropList = rules.domain.dropList
+  if (registered == null || dropList == null) throw new Error('domain@v3-callers needs domain.callerRules and domain.dropList')
+  const text = readFileSync(join(scratch, registered.path), 'utf8')
+  if (sha1(text) !== registered.sha1) throw new Error(`caller rules ${registered.path}: sha1 ${sha1(text)} differs from the registered ${registered.sha1}`)
+  const file = decodeJson(text) as CallerRuleFile
+  if (file.version !== 'domain@v3-callers') throw new Error(`caller rules ${registered.path} are ${file.version}`)
+  if (!existsSync(join(scratch, dropList))) {
+    if (!planOnly) throw new Error(`the drop list ${dropList} must exist before a run that calls functions under test`)
+    return {active: file.rules, record: {path: registered.path, sha1: registered.sha1, dropList, dropListSha1: null, dropped: null, active: file.rules.map((rule) => rule.id)}}
+  }
+  const dropListText = readFileSync(join(scratch, dropList), 'utf8')
+  const dropped = (decodeJson(dropListText) as DropList).dropped
+  const active = file.rules.filter((rule) => !dropped.includes(rule.id))
+  return {active, record: {path: registered.path, sha1: registered.sha1, dropList, dropListSha1: sha1(dropListText), dropped, active: active.map((rule) => rule.id)}}
+}
+const callerRules = loadCallerRules()
+
 mkdirSync(join(outDir, 'work', 'original'), {recursive: true})
 mkdirSync(join(outDir, 'work', 'mutants'))
 const realOut = realpathSync(outDir)
@@ -90,6 +119,8 @@ const meta: Record<string, unknown> = {
   rulesPath,
   rulesSha1: sha1(rulesText),
   knownFalse: rules.data.knownFalse.map((list) => ({...list, sha1: existsSync(join(scratch, list.path)) ? sha1(readFileSync(join(scratch, list.path))) : null})),
+  domainVersion: rules.domain.version,
+  callerRules: callerRules.record,
   settings,
   stepBudget,
   children: rules.execution.children,
@@ -108,6 +139,16 @@ function writeFileWithDirs(path: string, text: string) {
 function copyFileWithDirs(from: string, to: string) {
   mkdirSync(dirname(to), {recursive: true})
   copyFileSync(from, to)
+}
+
+/** The caller rules that name one entry of this run's family, as the plan records them. */
+function callerRulesFor(copy: string, file: string, entry: string): CallerRulePlan[] {
+  const result: CallerRulePlan[] = []
+  for (const callerRule of callerRules.active) {
+    if (!callerRule.entries.some((target) => target.family === rules.family && target.copy === copy && target.file === file && target.entry === entry)) continue
+    result.push({id: callerRule.id, text: callerRule.text, sources: callerRule.sources, conditions: callerRule.conditions})
+  }
+  return result
 }
 
 function planCopy(rule: CopyRule): CopyPlan {
@@ -129,13 +170,18 @@ function planCopy(rule: CopyRule): CopyPlan {
     sites.push(...fileSites)
     for (const analyzed of exportedEntries(program, source, fileRule.name, entries.length)) {
       const {leakAsserts, ...entry} = analyzed
+      const entryCallerRules = callerRulesFor(rule.id, fileRule.name, entry.name)
+      const provenance = applyCallerRules(entry.args, entry.parameterNames, entryCallerRules)
+      // The cap goes last, after every leading assert, substituted callee assert and caller rule has narrowed the domain, so
+      // a declared bound replaces the cap on its side.
+      capUnboundedEnds(entry.args)
       const own = fileSites.filter((site) => site.leading && site.functionName === entry.name).map((site) => site.index)
       const leakSites = leakAsserts.map((position) => {
         const site = fileSites.find((candidate) => candidate.line === position.line && candidate.column === position.column)
         if (site == null) throw new Error(`${rule.id}/${fileRule.name}: no site at ${position.line}:${position.column} for ${entry.name}'s leak rule`)
         return site.index
       })
-      entries.push({...entry, discardSites: [...own, ...leakSites], leakSites, phases: {p0: 0, p1: 0, p2: 0}, digest: 0})
+      entries.push({...entry, discardSites: [...own, ...leakSites], leakSites, phases: {p0: 0, p1: 0, p2: 0}, digest: 0, callerRules: entryCallerRules, provenance})
     }
   })
   const names = entries.map((entry) => entry.name)
@@ -196,6 +242,14 @@ const allMutants = normalizedMutants(rules)
 const selected = subset == null ? allMutants : allMutants.filter((item) => subset.includes(item.key))
 log(`plan: ${rules.data.copies.length} copies, ${selected.length} mutants`)
 const copies = rules.data.copies.map(planCopy)
+// Every entry a caller rule names for this family and one of its copies must exist, or the rule file names a wrong entry.
+for (const callerRule of callerRules.active) {
+  for (const target of callerRule.entries) {
+    if (target.family !== rules.family || !copies.some((copy) => copy.copy === target.copy)) continue
+    const applied = copies.some((copy) => copy.copy === target.copy && copy.entries.some((entry) => entry.file === target.file && entry.name === target.entry && entry.callerRules.some((plan) => plan.id === callerRule.id)))
+    if (!applied) throw new Error(`caller-rule@${callerRule.id} names ${target.copy}/${target.file}.${target.entry}, which this run's copies don't export`)
+  }
+}
 const mutants: MutantPlan[] = []
 const mutantHashes = createHash('sha1')
 for (const item of selected) {
@@ -252,7 +306,8 @@ if (planOnly) {
   for (const copy of plan.copies) {
     for (const entry of copy.entries) {
       const callee = entry.preconditions.filter((precondition) => precondition.origin === 'callee' && precondition.use !== 'unparsed').length
-      log(`plan ${copy.copy}.${entry.name}: ${entry.unsupported ?? `phases ${JSON.stringify(entry.phases)}, ${entry.preconditions.length} preconditions (${callee} substituted from callees), ${entry.relations.length} relations, leak sites ${entry.leakSites.length}, digest ${entry.digest}`}`)
+      const ruleIds = entry.callerRules.length === 0 ? 'none' : entry.callerRules.map((callerRule) => callerRule.id).join(', ')
+      log(`plan ${copy.copy}.${entry.name}: ${entry.unsupported ?? `phases ${JSON.stringify(entry.phases)}, ${entry.preconditions.length} preconditions (${callee} substituted from callees), ${entry.relations.length} relations, leak sites ${entry.leakSites.length}, caller rules ${ruleIds}, digest ${entry.digest}`}`)
     }
   }
   finishMeta('complete: plan only, no function under test ran')
@@ -359,7 +414,7 @@ if (projectedSeconds > rules.execution.projectionMaxMinutes * 60) {
 if (baselineOnly) {
   for (const line of baselineLines) {
     const criterionSites = line.firings.filter((firing) => firing.first[CRITERION_RULE] != null).length
-    log(`baseline ${line.base}.${line.entry}: ${line.discarded} of ${line.inputs} inputs discarded, ${line.overBudget} past the step budget; firing sites: ${line.firings.length} under noise@none, ${criterionSites} under noise@abs1e-9; throws ${line.throws.count}; non-finite returns ${line.nonFiniteReturns.count}`)
+    log(`baseline ${line.base}.${line.entry}: ${line.discarded} of ${line.inputs} inputs discarded, ${line.callerDiscarded} caller discards, ${line.overBudget} past the step budget; firing sites: ${line.firings.length} under noise@none, ${criterionSites} under noise@abs1e-9; throws ${line.throws.count}; non-finite returns ${line.nonFiniteReturns.count}`)
   }
   finishMeta('complete: baseline only, no mutant pass')
   log(`done in ${((performance.now() - wallStart) / 1000).toFixed(1)} s`)

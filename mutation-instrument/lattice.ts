@@ -5,7 +5,7 @@
 //   P2 the full candidate product, when it's small and the domain has no union
 //   P3 random draws
 // Input i is generated from its own random stream, so the parent and every child regenerate identical inputs.
-import {drawNumber, numberInDomain, numberSources, type Comparison, type Domain, type NumberDomain, type NumberSources, type Scalar, type TupleDomain, type Value} from './domain.ts'
+import {drawNumber, holds, numberInDomain, numberSources, type Comparison, type Domain, type NumberDomain, type NumberSources, type Scalar, type TupleDomain, type Value} from './domain.ts'
 import {inputRandom, nextDown, nextIndex, nextUp, type Random} from './random.ts'
 import type {EntryPlan, LatticeSettings, Path} from './types.ts'
 
@@ -20,6 +20,8 @@ type GenNode =
   | {kind: 'union'; members: GenNode[]; memberLeafStarts: number[]; memberLeafEnds: number[]}
 
 type Relation = {left: Path; op: Comparison; right: Path; leftDomains: NumberDomain[]; rightDomains: NumberDomain[]}
+// domain@v3-callers: `left + offset op right`, e.g. frame.topSidebar.left - 16 >= frame.content.left (callers.ts).
+type OffsetRelation = {left: Path; offset: number; op: Comparison; right: Path; leftDomains: NumberDomain[]; rightDomains: NumberDomain[]}
 
 export type Lattice = {
   ordinal: number
@@ -27,6 +29,7 @@ export type Lattice = {
   root: GenNode
   leafCounts: number[] // candidates per leaf
   relations: Relation[]
+  offsetRelations: OffsetRelation[]
   phases: {p0: number; p1: number; p2: number}
   fixed: Int32Array // scratch: the fixed candidate per leaf for the input being generated, -1 when drawn
 }
@@ -109,7 +112,14 @@ export function compileLattice(entry: EntryPlan, settings: LatticeSettings): Lat
   for (const count of leafCounts) product *= count
   const p2 = !hasUnion(entry.args) && product <= settings.p2ProductMax ? Math.min(product, settings.budget - p0 - p1) : 0
   const relations = entry.relations.map((relation) => ({...relation, leftDomains: numberLeaves(entry.args, relation.left), rightDomains: numberLeaves(entry.args, relation.right)}))
-  return {ordinal: entry.ordinal, settings, root, leafCounts, relations, phases: {p0, p1, p2}, fixed: new Int32Array(leafCounts.length)}
+  const offsetRelations: OffsetRelation[] = []
+  for (const rule of entry.callerRules) {
+    for (const condition of rule.conditions) {
+      if (condition.kind !== 'offsetRelation') continue
+      offsetRelations.push({left: condition.left, offset: condition.offset, op: condition.op, right: condition.right, leftDomains: numberLeaves(entry.args, condition.left), rightDomains: numberLeaves(entry.args, condition.right)})
+    }
+  }
+  return {ordinal: entry.ordinal, settings, root, leafCounts, relations, offsetRelations, phases: {p0, p1, p2}, fixed: new Int32Array(leafCounts.length)}
 }
 
 function generate(random: Random, node: GenNode, fixed: Int32Array, small: boolean): Value {
@@ -184,6 +194,7 @@ export function inputAt(lattice: Lattice, index: number): Input {
   }
   const args = generate(random, lattice.root, fixed, producer === 0) as Value[]
   repairRelations(args, lattice.relations)
+  repairOffsetRelations(args, lattice.offsetRelations)
   return {producer, args}
 }
 
@@ -204,17 +215,6 @@ function writePath(args: Value[], path: Path, next: number) {
   ;(value as Record<string | number, Value>)[path[path.length - 1]!] = next
 }
 
-function holds(left: number, op: Comparison, right: number) {
-  switch (op) {
-    case '<': return left < right
-    case '<=': return left <= right
-    case '>': return left > right
-    case '>=': return left >= right
-    case '===': return left === right
-    case '!==': return left !== right
-  }
-}
-
 function fits(domains: NumberDomain[], value: number) {
   return domains.some((domain) => numberInDomain(domain, value))
 }
@@ -229,6 +229,29 @@ function repairRelations(args: Value[], relations: Relation[]) {
     if (relation.op === '<' || relation.op === '>') attempts.push([nextDown(right), right], [left, nextUp(left)])
     for (const [nextLeft, nextRight] of attempts) {
       if (holds(nextLeft, relation.op, nextRight) && fits(relation.leftDomains, nextLeft) && fits(relation.rightDomains, nextRight)) {
+        writePath(args, relation.left, nextLeft)
+        writePath(args, relation.right, nextRight)
+        break
+      }
+    }
+  }
+}
+
+/**
+ * domain@v3-callers: moves a drawn input toward satisfying `left + offset op right`, after repairRelations. It first copies
+ * the right side into the left with the offset, then the left side into the right, and keeps the first copy whose relation
+ * holds and whose new value is in its leaf's domain. E.g. for frame.topSidebar.left - 16 >= frame.content.left with
+ * content.left 900 and topSidebar.left 400, topSidebar.left becomes 916. An input no copy repairs stays as drawn, and the
+ * worker discards it before the call (callers.ts isCallerDiscard).
+ */
+function repairOffsetRelations(args: Value[], relations: OffsetRelation[]) {
+  for (const relation of relations) {
+    const left = readPath(args, relation.left)
+    const right = readPath(args, relation.right)
+    if (typeof left !== 'number' || typeof right !== 'number' || holds(left + relation.offset, relation.op, right)) continue
+    const attempts: [number, number][] = [[right - relation.offset, right], [left, left + relation.offset]]
+    for (const [nextLeft, nextRight] of attempts) {
+      if (holds(nextLeft + relation.offset, relation.op, nextRight) && fits(relation.leftDomains, nextLeft) && fits(relation.rightDomains, nextRight)) {
         writePath(args, relation.left, nextLeft)
         writePath(args, relation.right, nextRight)
         break

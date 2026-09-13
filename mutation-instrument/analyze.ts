@@ -1,6 +1,7 @@
 // domain@v2, run in the parent only: finds a file's exported functions, derives each parameter's domain from its
 // TypeScript type, and narrows the domains with the simple shapes of leading console.assert calls. Forked from the replay
-// input-range prototype (analyze.ts). A side of a number that no leading assert bounds is capped at ±1e6.
+// input-range prototype (analyze.ts). The ±1e6 cap on sides no leading assert bounds is applied by run.ts, after the caller
+// rules of domain@v3-callers (callers.ts).
 // domain@v2 adds three rules to domain@v1b:
 //   1 a leading assert `a && b` narrows through each conjunct
 //   2 callee substitution: for an unconditional call to a same-file function whose arguments are entry parameter paths,
@@ -10,13 +11,13 @@
 //     call from the entry discards the input when it fires, like the entry's own leading asserts
 import {dirname} from 'node:path'
 import * as ts from 'typescript'
-import {applyBound, applyIntegerRule, capUnboundedEnds, MAX_ARRAY_LENGTH, unboundedNumber, type Comparison, type Domain, type NumberDomain, type TupleDomain} from './domain.ts'
+import {applyBound, applyIntegerRule, MAX_ARRAY_LENGTH, unboundedNumber, type Comparison, type Domain, type NumberDomain, type TupleDomain} from './domain.ts'
 import {numberLeaves} from './lattice.ts'
 import type {EntryPlan, Path, Precondition, PreconditionUse, RelationPlan} from './types.ts'
 
 // Positions are 1-based, as instrument.ts records sites.
 export type AssertPosition = {line: number; column: number}
-export type AnalyzedEntry = Omit<EntryPlan, 'phases' | 'digest' | 'discardSites' | 'leakSites'> & {leakAsserts: AssertPosition[]}
+export type AnalyzedEntry = Omit<EntryPlan, 'phases' | 'digest' | 'discardSites' | 'leakSites' | 'callerRules' | 'provenance'> & {leakAsserts: AssertPosition[]}
 
 /** One program for all files, with the compiler options of the nearest tsconfig.json of the first file. */
 export function loadProgram(files: string[]): ts.Program {
@@ -409,7 +410,8 @@ function analyzeFunction(checker: ts.TypeChecker, sourceFile: ts.SourceFile, fil
 
 /**
  * Every exported function declaration and exported `const name = (...) => ...` of the file, in source order, numbered
- * from `ordinalStart`. `file` is the logical file name the entries and their preconditions carry.
+ * from `ordinalStart`. `file` is the logical file name the entries and their preconditions carry. Number sides that no
+ * leading assert bounds are still unbounded here; run.ts applies the caller rules and then the cap.
  */
 export function exportedEntries(program: ts.Program, path: string, file: string, ordinalStart: number): AnalyzedEntry[] {
   const sourceFile = program.getSourceFile(path)
@@ -429,8 +431,5 @@ export function exportedEntries(program: ts.Program, path: string, file: string,
       }
     }
   }
-  // The cap goes last, after every leading assert and substituted callee assert has narrowed the domains, so a declared
-  // bound replaces the cap on its side.
-  for (const entry of result) capUnboundedEnds(entry.args)
   return result
 }

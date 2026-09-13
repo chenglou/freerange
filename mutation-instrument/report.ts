@@ -8,6 +8,7 @@ import {join} from 'node:path'
 import {createInterface} from 'node:readline'
 import {maxMagnitude, type Value} from './domain.ts'
 import {decodeJson, formatCall} from './encode.ts'
+import {decodePlan} from './plan-file.ts'
 import type {FramesReference, KnownFalseRule, PackingReference, PlantedReference, RecordedCatch, Rules, SysmutRow} from './rules.ts'
 import {CRITERION_RULE, NOISE_RULES, type BaselineLine, type CallLine, type CopyPlan, type FirstFiring, type Plan, type ReplayLine, type ResultLine, type Site, type VerifyLine} from './types.ts'
 
@@ -117,7 +118,7 @@ function knownKey(entry: KnownFalseEntry): string {
 
 async function loadRun(outDir: string, rules: Rules): Promise<Run> {
   const meta = decodeJson(readFileSync(join(outDir, 'meta.json'), 'utf8')) as Record<string, unknown>
-  const plan = decodeJson(readFileSync(join(outDir, 'plan.json'), 'utf8')) as Plan
+  const plan = decodePlan(readFileSync(join(outDir, 'plan.json'), 'utf8'))
   const copyOf = new Map(plan.copies.map((copy) => [copy.copy, copy]))
   const digestOf = new Map<string, number>()
   for (const copy of plan.copies) for (const entry of copy.entries) digestOf.set(`${copy.copy}.${entry.name}`, entry.digest)
@@ -131,7 +132,9 @@ async function loadRun(outDir: string, rules: Rules): Promise<Run> {
 
   const baseline = new Map<string, BaselineLine>()
   let baselineDigestMismatches = 0
-  for (const line of await readLines<BaselineLine>(join(outDir, 'baseline.jsonl'))) {
+  // Baseline lines written before domain@v3-callers have no callerDiscarded count, which is 0 there.
+  for (const recorded of await readLines<Omit<BaselineLine, 'callerDiscarded'> & {callerDiscarded?: number}>(join(outDir, 'baseline.jsonl'))) {
+    const line: BaselineLine = {...recorded, callerDiscarded: recorded.callerDiscarded ?? 0}
     baseline.set(`${line.base}.${line.entry}`, line)
     if (line.digest !== digestOf.get(`${line.base}.${line.entry}`)) baselineDigestMismatches += 1
   }
@@ -282,11 +285,12 @@ function domainSection(run: Run, write: Writer) {
         `${own.filter((precondition) => precondition.use !== 'unparsed').length}/${own.length}`,
         listOrNone(callee.map((precondition) => `${precondition.callee}: ${precondition.text}`), '; '), entry.relations.length,
         listOrNone(entry.leakSites.map((site) => `${copy.sites[site]!.file}:${copy.sites[site]!.line}`)),
-        run.baseline.get(`${copy.copy}.${entry.name}`)?.discarded ?? '', run.baseline.get(`${copy.copy}.${entry.name}`)?.overBudget ?? '', JSON.stringify(entry.phases),
+        listOrNone(entry.callerRules.map((callerRule) => callerRule.id)),
+        run.baseline.get(`${copy.copy}.${entry.name}`)?.discarded ?? '', run.baseline.get(`${copy.copy}.${entry.name}`)?.callerDiscarded ?? '', run.baseline.get(`${copy.copy}.${entry.name}`)?.overBudget ?? '', JSON.stringify(entry.phases),
       ])
     }
   }
-  write(table(['copy', 'entry', 'parameters', 'own leading conjuncts parsed', 'callee conjuncts substituted (domain@v2)', 'relations', 'leak sites (domain@v2)', 'baseline discards', 'baseline past the step budget', 'phases'], rows))
+  write(table(['copy', 'entry', 'parameters', 'own leading conjuncts parsed', 'callee conjuncts substituted (domain@v2)', 'relations', 'leak sites (domain@v2)', 'caller rules (domain@v3-callers)', 'baseline discards', 'baseline caller discards', 'baseline past the step budget', 'phases'], rows))
   write()
 }
 
@@ -500,6 +504,7 @@ async function virtualizationSections(run: Run, write: Writer): Promise<{criteri
 
 function replayVerdict(run: Run, copy: string, outcome: ReplayLine | null): string {
   if (outcome == null) return 'replay child failed'
+  if (outcome.callerDiscarded) return 'outside the caller domain (a domain@v3-callers rule of the entry)'
   if (outcome.discarded) return 'outside this run\'s declared domain (discarded on the original)'
   if (outcome.originalOverBudget) return 'past the step budget on the original, so never compared here'
   const originalLevels = new Map(outcome.original)

@@ -8,9 +8,11 @@
 //   verify:   one recorded input through the uninstrumented original, console.assert overridden to record lines
 //   call:     one input through the uninstrumented original and mutant trees, recording lines and return values
 import {readFileSync, writeSync} from 'node:fs'
+import {isCallerDiscard} from './callers.ts'
 import {maxMagnitude, type Value} from './domain.ts'
 import {decodeJson, encodeJson} from './encode.ts'
 import {compileLattice, DIGEST_START, digestValue, inputAt, type Input} from './lattice.ts'
+import {decodePlan} from './plan-file.ts'
 import {BUDGET, createRecorder, DISCARD, resetRecorder, type Recorder} from './recorder.ts'
 import {CRITERION_RULE, RULE_THRESHOLDS, type CallOutcome, type CauseClass, type ChildLine, type CopyPlan, type Difference, type EntryPlan, type FilePlan, type FirstFiring, type Job, type MutantPlan, type Plan, type SiteFirings} from './types.ts'
 
@@ -184,12 +186,17 @@ async function runBaseline(plan: Plan) {
       const throws = newDifference()
       const nonFiniteReturns = newDifference()
       let discarded = 0
+      let callerDiscarded = 0
       let overBudget = 0
       let digest = DIGEST_START
       for (let index = 0; index < plan.settings.budget; index++) {
         if ((index & 1023) === 0) emit({type: 'heartbeat', entry: entry.name, index})
         const input = inputAt(lattice, index)
         digest = digestValue(digest, input.args)
+        if (isCallerDiscard(entry.callerRules, input.args)) {
+          callerDiscarded += 1
+          continue
+        }
         resetRecorder(recorder)
         const outcome = callEntry(fn, input.args)
         if (outcome.discarded) {
@@ -225,7 +232,7 @@ async function runBaseline(plan: Plan) {
         firings.push({...siteFirings(site, counts, firsts), byCause: byCause[site]!})
       }
       const ms = performance.now() - entryStarted
-      emit({type: 'baseline', base: copy.copy, entry: entry.name, inputs: plan.settings.budget, discarded, overBudget, digest, nsPerCall: (ms * 1e6) / plan.settings.budget, reached: [...reached], firings, throws, nonFiniteReturns, ms})
+      emit({type: 'baseline', base: copy.copy, entry: entry.name, inputs: plan.settings.budget, discarded, callerDiscarded, overBudget, digest, nsPerCall: (ms * 1e6) / plan.settings.budget, reached: [...reached], firings, throws, nonFiniteReturns, ms})
     }
   }
 }
@@ -252,6 +259,7 @@ async function runMutant(plan: Plan, key: string) {
     const behavior = newDifference()
     const mutantOverBudget = newDifference()
     let discarded = 0
+    let callerDiscarded = 0
     let mutantOnlyDiscards = 0
     let overBudget = 0
     let digest = DIGEST_START
@@ -259,6 +267,10 @@ async function runMutant(plan: Plan, key: string) {
       if ((index & 1023) === 0) emit({type: 'heartbeat', entry: entry.name, index})
       const input = inputAt(lattice, index)
       digest = digestValue(digest, input.args)
+      if (isCallerDiscard(entry.callerRules, input.args)) {
+        callerDiscarded += 1
+        continue
+      }
       resetRecorder(recorder)
       const original = callEntry(originalFn, input.args)
       if (original.discarded) {
@@ -306,7 +318,7 @@ async function runMutant(plan: Plan, key: string) {
     }
     const kills: SiteFirings[] = []
     for (let site = 0; site < siteCount; site++) if (firsts[site * RULES] != null) kills.push(siteFirings(site, counts, firsts))
-    emit({type: 'result', mutant: mutant.key, base: copy.copy, entry: entry.name, inputs: plan.settings.budget, discarded, mutantOnlyDiscards, overBudget, mutantOverBudget, digest, kills, throws, nonFiniteReturns, behavior, ms: performance.now() - entryStarted})
+    emit({type: 'result', mutant: mutant.key, base: copy.copy, entry: entry.name, inputs: plan.settings.budget, discarded, callerDiscarded, mutantOnlyDiscards, overBudget, mutantOverBudget, digest, kills, throws, nonFiniteReturns, behavior, ms: performance.now() - entryStarted})
   }
 }
 
@@ -332,7 +344,7 @@ async function runReplay(plan: Plan, key: string, entryName: string, args: Value
   const originalPairs = levelPairs(recorder)
   resetRecorder(recorder)
   const mutated = callEntry(mutantFn, args)
-  emit({type: 'replay', mutant: key, entry: entryName, discarded: original.discarded, originalOverBudget: original.overBudget, mutantOverBudget: mutated.overBudget, original: originalPairs, mutated: levelPairs(recorder), originalThrew: original.thrown, mutantThrew: mutated.thrown})
+  emit({type: 'replay', mutant: key, entry: entryName, callerDiscarded: isCallerDiscard(entry.callerRules, args), discarded: original.discarded, originalOverBudget: original.overBudget, mutantOverBudget: mutated.overBudget, original: originalPairs, mutated: levelPairs(recorder), originalThrew: original.thrown, mutantThrew: mutated.thrown})
 }
 
 // console.assert overridden to record `file:line` of the innermost stack frame in one of the trees' files.
@@ -390,7 +402,7 @@ async function runCall(plan: Plan, key: string, entryName: string, args: Value[]
 }
 
 const job = decodeJson(process.argv[2] ?? '') as Job
-const plan = decodeJson(readFileSync(job.plan, 'utf8')) as Plan
+const plan = decodePlan(readFileSync(job.plan, 'utf8'))
 switch (job.mode) {
   case 'baseline': await runBaseline(plan); break
   case 'mutant': await runMutant(plan, job.mutant); break

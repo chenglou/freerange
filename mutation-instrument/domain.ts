@@ -20,9 +20,23 @@ export type Domain = NumberDomain | ChoiceDomain | RecordDomain | ArrayDomain | 
 
 export type Comparison = '<' | '<=' | '>' | '>=' | '===' | '!=='
 
-export const DOMAIN_VERSION = 'domain@v2'
+// domain@v2 is every milestone's domain through m4. domain@v3-callers is domain@v2 plus the hand-written caller rules of
+// callers.ts, applied only to the entries a rule names.
+export const DOMAIN_VERSIONS = ['domain@v2', 'domain@v3-callers']
 export const NUMBER_CAP = 1e6
 export const MAX_ARRAY_LENGTH = 6
+
+/** Whether `left op right` holds, e.g. holds(1, '<=', 2) is true and holds(NaN, '<=', 2) is false. */
+export function holds(left: number, op: Comparison, right: number) {
+  switch (op) {
+    case '<': return left < right
+    case '<=': return left <= right
+    case '>': return left > right
+    case '>=': return left >= right
+    case '===': return left === right
+    case '!==': return left !== right
+  }
+}
 
 /** The largest |x| over every number in a value, e.g. 1e6 for `[{width: -1000000}, 2]`. */
 export function maxMagnitude(value: Value): number {

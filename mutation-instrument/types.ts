@@ -1,4 +1,5 @@
 // Data shared between the parent (run.ts), the children (worker.ts) and the report (report.ts). Types only.
+import type {CallerRulePlan} from './callers.ts'
 import type {Comparison, TupleDomain} from './domain.ts'
 
 export type Path = (string | number)[] // path[0] is the argument index, e.g. [1, 'cell'] for `geometry.cell`
@@ -24,6 +25,10 @@ export type EntryPlan = {
   unsupported: string | null
   phases: {p0: number; p1: number; p2: number} // input counts per phase within the budget; P3 is the rest
   digest: number // digest of the entry's whole input sequence, see lattice.ts digestValue
+  // domain@v3-callers: the caller rules applied to this entry, and one line per narrowed leaf, relation and predicate naming
+  // the rule and the call sites it cites (callers.ts). Both are empty under domain@v2.
+  callerRules: CallerRulePlan[]
+  provenance: string[]
 }
 
 export type SiteKind = 'cmp' | 'int' | 'bool'
@@ -78,6 +83,7 @@ export type ResultLine = {
   entry: string
   inputs: number
   discarded: number // an input the original's call discarded (discardSites)
+  callerDiscarded: number // an input a caller rule discarded before any call (domain@v3-callers); 0 under domain@v2
   mutantOnlyDiscards: number
   overBudget: number // an input whose original call passed the step budget; the mutant doesn't run on it
   mutantOverBudget: Difference // the mutant passed the step budget where the original returned or threw; not a kill
@@ -95,6 +101,7 @@ export type BaselineLine = {
   entry: string
   inputs: number
   discarded: number
+  callerDiscarded: number // inputs a caller rule discarded before the call (domain@v3-callers); 0 under domain@v2
   overBudget: number // inputs whose call passed the step budget, like discards never counted as firings
   digest: number
   nsPerCall: number
@@ -106,7 +113,8 @@ export type BaselineLine = {
 }
 
 // One input through the instrumented original and mutant: the highest level of every reached site, as [site, level].
-export type ReplayLine = {type: 'replay'; mutant: string; entry: string; discarded: boolean; originalOverBudget: boolean; mutantOverBudget: boolean; original: [number, number][]; mutated: [number, number][]; originalThrew: string | null; mutantThrew: string | null}
+// `callerDiscarded`: the input violates a caller rule of the entry (domain@v3-callers); the calls still run.
+export type ReplayLine = {type: 'replay'; mutant: string; entry: string; callerDiscarded: boolean; discarded: boolean; originalOverBudget: boolean; mutantOverBudget: boolean; original: [number, number][]; mutated: [number, number][]; originalThrew: string | null; mutantThrew: string | null}
 // One input through the uninstrumented original with console.assert overridden to record the failing lines, as `file:line`.
 export type VerifyLine = {type: 'verify'; base: string; entry: string; fired: string[]; thrown: string | null}
 // One input through the uninstrumented original and mutant trees: failing lines and the encoded return value of each.
