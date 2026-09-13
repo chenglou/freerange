@@ -47,7 +47,8 @@ export type Rules = {
   domain: {version: string; cap: number; maxArrayLength: number}
   lattice: {budget: number; seed: number; p0Inputs: number; p2ProductMax: number}
   rules: {noise: {criterion: string}}
-  execution: {children: number; heartbeatEveryInputs: number; heartbeatTimeoutSeconds: number; projectionMaxMinutes: number}
+  // stepBudget: the most loop body entries one call may run; absent in registrations before m4-packing, which had no loops
+  execution: {children: number; heartbeatEveryInputs: number; heartbeatTimeoutSeconds: number; projectionMaxMinutes: number; stepBudget?: number}
   replay: {kind: 'sweep-first'; sweepCopyDir: string} | {kind: 'recorded-examples'}
   firstKillCalls: {mutants: string[]; entry: string}[]
   predictions: Record<string, unknown>

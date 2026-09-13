@@ -7,6 +7,11 @@
 // Line numbers don't move: a call spanning several lines is padded with the newlines its replacement lost.
 // Site indices are global within a copy, so one recorder covers every file of a tree: a callee's asserts in another file
 // are sites of the same table.
+// Every loop body starts with a tick, so a child can stop a call that passes the registered step budget
+// (execution.stepBudget, see recorder.ts):
+//   for (let index = 0; index < itemCount; index++) {…}  -> for (let index = 0; index < itemCount; index++) {__fr.tick();…}
+//   for (let column = 0; column < cols; column++) push(0) -> for (let column = 0; column < cols; column++) {__fr.tick();push(0)}
+// Ticks add no newline and no site.
 import * as ts from 'typescript'
 import {isConsoleAssertCall, leadingAssertStatements} from './analyze.ts'
 import type {Site, SiteKind} from './types.ts'
@@ -52,6 +57,16 @@ export function instrumentSource(text: string, path: string, file: string, siteO
   const edits: {start: number; end: number; replacement: string}[] = []
   const occurrences = new Map<string, number>()
   const visit = (node: ts.Node): void => {
+    if (ts.isIterationStatement(node, false)) {
+      const body = node.statement
+      const bodyStart = body.getStart(sourceFile)
+      if (ts.isBlock(body)) {
+        edits.push({start: bodyStart + 1, end: bodyStart + 1, replacement: '__fr.tick();'})
+      } else {
+        edits.push({start: bodyStart, end: bodyStart, replacement: '{__fr.tick();'})
+        edits.push({start: body.end, end: body.end, replacement: '}'})
+      }
+    }
     if (!isConsoleAssertCall(node)) {
       ts.forEachChild(node, visit)
       return
@@ -88,10 +103,16 @@ export function instrumentSource(text: string, path: string, file: string, siteO
     edits.push({start, end: node.end, replacement})
   }
   visit(sourceFile)
-  let output = text
-  for (let index = edits.length - 1; index >= 0; index--) {
-    const edit = edits[index]!
-    output = output.slice(0, edit.start) + edit.replacement + output.slice(edit.end)
+  // A replacement copies its condition's text from the source, so a tick inside a replaced range would be lost, e.g. a loop
+  // inside a function expression inside an assert condition. None of the copies has one; refuse rather than drop the tick.
+  for (const insertion of edits) {
+    if (insertion.start !== insertion.end) continue
+    if (edits.some((edit) => edit.start < insertion.start && insertion.start < edit.end)) throw new Error(`${path}: a loop inside a console.assert condition at offset ${insertion.start}`)
   }
+  // From the end of the text backward. At one offset, a replacement goes before an insertion, so a tick inserted where an
+  // assert statement starts, e.g. `for (…) console.assert(x)`, stays in front of the replaced assert.
+  edits.sort((left, right) => right.start - left.start || (right.end - right.start) - (left.end - left.start))
+  let output = text
+  for (const edit of edits) output = output.slice(0, edit.start) + edit.replacement + output.slice(edit.end)
   return {output: `const __fr = globalThis.__fr;${output}`, sites}
 }

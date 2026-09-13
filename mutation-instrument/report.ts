@@ -36,6 +36,9 @@ type MutantSummary = {
   nonFiniteFirst: string | null
   behaviorDiffs: number
   behaviorFirst: string | null
+  overBudget: number // inputs whose original call passed the step budget, summed over entries
+  mutantOverBudget: number
+  mutantOverBudgetFirst: string | null
   digestMismatches: number
   failure: string | null
 }
@@ -144,7 +147,7 @@ async function loadRun(outDir: string, rules: Rules): Promise<Run> {
       summary = {
         key, copy, entries: 0, killSites: NOISE_RULES.map(() => new Set<number>()), first: NOISE_RULES.map(() => null), laterProducer: NOISE_RULES.map(() => false),
         killEntries: NOISE_RULES.map(() => new Set<string>()), cleanKill: false,
-        throws: 0, throwFirst: null, nonFinite: 0, nonFiniteFirst: null, behaviorDiffs: 0, behaviorFirst: null, digestMismatches: 0, failure: null,
+        throws: 0, throwFirst: null, nonFinite: 0, nonFiniteFirst: null, behaviorDiffs: 0, behaviorFirst: null, overBudget: 0, mutantOverBudget: 0, mutantOverBudgetFirst: null, digestMismatches: 0, failure: null,
       }
       summaries.set(key, summary)
     }
@@ -180,6 +183,9 @@ async function loadRun(outDir: string, rules: Rules): Promise<Run> {
     summary.nonFiniteFirst ??= line.nonFiniteReturns.first == null ? null : `${line.entry}: ${line.nonFiniteReturns.detail} at ${formatInput(line.entry, line.nonFiniteReturns.first)}`
     summary.behaviorDiffs += line.behavior.count
     summary.behaviorFirst ??= line.behavior.first == null ? null : `${formatInput(line.entry, line.behavior.first)}: ${line.behavior.detail}`
+    summary.overBudget += line.overBudget
+    summary.mutantOverBudget += line.mutantOverBudget.count
+    summary.mutantOverBudgetFirst ??= line.mutantOverBudget.first == null ? null : `${formatInput(line.entry, line.mutantOverBudget.first)}: ${line.mutantOverBudget.detail}`
   }
   const verifies = await readLines<VerifyRecord>(join(outDir, 'verify.jsonl'))
   return {outDir, rules, meta, plan, copyOf, baseline, baselineDigestMismatches, summaries, resultLines, verifies, knownFalse}
@@ -257,6 +263,7 @@ function baselineSection(run: Run, write: Writer): FalseAlarmVerdicts {
     write(`- **falseAlarm@reproducible, ${copy.copy}:** ${notReproducible} firings that don't reproduce on the uninstrumented original or fire a domain line there → ${notReproducible === 0 ? 'pass' : 'fail: instrument bug'}`)
   }
   write(`- Baseline discards per entry: ${[...run.baseline.values()].map((line) => `${line.base}.${line.entry} ${line.discarded}`).join(', ')}`)
+  write(`- Baseline inputs past the step budget of ${run.plan.stepBudget ?? 'none'} loop ticks per call: ${listOrNone([...run.baseline.values()].filter((line) => line.overBudget > 0).map((line) => `${line.base}.${line.entry} ${line.overBudget}`))}`)
   write(`- Baseline throws and non-finite returns: ${listOrNone([...run.baseline.values()].filter((line) => line.throws.count + line.nonFiniteReturns.count > 0).map((line) => `${line.base}.${line.entry}: throws ${line.throws.count}, non-finite ${line.nonFiniteReturns.count} ${line.nonFiniteReturns.detail ?? ''}`), '; ')}`)
   write()
   return verdicts
@@ -275,11 +282,11 @@ function domainSection(run: Run, write: Writer) {
         `${own.filter((precondition) => precondition.use !== 'unparsed').length}/${own.length}`,
         listOrNone(callee.map((precondition) => `${precondition.callee}: ${precondition.text}`), '; '), entry.relations.length,
         listOrNone(entry.leakSites.map((site) => `${copy.sites[site]!.file}:${copy.sites[site]!.line}`)),
-        run.baseline.get(`${copy.copy}.${entry.name}`)?.discarded ?? '', JSON.stringify(entry.phases),
+        run.baseline.get(`${copy.copy}.${entry.name}`)?.discarded ?? '', run.baseline.get(`${copy.copy}.${entry.name}`)?.overBudget ?? '', JSON.stringify(entry.phases),
       ])
     }
   }
-  write(table(['copy', 'entry', 'parameters', 'own leading conjuncts parsed', 'callee conjuncts substituted (domain@v2)', 'relations', 'leak sites (domain@v2)', 'baseline discards', 'phases'], rows))
+  write(table(['copy', 'entry', 'parameters', 'own leading conjuncts parsed', 'callee conjuncts substituted (domain@v2)', 'relations', 'leak sites (domain@v2)', 'baseline discards', 'baseline past the step budget', 'phases'], rows))
   write()
 }
 
@@ -334,14 +341,16 @@ function behaviorSection(run: Run, write: Writer) {
 }
 
 function separateColumns(run: Run, write: Writer) {
-  write('## Separate columns: throw, nonFiniteReturn, timeout')
+  write('## Separate columns: throw, nonFiniteReturn, step budget, timeout')
   write()
   const planned = run.plan.mutants
   const throwing = planned.filter((mutant) => (run.summaries.get(mutant.key)?.throws ?? 0) > 0)
   const nonFinite = planned.filter((mutant) => (run.summaries.get(mutant.key)?.nonFinite ?? 0) > 0)
+  const mutantOverBudget = planned.filter((mutant) => (run.summaries.get(mutant.key)?.mutantOverBudget ?? 0) > 0)
   const failures = [...run.summaries.values()].filter((summary) => summary.failure != null)
   write(`- throw: ${throwing.length} mutants${throwing.length > 0 ? `: ${throwing.map((mutant) => `${mutant.key} (${run.summaries.get(mutant.key)!.throwFirst})`).join('; ')}` : ''}`)
   write(`- nonFiniteReturn: ${nonFinite.length} mutants${nonFinite.length > 0 ? `: ${nonFinite.map((mutant) => `${mutant.key} (${run.summaries.get(mutant.key)!.nonFiniteFirst})`).join('; ')}` : ''}`)
+  write(`- step budget ${run.plan.stepBudget ?? 'none'}: the original passed the budget on ${[...run.summaries.values()].reduce((sum, summary) => sum + summary.overBudget, 0)} inputs summed over mutants and entries (the mutant doesn't run on them); the mutant alone passed the budget in ${mutantOverBudget.length} mutants${mutantOverBudget.length > 0 ? `: ${mutantOverBudget.map((mutant) => `${mutant.key} x${run.summaries.get(mutant.key)!.mutantOverBudget} (${run.summaries.get(mutant.key)!.mutantOverBudgetFirst})`).join('; ')}` : ''}`)
   write(`- timeout or crash: ${failures.length}${failures.length > 0 ? `: ${failures.map((summary) => `${summary.key} (${summary.failure})`).join('; ')}` : ''}`)
   write()
 }
@@ -492,6 +501,7 @@ async function virtualizationSections(run: Run, write: Writer): Promise<{criteri
 function replayVerdict(run: Run, copy: string, outcome: ReplayLine | null): string {
   if (outcome == null) return 'replay child failed'
   if (outcome.discarded) return 'outside this run\'s declared domain (discarded on the original)'
+  if (outcome.originalOverBudget) return 'past the step budget on the original, so never compared here'
   const originalLevels = new Map(outcome.original)
   const newSites = outcome.mutated.filter(([site, level]) => level >= 3 && (originalLevels.get(site) ?? 0) < 3)
   const exactSites = outcome.mutated.filter(([site, level]) => level >= 2 && (originalLevels.get(site) ?? 0) < 2)

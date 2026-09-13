@@ -11,7 +11,7 @@ import {readFileSync, writeSync} from 'node:fs'
 import type {Value} from './domain.ts'
 import {decodeJson, encodeJson} from './encode.ts'
 import {compileLattice, DIGEST_START, digestValue, inputAt, type Input} from './lattice.ts'
-import {createRecorder, DISCARD, resetRecorder, type Recorder} from './recorder.ts'
+import {BUDGET, createRecorder, DISCARD, resetRecorder, type Recorder} from './recorder.ts'
 import {CRITERION_RULE, RULE_THRESHOLDS, type CallOutcome, type CauseClass, type ChildLine, type CopyPlan, type Difference, type EntryPlan, type FilePlan, type FirstFiring, type Job, type MutantPlan, type Plan, type SiteFirings} from './types.ts'
 
 const started = performance.now()
@@ -100,15 +100,16 @@ function describeError(error: unknown): string {
 // -- Modules and calls ------------------------------------------------------
 
 type EntryFunction = (...args: Value[]) => unknown
-type Outcome = {discarded: boolean; thrown: string | null; value: unknown}
+type Outcome = {discarded: boolean; overBudget: boolean; thrown: string | null; value: unknown}
 type Modules = Map<string, Record<string, unknown>>
 
 function callEntry(fn: EntryFunction, args: Value[]): Outcome {
   try {
-    return {discarded: false, thrown: null, value: fn(...args.map(cloneValue))}
+    return {discarded: false, overBudget: false, thrown: null, value: fn(...args.map(cloneValue))}
   } catch (error) {
-    if (error === DISCARD) return {discarded: true, thrown: null, value: undefined}
-    return {discarded: false, thrown: describeError(error), value: undefined}
+    if (error === DISCARD) return {discarded: true, overBudget: false, thrown: null, value: undefined}
+    if (error === BUDGET) return {discarded: false, overBudget: true, thrown: null, value: undefined}
+    return {discarded: false, overBudget: false, thrown: describeError(error), value: undefined}
   }
 }
 
@@ -173,7 +174,7 @@ function findEntry(copy: CopyPlan, name: string): EntryPlan {
 
 async function runBaseline(plan: Plan) {
   for (const copy of plan.copies) {
-    const recorder = createRecorder(copy.sites)
+    const recorder = createRecorder(copy.sites, plan.stepBudget)
     installRecorder(recorder)
     const entries = supportedEntries(copy)
     const modules = await loadModules(copy.files, 'instrumented')
@@ -191,6 +192,7 @@ async function runBaseline(plan: Plan) {
       const throws = newDifference()
       const nonFiniteReturns = newDifference()
       let discarded = 0
+      let overBudget = 0
       let digest = DIGEST_START
       for (let index = 0; index < plan.settings.budget; index++) {
         if ((index & 1023) === 0) emit({type: 'heartbeat', entry: entry.name, index})
@@ -200,6 +202,10 @@ async function runBaseline(plan: Plan) {
         const outcome = callEntry(fn, input.args)
         if (outcome.discarded) {
           discarded += 1
+          continue
+        }
+        if (outcome.overBudget) {
+          overBudget += 1
           continue
         }
         for (let touchedIndex = 0; touchedIndex < recorder.touchedCount; touchedIndex++) {
@@ -227,14 +233,14 @@ async function runBaseline(plan: Plan) {
         firings.push({...siteFirings(site, counts, firsts), byCause: byCause[site]!})
       }
       const ms = performance.now() - entryStarted
-      emit({type: 'baseline', base: copy.copy, entry: entry.name, inputs: plan.settings.budget, discarded, digest, nsPerCall: (ms * 1e6) / plan.settings.budget, reached: [...reached], firings, throws, nonFiniteReturns, ms})
+      emit({type: 'baseline', base: copy.copy, entry: entry.name, inputs: plan.settings.budget, discarded, overBudget, digest, nsPerCall: (ms * 1e6) / plan.settings.budget, reached: [...reached], firings, throws, nonFiniteReturns, ms})
     }
   }
 }
 
 async function runMutant(plan: Plan, key: string) {
   const {mutant, copy} = findMutant(plan, key)
-  const recorder = createRecorder(copy.sites)
+  const recorder = createRecorder(copy.sites, plan.stepBudget)
   installRecorder(recorder)
   const entries = supportedEntries(copy)
   const originals = await loadModules(copy.files, 'instrumented')
@@ -252,8 +258,10 @@ async function runMutant(plan: Plan, key: string) {
     const throws = newDifference()
     const nonFiniteReturns = newDifference()
     const behavior = newDifference()
+    const mutantOverBudget = newDifference()
     let discarded = 0
     let mutantOnlyDiscards = 0
+    let overBudget = 0
     let digest = DIGEST_START
     for (let index = 0; index < plan.settings.budget; index++) {
       if ((index & 1023) === 0) emit({type: 'heartbeat', entry: entry.name, index})
@@ -265,6 +273,10 @@ async function runMutant(plan: Plan, key: string) {
         discarded += 1
         continue
       }
+      if (original.overBudget) {
+        overBudget += 1
+        continue
+      }
       originalLevels.fill(0)
       for (let touchedIndex = 0; touchedIndex < recorder.touchedCount; touchedIndex++) {
         const site = recorder.touched[touchedIndex]!
@@ -274,6 +286,10 @@ async function runMutant(plan: Plan, key: string) {
       const mutated = callEntry(mutantFn, input.args)
       if (mutated.discarded) {
         mutantOnlyDiscards += 1
+        continue
+      }
+      if (mutated.overBudget) {
+        recordDifference(mutantOverBudget, input, index, `the mutant passed the step budget of ${plan.stepBudget ?? Infinity} loop ticks where the original ${original.thrown == null ? 'returned' : 'threw'}`)
         continue
       }
       for (let touchedIndex = 0; touchedIndex < recorder.touchedCount; touchedIndex++) {
@@ -298,7 +314,7 @@ async function runMutant(plan: Plan, key: string) {
     }
     const kills: SiteFirings[] = []
     for (let site = 0; site < siteCount; site++) if (firsts[site * RULES] != null) kills.push(siteFirings(site, counts, firsts))
-    emit({type: 'result', mutant: mutant.key, base: copy.copy, entry: entry.name, inputs: plan.settings.budget, discarded, mutantOnlyDiscards, digest, kills, throws, nonFiniteReturns, behavior, ms: performance.now() - entryStarted})
+    emit({type: 'result', mutant: mutant.key, base: copy.copy, entry: entry.name, inputs: plan.settings.budget, discarded, mutantOnlyDiscards, overBudget, mutantOverBudget, digest, kills, throws, nonFiniteReturns, behavior, ms: performance.now() - entryStarted})
   }
 }
 
@@ -314,7 +330,7 @@ function levelPairs(recorder: Recorder): [number, number][] {
 async function runReplay(plan: Plan, key: string, entryName: string, args: Value[]) {
   const {mutant, copy} = findMutant(plan, key)
   const entry = findEntry(copy, entryName)
-  const recorder = createRecorder(copy.sites)
+  const recorder = createRecorder(copy.sites, plan.stepBudget)
   installRecorder(recorder)
   const originalFn = entryFunction(await loadModules(copy.files, 'instrumented'), entry)
   const mutantFn = entryFunction(await loadModules(mutant.files, 'instrumented'), entry)
@@ -324,7 +340,7 @@ async function runReplay(plan: Plan, key: string, entryName: string, args: Value
   const originalPairs = levelPairs(recorder)
   resetRecorder(recorder)
   const mutated = callEntry(mutantFn, args)
-  emit({type: 'replay', mutant: key, entry: entryName, discarded: original.discarded, original: originalPairs, mutated: levelPairs(recorder), originalThrew: original.thrown, mutantThrew: mutated.thrown})
+  emit({type: 'replay', mutant: key, entry: entryName, discarded: original.discarded, originalOverBudget: original.overBudget, mutantOverBudget: mutated.overBudget, original: originalPairs, mutated: levelPairs(recorder), originalThrew: original.thrown, mutantThrew: mutated.thrown})
 }
 
 // console.assert overridden to record `file:line` of the innermost stack frame in one of the trees' files.

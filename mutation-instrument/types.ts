@@ -47,7 +47,8 @@ export type CopyPlan = {copy: string; files: FilePlan[]; sites: Site[]; entries:
 export type MutantPlan = {key: string; id: string; copy: string; family: string; files: FilePlan[]; changedFiles: string[]}
 
 export type LatticeSettings = {budget: number; seed: number; p0Inputs: number; p2ProductMax: number}
-export type Plan = {settings: LatticeSettings; copies: CopyPlan[]; mutants: MutantPlan[]}
+// stepBudget: the most loop body entries one call may run (execution.stepBudget), null when none is registered.
+export type Plan = {settings: LatticeSettings; stepBudget: number | null; copies: CopyPlan[]; mutants: MutantPlan[]}
 
 // Firing levels per site per call, see recorder.ts. A rule fires at or above its threshold.
 export type NoiseRule = 'none' | 'abs1e-9' | 'abs1e-9-literal'
@@ -78,6 +79,8 @@ export type ResultLine = {
   inputs: number
   discarded: number // an input the original's call discarded (discardSites)
   mutantOnlyDiscards: number
+  overBudget: number // an input whose original call passed the step budget; the mutant doesn't run on it
+  mutantOverBudget: Difference // the mutant passed the step budget where the original returned or threw; not a kill
   digest: number
   kills: SiteFirings[] // sites in F_mutant \ F_original, per rule
   throws: Difference
@@ -92,6 +95,7 @@ export type BaselineLine = {
   entry: string
   inputs: number
   discarded: number
+  overBudget: number // inputs whose call passed the step budget, like discards never counted as firings
   digest: number
   nsPerCall: number
   reached: number[] // per site: in-domain inputs that reached it
@@ -102,7 +106,7 @@ export type BaselineLine = {
 }
 
 // One input through the instrumented original and mutant: the highest level of every reached site, as [site, level].
-export type ReplayLine = {type: 'replay'; mutant: string; entry: string; discarded: boolean; original: [number, number][]; mutated: [number, number][]; originalThrew: string | null; mutantThrew: string | null}
+export type ReplayLine = {type: 'replay'; mutant: string; entry: string; discarded: boolean; originalOverBudget: boolean; mutantOverBudget: boolean; original: [number, number][]; mutated: [number, number][]; originalThrew: string | null; mutantThrew: string | null}
 // One input through the uninstrumented original with console.assert overridden to record the failing lines, as `file:line`.
 export type VerifyLine = {type: 'verify'; base: string; entry: string; fired: string[]; thrown: string | null}
 // One input through the uninstrumented original and mutant trees: failing lines and the encoded return value of each.

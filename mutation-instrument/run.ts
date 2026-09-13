@@ -69,6 +69,7 @@ mkdirSync(join(outDir, 'work', 'original'), {recursive: true})
 mkdirSync(join(outDir, 'work', 'mutants'))
 const realOut = realpathSync(outDir)
 const settings = {budget: rules.lattice.budget, seed: rules.lattice.seed, p0Inputs: rules.lattice.p0Inputs, p2ProductMax: rules.lattice.p2ProductMax}
+const stepBudget = rules.execution.stepBudget ?? null
 
 const instrumentFiles = readdirSync(INSTRUMENT_DIR).filter((name) => name.endsWith('.ts')).sort()
 const gitHead = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], {cwd: INSTRUMENT_DIR}).stdout.toString().trim()
@@ -89,6 +90,7 @@ const meta: Record<string, unknown> = {
   rulesSha1: sha1(rulesText),
   knownFalse: rules.data.knownFalse.map((list) => ({...list, sha1: existsSync(join(scratch, list.path)) ? sha1(readFileSync(join(scratch, list.path))) : null})),
   settings,
+  stepBudget,
   children: rules.execution.children,
   started: new Date().toISOString(),
 }
@@ -212,7 +214,7 @@ for (const copy of copies) {
   }
 }
 const planPath = join(realOut, 'plan.json')
-writeFileSync(planPath, encodeJson({settings, copies, mutants} satisfies Plan))
+writeFileSync(planPath, encodeJson({settings, stepBudget, copies, mutants} satisfies Plan))
 
 // Digest from the plan as children decode it, twice in this process.
 const plan = decodeJson(readFileSync(planPath, 'utf8')) as Plan
@@ -356,7 +358,7 @@ if (projectedSeconds > rules.execution.projectionMaxMinutes * 60) {
 if (baselineOnly) {
   for (const line of baselineLines) {
     const criterionSites = line.firings.filter((firing) => firing.first[CRITERION_RULE] != null).length
-    log(`baseline ${line.base}.${line.entry}: ${line.discarded} of ${line.inputs} inputs discarded; firing sites: ${line.firings.length} under noise@none, ${criterionSites} under noise@abs1e-9; throws ${line.throws.count}; non-finite returns ${line.nonFiniteReturns.count}`)
+    log(`baseline ${line.base}.${line.entry}: ${line.discarded} of ${line.inputs} inputs discarded, ${line.overBudget} past the step budget; firing sites: ${line.firings.length} under noise@none, ${criterionSites} under noise@abs1e-9; throws ${line.throws.count}; non-finite returns ${line.nonFiniteReturns.count}`)
   }
   finishMeta('complete: baseline only, no mutant pass')
   log(`done in ${((performance.now() - wallStart) / 1000).toFixed(1)} s`)
