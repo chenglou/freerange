@@ -20,9 +20,10 @@ export type Domain = NumberDomain | ChoiceDomain | RecordDomain | ArrayDomain | 
 
 export type Comparison = '<' | '<=' | '>' | '>=' | '===' | '!=='
 
-// domain@v2 is every milestone's domain through m4. domain@v3-callers is domain@v2 plus the hand-written caller rules of
-// callers.ts, applied only to the entries a rule names.
-export const DOMAIN_VERSIONS = ['domain@v2', 'domain@v3-callers']
+// domain@v1b is milestone 1b's and m7's: types plus each entry's own leading asserts, parsed whole. domain@v2 is every other
+// milestone's domain through m4. domain@v3-callers is domain@v2 plus the hand-written caller rules of callers.ts, applied only
+// to the entries a rule names.
+export const DOMAIN_VERSIONS = ['domain@v1b', 'domain@v2', 'domain@v3-callers']
 export const NUMBER_CAP = 1e6
 export const MAX_ARRAY_LENGTH = 6
 

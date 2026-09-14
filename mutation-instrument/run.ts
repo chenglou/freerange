@@ -169,7 +169,7 @@ function planCopy(rule: CopyRule): CopyPlan {
     writeFileWithDirs(instrumented, output)
     files.push({file: fileRule.name, path: fileRule.path, source, sourceSha1: sha1(text), instrumented})
     sites.push(...fileSites)
-    for (const analyzed of exportedEntries(program, source, fileRule.name, entries.length)) {
+    for (const analyzed of exportedEntries(program, source, fileRule.name, entries.length, rules.domain.version, [])) {
       const {leakAsserts, ...entry} = analyzed
       const entryCallerRules = callerRulesFor(rule.id, fileRule.name, entry.name)
       const provenance = applyCallerRules(entry.args, entry.parameterNames, entryCallerRules)

@@ -1,8 +1,9 @@
-// domain@v2, run in the parent only: finds a file's exported functions, derives each parameter's domain from its
-// TypeScript type, and narrows the domains with the simple shapes of leading console.assert calls. Forked from the replay
+// domain@v1b and domain@v2, run in the parent only: finds a file's exported functions, derives each parameter's domain from
+// its TypeScript type, and narrows the domains with the simple shapes of leading console.assert calls. Forked from the replay
 // input-range prototype (analyze.ts). The ±1e6 cap on sides no leading assert bounds is applied by run.ts, after the caller
 // rules of domain@v3-callers (callers.ts).
-// domain@v2 adds three rules to domain@v1b:
+// domain@v1b parses each of the entry's own leading asserts whole: `a && b` is one unparsed precondition, which still
+// discards at run time. domain@v2 adds three rules to domain@v1b:
 //   1 a leading assert `a && b` narrows through each conjunct
 //   2 callee substitution: for an unconditional call to a same-file function whose arguments are entry parameter paths,
 //     the callee's leading asserts are rewritten through the argument mapping and narrow the entry's domain, e.g.
@@ -312,7 +313,7 @@ function sameRelation(left: RelationPlan, right: RelationPlan) {
   return left.op === right.op && JSON.stringify(left.left) === JSON.stringify(right.left) && JSON.stringify(left.right) === JSON.stringify(right.right)
 }
 
-function analyzeFunction(checker: ts.TypeChecker, sourceFile: ts.SourceFile, file: string, name: string, ordinal: number, node: FunctionLike, functions: Map<ts.Node, NamedFunction>): AnalyzedEntry {
+function analyzeFunction(checker: ts.TypeChecker, sourceFile: ts.SourceFile, file: string, name: string, ordinal: number, node: FunctionLike, functions: Map<ts.Node, NamedFunction>, v2Rules: boolean): AnalyzedEntry {
   const lineOf = (target: ts.Node) => sourceFile.getLineAndCharacterOfPosition(target.getStart()).line + 1
   const entry: AnalyzedEntry = {name, file, ordinal, line: lineOf(node), parameterNames: [], args: {kind: 'tuple', elements: []}, relations: [], preconditions: [], unsupported: null, leakAsserts: []}
   const bindings = new Map<string, Path>()
@@ -341,9 +342,13 @@ function analyzeFunction(checker: ts.TypeChecker, sourceFile: ts.SourceFile, fil
       preconditions.push({text: '', file, line: lineOf(call), use: 'unparsed', origin: 'entry', callee: null})
       continue
     }
-    for (const conjunct of conjuncts(condition)) {
+    for (const conjunct of v2Rules ? conjuncts(condition) : [condition]) {
       preconditions.push({text: conjunct.getText(), file, line: lineOf(call), use: applyCondition(checker, conjunct, bindings, entry.args, entry.relations), origin: 'entry', callee: null})
     }
+  }
+  if (!v2Rules) {
+    entry.preconditions = preconditions
+    return entry
   }
 
   // domain@v2 rule 2: callee substitution through unconditional pass-through calls, once per distinct argument mapping.
@@ -410,24 +415,28 @@ function analyzeFunction(checker: ts.TypeChecker, sourceFile: ts.SourceFile, fil
 
 /**
  * Every exported function declaration and exported `const name = (...) => ...` of the file, in source order, numbered
- * from `ordinalStart`. `file` is the logical file name the entries and their preconditions carry. Number sides that no
- * leading assert bounds are still unbounded here; run.ts applies the caller rules and then the cap.
+ * from `ordinalStart`. `file` is the logical file name the entries and their preconditions carry. A name in `excluded`
+ * isn't an entry and takes no ordinal, e.g. tooltipContentLayout in m7's tooltip copy. `version` is the registered
+ * domain.version: domain@v1b applies none of domain@v2's rules 1-3. Number sides that no leading assert bounds are still
+ * unbounded here; run.ts applies the caller rules and then the cap.
  */
-export function exportedEntries(program: ts.Program, path: string, file: string, ordinalStart: number): AnalyzedEntry[] {
+export function exportedEntries(program: ts.Program, path: string, file: string, ordinalStart: number, version: string, excluded: string[]): AnalyzedEntry[] {
   const sourceFile = program.getSourceFile(path)
   if (sourceFile == null) throw new Error(`TypeScript did not load ${path}`)
   const checker = program.getTypeChecker()
   const functions = sameFileFunctions(sourceFile)
+  const v2Rules = version !== 'domain@v1b'
   const result: AnalyzedEntry[] = []
+  const add = (name: string, node: FunctionLike) => {
+    if (!excluded.includes(name)) result.push(analyzeFunction(checker, sourceFile, file, name, ordinalStart + result.length, node, functions, v2Rules))
+  }
   for (const statement of sourceFile.statements) {
     if (!hasExport(statement)) continue
-    if (ts.isFunctionDeclaration(statement) && statement.name != null) result.push(analyzeFunction(checker, sourceFile, file, statement.name.text, ordinalStart + result.length, statement, functions))
+    if (ts.isFunctionDeclaration(statement) && statement.name != null) add(statement.name.text, statement)
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
         const initializer = declaration.initializer
-        if (ts.isIdentifier(declaration.name) && initializer != null && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) {
-          result.push(analyzeFunction(checker, sourceFile, file, declaration.name.text, ordinalStart + result.length, initializer, functions))
-        }
+        if (ts.isIdentifier(declaration.name) && initializer != null && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer))) add(declaration.name.text, initializer)
       }
     }
   }
