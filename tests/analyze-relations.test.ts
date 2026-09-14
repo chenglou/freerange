@@ -226,6 +226,29 @@ describe('static relations', () => {
     `
     expect(verdictsOffAndOn(source, 'roundTrip').on).toEqual(['unproven'])
     expect(verdictsOffAndOn(source, 'cancellation').on).toEqual(['unproven'])
+
+    // The guard written as origin + size <= farEdge instead of origin <= farEdge - size: on
+    // doubles origin can exceed fl(farEdge - size) by rounding while the sum still fits, so
+    // result === origin is false there, while the spelling that reuses farEdge - size proves.
+    const clampOrigin = (name: string, guard: string): string => `
+      export function ${name}(origin: number, size: number, nearEdge: number, farEdge: number) {
+        console.assert(size >= 0)
+        console.assert(size <= 4000)
+        console.assert(nearEdge >= -4000)
+        console.assert(nearEdge <= farEdge)
+        console.assert(farEdge <= 4000)
+        console.assert(origin >= -4000)
+        console.assert(origin <= 4000)
+        const result = Math.max(nearEdge, Math.min(origin, Math.max(nearEdge, farEdge - size)))
+        const lastFittingOrigin = farEdge - size
+        const trailingEdge = origin + size
+        if (origin >= nearEdge && ${guard}) {
+          console.assert(result === origin)
+        }
+      }
+    `
+    expect(verdictsOffAndOn(clampOrigin('inverted', 'trailingEdge <= farEdge'), 'inverted').on).toEqual(['unproven'])
+    expect(verdictsOffAndOn(clampOrigin('reused', 'origin <= lastFittingOrigin'), 'reused').on).toEqual(['proven'])
   })
 
   test('join facts hold on every arm of a clamp, keep a sign, and drop when an arm breaks the bound', () => {
