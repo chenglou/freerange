@@ -1687,5 +1687,8 @@ describe('the wider console.assert reading behind FREERANGE_ASSERT_FORMS', () =>
     // unreachable false branches above, so the verdict stays unproven.
     expect(verdictsOf(report, 'counterexampleNotShown')).toEqual(['unproven'])
     expect(verdictsOf(report, 'definitelyFalse')).toEqual(['refuted', 'refuted'])
+    // x < 5 is definitely false after both left sides, and x > 6 is never true, but raw > 0 can
+    // be true, so a false branch of the outer group is not shown to be taken.
+    expect(verdictsOf(report, 'nestedDisjunction')).toEqual(['unproven'])
   })
 })
