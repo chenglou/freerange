@@ -56,13 +56,34 @@ export type FunctionContext = {
   assertForms: boolean
   // Local predicate helpers accepted under assertForms, keyed by the const's symbol, e.g.
   // `const near = (a: number, b: number) => Math.abs(a - b) <= 1e-9` whose every reference
-  // is a direct call inside a console.assert condition.
+  // is a direct call inside a console.assert condition. A helper is added when its
+  // declaration lowers.
   predicateHelpers: Map<ts.Symbol, PredicateHelper>
+  // Every const arrow the function body declares directly, with how the body references each
+  // one. Collected in one pass over the body when the first arrow declaration lowers, so a
+  // body declaring many arrows isn't rescanned once per arrow.
+  helperCandidates: {body: ts.Block; candidates: Map<ts.Symbol, HelperCandidate>} | null
+  // The next function-wide index for a || group inside an interior console.assert condition.
+  nextDisjunction: number
+  // How many blocks the console.assert conditions of this function have created. Capped,
+  // because each block holds its own copy of the analysis state.
+  assertionConditionBlocks: number
 }
 
 export type PredicateHelper = {
   parameters: ts.Symbol[]
   body: ts.Expression
+}
+
+// A const arrow declared directly in a function body, as a possible predicate helper.
+export type HelperCandidate = {
+  arrow: ts.ArrowFunction
+  // Some reference is neither a whole check of an interior console.assert condition nor a
+  // reference from inside another candidate's body, e.g. `const pushed = near(a, b)`.
+  referencedElsewhere: boolean
+  // References from inside another candidate's body, e.g. `positive` in
+  // `const bounded = (value: number) => positive(value) && value < 10`.
+  referencesFromHelpers: Array<{reference: ts.Identifier; caller: ts.Symbol}>
 }
 
 export type LoopTarget = {
@@ -100,6 +121,9 @@ export function createFunctionContext(
     loops: [],
     assertForms: process.env['FREERANGE_ASSERT_FORMS'] === '1',
     predicateHelpers: new Map(),
+    helperCandidates: null,
+    nextDisjunction: 0,
+    assertionConditionBlocks: 0,
   }
 }
 
@@ -107,7 +131,9 @@ export function createFunctionContext(
 // the type so a future mutable field on FunctionContext is added to the snapshot in the
 // same file. Two fields are deliberately not rolled back: sites (rolled-back sites would
 // invalidate SiteIDs already recorded elsewhere) and nextValue (leaked ValueIDs are merely
-// sparse).
+// sparse). The console.assert fields (predicateHelpers, helperCandidates, nextDisjunction,
+// assertionConditionBlocks) never change in the initializer: its context has no static
+// annotations, and a top-level arrow never qualifies as a helper.
 export type LoweringSnapshot = {
   block: MutableBlock
   instructionCount: number
@@ -115,7 +141,6 @@ export type LoweringSnapshot = {
   bindings: Map<ts.Symbol, ValueID>
   assertionCount: number
   loopCount: number
-  predicateHelpers: Map<ts.Symbol, PredicateHelper>
 }
 
 export function snapshotLowering(context: FunctionContext): LoweringSnapshot {
@@ -126,7 +151,6 @@ export function snapshotLowering(context: FunctionContext): LoweringSnapshot {
     bindings: new Map(context.bindings),
     assertionCount: context.assertions.length,
     loopCount: context.loops.length,
-    predicateHelpers: new Map(context.predicateHelpers),
   }
 }
 
@@ -138,7 +162,6 @@ export function restoreLowering(context: FunctionContext, snapshot: LoweringSnap
   context.bindings = snapshot.bindings
   context.assertions.length = snapshot.assertionCount
   context.loops.length = snapshot.loopCount
-  context.predicateHelpers = snapshot.predicateHelpers
 }
 
 export function addSite(context: FunctionContext, node: ts.Node): SiteID {

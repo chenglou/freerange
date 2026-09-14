@@ -967,6 +967,7 @@ export function formatUnsupportedReason(reason: UnsupportedReason): string {
         case 'disjuncts': return 'console.assert condition has more than 16 alternatives in one || chain'
         case 'helperDepth': return 'a local predicate helper used in console.assert calls another local helper; write the inner check out in the outer helper'
         case 'helperSize': return 'a local predicate helper used in console.assert has more than 256 syntax nodes'
+        case 'functionBlocks': return 'console.assert conditions in one function create more than 256 blocks through || alternatives'
       }
     }
     case 'varDeclaration': return 'var declarations (use let or const)'

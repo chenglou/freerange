@@ -1437,12 +1437,26 @@ describe('the wider console.assert reading behind FREERANGE_ASSERT_FORMS', () =>
         console.assert(bounds?.width === 1)
         return result
       }
+      export function groupComparedWithFlag(a: number, b: number, flag: boolean): number {
+        const result = a
+        console.assert((a > 0 || b > 0) === flag)
+        return result
+      }
+      export function negatedGroupAsLastAlternative(a: number, b: number): number {
+        const result = a
+        console.assert(a > 5 || !(a > 0 || b > 0))
+        return result
+      }
     `)
     for (const name of ['message', 'optional']) {
       expect(unsupportedReasonOf(report, name)).toContain('console.assert')
     }
     expect(unsupportedReasonOf(report, 'inequalityRequirement')).toContain('!== needs one fixed finite number')
     expect(unsupportedReasonOf(report, 'optionalChain')).toContain('one direct numeric comparison')
+    // A || group lowered as a value joins in a block parameter, which the removability gate rejects.
+    for (const name of ['groupComparedWithFlag', 'negatedGroupAsLastAlternative']) {
+      expect(unsupportedReasonOf(report, name)).toContain('calculate or read the value before console.assert')
+    }
     expect(verdictsOf(report, 'constant')).toEqual(['proven'])
     expect(verdictsOf(report, 'directMath')).toEqual(['proven'])
     expect(verdictsOf(report, 'booleanEquality')).toEqual(['proven'])
@@ -1542,8 +1556,9 @@ describe('the wider console.assert reading behind FREERANGE_ASSERT_FORMS', () =>
         console.assert(bounded(raw))
         return result
       }
-      export function helperCallsHelperDeclaredLater(raw: number): number {
-        const bounded = (value: number) => value > 0 && value < 10
+      export function outerHelperDeclaredFirst(raw: number): number {
+        const bounded = (value: number) => positive(value) && value < 10
+        const positive = (value: number) => value > 0
         const result = raw
         console.assert(bounded(raw))
         return result
@@ -1554,6 +1569,15 @@ describe('the wider console.assert reading behind FREERANGE_ASSERT_FORMS', () =>
         console.assert(large(raw))
         return result
       }
+      export function largeOrdinaryArrow(raw: number): number {
+        const large = (value: number) => ${largeBody}
+        return large(raw) ? 1 : 0
+      }
+      export function nestedOrdinaryArrows(raw: number): number {
+        const positive = (value: number) => value > 0
+        const bounded = (value: number) => positive(value) && value < 10
+        return bounded(raw) ? 1 : 0
+      }
     `)
     expect(verdictsOf(report, 'deepestAccepted')).toHaveLength(1)
     expect(unsupportedReasonOf(report, 'tooDeep')).toContain('more than 32 levels deep')
@@ -1563,7 +1587,105 @@ describe('the wider console.assert reading behind FREERANGE_ASSERT_FORMS', () =>
     expect(verdictsOf(report, 'mostDisjunctsAccepted')).toHaveLength(1)
     expect(unsupportedReasonOf(report, 'tooManyDisjuncts')).toContain('more than 16 alternatives')
     expect(unsupportedReasonOf(report, 'helperCallsHelper')).toContain('calls another local helper')
-    expect(verdictsOf(report, 'helperCallsHelperDeclaredLater')).toEqual(['unproven'])
+    expect(unsupportedReasonOf(report, 'outerHelperDeclaredFirst')).toContain('calls another local helper')
     expect(unsupportedReasonOf(report, 'largeHelper')).toContain('more than 256 syntax nodes')
+    // Arrows that no console.assert calls keep today's rejection instead of a helper limit.
+    expect(unsupportedReasonOf(report, 'largeOrdinaryArrow')).toContain('expression (ArrowFunction)')
+    expect(unsupportedReasonOf(report, 'nestedOrdinaryArrows')).toContain('expression (ArrowFunction)')
+  })
+
+  test('the blocks that console.assert conditions create in one function are capped', () => {
+    // A 16-alternative || chain creates 31 blocks: a true and a false block per left side,
+    // and one continuation. 8 chains create 248 blocks and 9 create 279.
+    const assertions = (count: number): string => Array.from({length: count}, (_, assertion) =>
+      `console.assert(${Array.from({length: 16}, (_, index) => `value === ${assertion * 17 + index}`).join(' || ')})`).join('\n')
+    const report = analyzeWithAssertForms('function-block-limit.ts', `
+      export function mostBlocksAccepted(value: number): number {
+        const result = value
+        ${assertions(8)}
+        return result
+      }
+      export function tooManyBlocks(value: number): number {
+        const result = value
+        ${assertions(9)}
+        return result
+      }
+    `)
+    expect(verdictsOf(report, 'mostBlocksAccepted')).toHaveLength(8)
+    expect(unsupportedReasonOf(report, 'tooManyBlocks')).toContain('more than 256 blocks')
+  })
+
+  test('a || assertion is refuted only where every left side is definitely false', () => {
+    const report = analyzeWithAssertForms('disjunction-refutations.ts', `
+      export function producerProofOnLeftSide(a: number, b: number): number {
+        if (a > b) return 0
+        const d = b - a
+        console.assert(d >= 0)
+        console.assert(d >= 0 || b < a)
+        console.assert(b < a || d >= 0)
+        return d
+      }
+      export function minimumOnLeftSide(x: number, y: number): number {
+        const lo = Math.min(x, y)
+        const result = lo
+        console.assert(lo <= x || lo > x + 1)
+        return result
+      }
+      export function requirementsProveLeftGroup(a: number, b: number): number {
+        console.assert(a >= 0 && a <= b)
+        console.assert(b <= 10)
+        const width = b - a
+        console.assert(width >= 0 && width <= 10 || a < 0)
+        return width
+      }
+      export function leftSideTrueButUnproven(raw: number): number {
+        const x = Math.max(0, Math.min(10, raw))
+        const result = x
+        console.assert(x * 10 >= x || x === 0)
+        return result
+      }
+      export function earlyReturnInLoop(n: number, stop: number): number {
+        let total = 0
+        for (let i = 0; i < n; i++) {
+          if (i === stop) return total
+          console.assert(i !== stop || total > 1000)
+          total = total + i
+        }
+        return total
+      }
+      export function counterexampleNotShown(raw: number): number {
+        const x = Math.max(0, Math.min(10, raw))
+        const result = x
+        console.assert(x < 5 || x > 100)
+        return result
+      }
+      export function definitelyFalse(raw: number): number {
+        const x = 5
+        const result = raw
+        console.assert(x < 5 || x > 6)
+        console.assert((raw > 0 || raw <= 0) && x > 6)
+        return result
+      }
+      export function nestedDisjunction(raw: number): number {
+        const x = 5
+        const result = raw
+        console.assert(raw > 0 || (x > 6 || x < 5))
+        return result
+      }
+    `)
+    expect(verdictsOf(report, 'producerProofOnLeftSide')).toEqual(['proven', 'proven', 'proven'])
+    expect(verdictsOf(report, 'minimumOnLeftSide')).toEqual(['proven'])
+    expect(verdictsOf(report, 'requirementsProveLeftGroup')).toEqual(['proven'])
+    // x * 10 >= x holds for every x in 0..10, but no rule proves it. The false branch of the
+    // left side is then reachable for the analysis though no input takes it, and x === 0 is
+    // definitely false there.
+    expect(verdictsOf(report, 'leftSideTrueButUnproven')).toEqual(['unproven'])
+    // The first loop visit holds total === 0, where total > 1000 is definitely false on the
+    // false branch of i !== stop, a branch no input reaches.
+    expect(verdictsOf(report, 'earlyReturnInLoop')).toEqual(['unproven'])
+    // x === 7 makes this assertion false, but the analysis can't tell such an x from the
+    // unreachable false branches above, so the verdict stays unproven.
+    expect(verdictsOf(report, 'counterexampleNotShown')).toEqual(['unproven'])
+    expect(verdictsOf(report, 'definitelyFalse')).toEqual(['refuted', 'refuted'])
   })
 })

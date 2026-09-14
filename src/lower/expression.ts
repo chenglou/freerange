@@ -1,6 +1,6 @@
 import * as ts from 'typescript'
 import type {SiteID, ValueID} from '../ir/ids.ts'
-import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
+import type {BranchDecision, ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import type {StaticAssertionProblem} from '../ir/program.ts'
 import {numberConstituent} from './numeric-intersection.ts'
 import {
@@ -18,6 +18,7 @@ import {
   terminate,
   unsupported,
   type FunctionContext,
+  type HelperCandidate,
   type MutableBlock,
   type PredicateHelper,
 } from './context.ts'
@@ -611,6 +612,7 @@ const maximumConditionDepth = 32
 const maximumConditionChecks = 64
 const maximumDisjuncts = 16
 const maximumHelperBodyNodes = 256
+const maximumFunctionConditionBlocks = 256
 
 // A console.assert condition as the wider reading sees it: && groups, || chains, calls to
 // local predicate helpers, and checks. A check is one boolean-valued expression without
@@ -663,7 +665,7 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
   }
   const assertion = context.assertions.length
   context.assertions.push({site, text: condition.getText(context.sourceFile)})
-  return addInstructionAtSite(context, site, {kind: 'staticAssert', value, assertion})
+  return addInstructionAtSite(context, site, {kind: 'staticAssert', value, assertion, disjunctions: []})
 }
 
 type WrittenRequirementOperand = {kind: 'parameter'; value: ValueID} | {kind: 'constant'; value: number}
@@ -898,9 +900,13 @@ function removableStaticConditionInstruction(instruction: InstructionIR): boolea
 //
 // An interior condition lowers into parts that share one assertion index. The engine proves
 // an assertion only when every part is definitely true on every visit, so `A && B` is two
-// parts. `A || B` branches on A with ordinary branch lowering: the true edge records a
-// definitely true part, so an always-true A reads proven instead of unreachable, and the
-// false edge asserts B's parts under A's refinement. Every block the condition creates joins
+// parts. `A || B` branches on A: the true branch records that the assertion holds, so an
+// always-true A reads proven instead of unreachable, and the false branch asserts B's parts
+// under A's refinement. The engine decides these branches with the proofs that decide a whole
+// assertion. A part on a false branch refutes the assertion only if no visit found one of the
+// enclosing left sides true, because the analysis can reach a false branch that no input
+// takes: after `const x = Math.max(0, Math.min(10, raw))` no rule proves `x * 10 >= x`, and
+// `x === 0` is definitely false on that false branch. Every block the condition creates joins
 // with no block parameters, and every instruction in them must be removable, so erasing the
 // assertion from a production build changes nothing later code computes. A conjunct is
 // evaluated without the narrowing from the conjuncts before it, which can lose a proof but
@@ -911,7 +917,7 @@ function lowerWideStaticAnnotation(
 ): ValueID {
   const condition = annotation.condition
   requireBooleanCondition(condition, context.checker)
-  const tree = parseAssertionCondition(condition, 0, {checks: 0}, false, context)
+  const tree = parseAssertionCondition(condition, 0, {checks: 0}, context)
   const site = addSite(context, annotation.call)
   if (annotation.role === 'requirement') {
     const conjuncts = tree.kind === 'all' ? tree.parts : [tree]
@@ -947,7 +953,7 @@ function lowerWideStaticAnnotation(
   const originalBlock = context.currentBlock
   const originalBlockCount = context.blocks.length
   const originalInstructionCount = originalBlock.instructions.length
-  const value = lowerAssertionParts(tree, site, assertion, context)
+  const value = lowerAssertionParts(tree, site, assertion, [], context)
   const createdBlocks = context.blocks.slice(originalBlockCount)
   const emitted = [
     ...originalBlock.instructions.slice(originalInstructionCount),
@@ -956,6 +962,13 @@ function lowerWideStaticAnnotation(
   if (createdBlocks.some(block => block.parameters.length > 0 || block.loopHeader != null)
     || emitted.some(instruction => !removableAssertionInstruction(instruction, assertion))) {
     throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'bindValueFirst'})
+  }
+  // The per-condition limits bound one assertion, not a function with many of them. Each
+  // block holds its own copy of the analysis state, so without this limit a function of 100
+  // asserts with 16 alternatives each needs gigabytes.
+  context.assertionConditionBlocks += createdBlocks.length
+  if (context.assertionConditionBlocks > maximumFunctionConditionBlocks) {
+    throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'functionBlocks'})
   }
   return value
 }
@@ -967,7 +980,6 @@ function parseAssertionCondition(
   expression: ts.Expression,
   depth: number,
   budget: {checks: number},
-  insideHelper: boolean,
   context: FunctionContext,
 ): AssertionCondition {
   if (depth > maximumConditionDepth) {
@@ -992,19 +1004,19 @@ function parseAssertionCondition(
     }
     operands.push(cursor)
     operands.reverse()
-    const children = operands.map(operand => parseAssertionCondition(operand, depth + 1, budget, insideHelper, context))
+    const children = operands.map(operand => parseAssertionCondition(operand, depth + 1, budget, context))
     return operator === ts.SyntaxKind.AmpersandAmpersandToken
       ? {kind: 'all', parts: children}
       : {kind: 'any', disjuncts: children}
   }
+  // A helper body calls no other local helper (helperBodyAccepted), so inlining is one level.
   const helper = predicateHelperCall(current, context)
   if (helper != null) {
-    if (insideHelper) throw unsupported(current, {kind: 'staticAssertionForm', problem: 'helperDepth'})
     return {
       kind: 'helper',
       call: current as ts.CallExpression,
       helper,
-      body: parseAssertionCondition(helper.body, depth + 1, budget, true, context),
+      body: parseAssertionCondition(helper.body, depth + 1, budget, context),
     }
   }
   budget.checks += 1
@@ -1076,32 +1088,40 @@ function supportedConditionCall(call: ts.CallExpression, context: FunctionContex
 }
 
 // Returns the last part's staticAssert result; the statement position discards it.
+// disjunctions lists the enclosing || groups whose false branches lead to these parts.
 function lowerAssertionParts(
   tree: AssertionCondition,
   site: SiteID,
   assertion: number,
+  disjunctions: number[],
   context: FunctionContext,
 ): ValueID {
   switch (tree.kind) {
     case 'all': {
       let last: ValueID | null = null
-      for (const part of tree.parts) last = lowerAssertionParts(part, site, assertion, context)
+      for (const part of tree.parts) last = lowerAssertionParts(part, site, assertion, disjunctions, context)
       if (last == null) throw new Error('A console.assert && group has no parts')
       return last
     }
     case 'any': {
+      const disjunction = context.nextDisjunction++
       const exits: MutableBlock[] = []
       for (let index = 0; index < tree.disjuncts.length - 1; index++) {
         const whenTrue = createBlock(context)
         const whenFalse = createBlock(context)
         lowerAssertionBranch(tree.disjuncts[index]!, whenTrue, whenFalse, context)
         context.currentBlock = context.blocks[whenTrue]!
-        const holds = addInstructionAtSite(context, site, {kind: 'booleanConstant', value: true})
-        addInstructionAtSite(context, site, {kind: 'staticAssert', value: holds, assertion})
+        addInstructionAtSite(context, site, {kind: 'staticDisjunctionHolds', assertion, disjunction})
         exits.push(context.currentBlock)
         context.currentBlock = context.blocks[whenFalse]!
       }
-      const last = lowerAssertionParts(tree.disjuncts[tree.disjuncts.length - 1]!, site, assertion, context)
+      const last = lowerAssertionParts(
+        tree.disjuncts[tree.disjuncts.length - 1]!,
+        site,
+        assertion,
+        [...disjunctions, disjunction],
+        context,
+      )
       exits.push(context.currentBlock)
       const continuation = createBlock(context)
       for (const exit of exits) {
@@ -1110,10 +1130,10 @@ function lowerAssertionParts(
       context.currentBlock = context.blocks[continuation]!
       return last
     }
-    case 'helper': return withHelperArguments(tree, context, () => lowerAssertionParts(tree.body, site, assertion, context))
+    case 'helper': return withHelperArguments(tree, context, () => lowerAssertionParts(tree.body, site, assertion, disjunctions, context))
     case 'check': {
       const value = lowerExpression(tree.expression, context)
-      return addInstructionAtSite(context, site, {kind: 'staticAssert', value, assertion})
+      return addInstructionAtSite(context, site, {kind: 'staticAssert', value, assertion, disjunctions})
     }
   }
 }
@@ -1142,7 +1162,7 @@ function lowerAssertionBranch(
       withHelperArguments(tree, context, () => lowerAssertionBranch(tree.body, whenTrue, whenFalse, context))
       return
     }
-    case 'check': lowerBranchingCondition(tree.expression, whenTrue, whenFalse, context); return
+    case 'check': lowerBranchingCondition(tree.expression, whenTrue, whenFalse, 'assertionProofs', context); return
   }
 }
 
@@ -1169,7 +1189,8 @@ function withHelperArguments<T>(
 function removableAssertionInstruction(instruction: InstructionIR, assertion: number): boolean {
   if (removableStaticConditionInstruction(instruction)) return true
   switch (instruction.kind) {
-    case 'staticAssert': return instruction.assertion === assertion
+    case 'staticAssert':
+    case 'staticDisjunctionHolds': return instruction.assertion === assertion
     case 'binary': return instruction.operator === 'add' || instruction.operator === 'subtract'
       || instruction.operator === 'multiply'
     case 'absolute':
@@ -1192,41 +1213,35 @@ function removableAssertionInstruction(instruction: InstructionIR, assertion: nu
 // function body, qualifies when its body calls nothing but supported Math and Number
 // functions and every reference to it is a direct call with every argument, standing as a
 // whole check in a console.assert condition of that function. Any other shape returns null,
-// so the declaration keeps today's rejection.
+// so the declaration keeps today's rejection. The helper limits (a call to another local
+// helper, a large body) only apply to an arrow that console.assert conditions use, so an
+// arrow used by ordinary code keeps today's "expression (ArrowFunction)" message.
 function predicateHelperDeclaration(
   arrow: ts.ArrowFunction,
   context: FunctionContext,
 ): {symbol: ts.Symbol; helper: PredicateHelper} | null {
-  const owner = helperOwner(arrow)
-  if (owner == null) return null
+  if (helperOwner(arrow) == null) return null
   const declaration = arrow.parent as ts.VariableDeclaration
+  const symbol = requiredSymbol(declaration.name, context.checker)
+  const candidates = helperCandidatesOf(declaration.parent.parent.parent as ts.Block, context)
+  const candidate = candidates.get(symbol)
+  if (candidate == null) throw new Error(`The body scan missed the const arrow ${symbol.name}`)
+  if (candidate.referencedElsewhere) return null
+  if (candidate.referencesFromHelpers.length > 0) {
+    const fromAssertionHelper = candidate.referencesFromHelpers.find(({caller}) => {
+      const callerCandidate = candidates.get(caller)
+      return callerCandidate != null && !callerCandidate.referencedElsewhere
+        && callerCandidate.referencesFromHelpers.length === 0
+    })
+    if (fromAssertionHelper != null) {
+      throw unsupported(fromAssertionHelper.reference, {kind: 'staticAssertionForm', problem: 'helperDepth'})
+    }
+    return null
+  }
   if (syntaxNodeCountExceeds(arrow.body, maximumHelperBodyNodes)) {
     throw unsupported(arrow.body, {kind: 'staticAssertionForm', problem: 'helperSize'})
   }
-  if (!helperBodyAccepted(arrow.body, context)) return null
-  const symbol = requiredSymbol(declaration.name, context.checker)
-  const parameterCount = arrow.parameters.length
-  const referencesAccepted = (node: ts.Node): boolean => {
-    if (ts.isShorthandPropertyAssignment(node)
-      && context.checker.getShorthandAssignmentValueSymbol(node) === symbol) return false
-    if (ts.isIdentifier(node) && node !== declaration.name
-      && context.checker.getSymbolAtLocation(node) === symbol) {
-      const enclosing = ts.findAncestor(node.parent, ts.isFunctionLike)
-      if (enclosing !== owner) {
-        if (enclosing != null && ts.isArrowFunction(enclosing) && helperOwner(enclosing) != null) {
-          throw unsupported(node, {kind: 'staticAssertionForm', problem: 'helperDepth'})
-        }
-        return false
-      }
-      const call = node.parent
-      return ts.isCallExpression(call) && call.expression === node && call.questionDotToken == null
-        && call.arguments.length === parameterCount
-        && call.arguments.every(argument => !ts.isSpreadElement(argument))
-        && wholeCheckInAssertion(call, context)
-    }
-    return ts.forEachChild(node, child => referencesAccepted(child) ? undefined : true) !== true
-  }
-  if (!referencesAccepted(declaration.parent.parent.parent)) return null
+  if (!helperBodyAccepted(arrow.body, candidates, context)) return null
   return {
     symbol,
     helper: {
@@ -1234,6 +1249,64 @@ function predicateHelperDeclaration(
       body: arrow.body as ts.Expression,
     },
   }
+}
+
+// One pass over the function body classifies every reference to every const arrow the body
+// declares directly. Identifiers are resolved only when their text names such an arrow.
+function helperCandidatesOf(body: ts.Block, context: FunctionContext): Map<ts.Symbol, HelperCandidate> {
+  if (context.helperCandidates != null) {
+    if (context.helperCandidates.body !== body) {
+      throw new Error('Predicate helpers from two function bodies in one function lowering')
+    }
+    return context.helperCandidates.candidates
+  }
+  const owner = body.parent
+  const candidates = new Map<ts.Symbol, HelperCandidate>()
+  const names = new Set<string>()
+  for (const statement of body.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      const initializer = declaration.initializer
+      if (initializer == null || !ts.isArrowFunction(initializer) || helperOwner(initializer) == null) continue
+      const symbol = requiredSymbol(declaration.name, context.checker)
+      candidates.set(symbol, {arrow: initializer, referencedElsewhere: false, referencesFromHelpers: []})
+      names.add(symbol.name)
+    }
+  }
+  const visit = (node: ts.Node): void => {
+    if (ts.isShorthandPropertyAssignment(node)) {
+      const valueSymbol = context.checker.getShorthandAssignmentValueSymbol(node)
+      const candidate = valueSymbol == null ? undefined : candidates.get(valueSymbol)
+      if (candidate != null) candidate.referencedElsewhere = true
+    } else if (ts.isIdentifier(node) && names.has(node.text)
+      && !(ts.isVariableDeclaration(node.parent) && node.parent.name === node)) {
+      const symbol = context.checker.getSymbolAtLocation(node)
+      const candidate = symbol == null ? undefined : candidates.get(symbol)
+      if (candidate != null) {
+        const enclosing = ts.findAncestor(node.parent, ts.isFunctionLike)
+        if (enclosing === owner) {
+          const call = node.parent
+          const wholeCheck = ts.isCallExpression(call) && call.expression === node && call.questionDotToken == null
+            && call.arguments.length === candidate.arrow.parameters.length
+            && call.arguments.every(argument => !ts.isSpreadElement(argument))
+            && wholeCheckInAssertion(call, context)
+          if (!wholeCheck) candidate.referencedElsewhere = true
+        } else if (enclosing != null && ts.isArrowFunction(enclosing) && helperOwner(enclosing) != null) {
+          const callerDeclaration = enclosing.parent as ts.VariableDeclaration
+          candidate.referencesFromHelpers.push({
+            reference: node,
+            caller: requiredSymbol(callerDeclaration.name, context.checker),
+          })
+        } else {
+          candidate.referencedElsewhere = true
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(body)
+  context.helperCandidates = {body, candidates}
+  return candidates
 }
 
 // The function whose body directly declares `const name = (params) => expression`, with plain
@@ -1254,23 +1327,24 @@ function helperOwner(arrow: ts.ArrowFunction): ts.SignatureDeclaration | null {
 }
 
 // A helper body may call only supported Math and Number functions, contain no nested function
-// and assign nothing. A call to another local helper hits the depth limit.
-function helperBodyAccepted(node: ts.Node, context: FunctionContext): boolean {
+// and assign nothing. A call to another const arrow of the same body hits the depth limit.
+function helperBodyAccepted(
+  node: ts.Node,
+  candidates: Map<ts.Symbol, HelperCandidate>,
+  context: FunctionContext,
+): boolean {
   if (ts.isCallExpression(node) && !supportedConditionCall(node, context)) {
     const calleeSymbol = ts.isIdentifier(node.expression)
       ? context.checker.getSymbolAtLocation(node.expression)
       : undefined
-    const calleeDeclaration = calleeSymbol?.valueDeclaration
-    if (calleeDeclaration != null && ts.isVariableDeclaration(calleeDeclaration)
-      && calleeDeclaration.initializer != null && ts.isArrowFunction(calleeDeclaration.initializer)
-      && helperOwner(calleeDeclaration.initializer) != null) {
+    if (calleeSymbol != null && candidates.has(calleeSymbol)) {
       throw unsupported(node, {kind: 'staticAssertionForm', problem: 'helperDepth'})
     }
     return false
   }
   if (ts.isFunctionLike(node) || identifierAssignment(node) != null
     || ts.isDeleteExpression(node) || ts.isVoidExpression(node) || ts.isNewExpression(node)) return false
-  return ts.forEachChild(node, child => helperBodyAccepted(child, context) ? undefined : true) !== true
+  return ts.forEachChild(node, child => helperBodyAccepted(child, candidates, context) ? undefined : true) !== true
 }
 
 // The call is a whole check of an interior console.assert condition: only parentheses, &&
@@ -1360,6 +1434,7 @@ function lowerValueBranch(
     whenTrue: {block: whenTrue, arguments: []},
     whenFalse: {block: whenFalse, arguments: []},
     site: addSite(context, node),
+    decision: 'heldValue',
   })
   return joinValueBranches(
     node,
@@ -1380,7 +1455,7 @@ function lowerBranchingValue(
 ): ValueID {
   const whenTrue = createBlock(context)
   const whenFalse = createBlock(context)
-  lowerBranchingCondition(condition, whenTrue, whenFalse, context)
+  lowerBranchingCondition(condition, whenTrue, whenFalse, 'heldValue', context)
   return joinValueBranches(
     node,
     whenTrue,
@@ -1453,6 +1528,7 @@ export function lowerBranchingCondition(
   expression: ts.Expression,
   whenTrue: number,
   whenFalse: number,
+  decision: BranchDecision,
   context: FunctionContext,
 ): void {
   const current = unwrap(expression, context.checker)
@@ -1462,16 +1538,16 @@ export function lowerBranchingCondition(
     const isAnd = current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
     const middle = createBlock(context)
     if (isAnd) {
-      lowerBranchingCondition(current.left, middle, whenFalse, context)
+      lowerBranchingCondition(current.left, middle, whenFalse, decision, context)
     } else {
-      lowerBranchingCondition(current.left, whenTrue, middle, context)
+      lowerBranchingCondition(current.left, whenTrue, middle, decision, context)
     }
     context.currentBlock = context.blocks[middle]!
-    lowerBranchingCondition(current.right, whenTrue, whenFalse, context)
+    lowerBranchingCondition(current.right, whenTrue, whenFalse, decision, context)
     return
   }
   if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.ExclamationToken) {
-    lowerBranchingCondition(current.operand, whenFalse, whenTrue, context)
+    lowerBranchingCondition(current.operand, whenFalse, whenTrue, decision, context)
     return
   }
   requireBooleanCondition(current, context.checker)
@@ -1490,6 +1566,7 @@ export function lowerBranchingCondition(
     whenTrue: {block: whenTrue, arguments: []},
     whenFalse: {block: whenFalse, arguments: []},
     site: addSite(context, current),
+    decision,
   })
 }
 

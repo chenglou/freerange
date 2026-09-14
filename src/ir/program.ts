@@ -62,13 +62,15 @@ export type StaticAssertionProblem =
   | 'callerRequirement'
   // Limits of the wider reading behind FREERANGE_ASSERT_FORMS: && and || groups nested more
   // than 32 deep, more than 64 checks in one condition, more than 16 alternatives in one ||
-  // chain, a local predicate helper that calls another local helper, and a helper body with
-  // more than 256 syntax nodes.
+  // chain, a local predicate helper that calls another local helper, a helper body with
+  // more than 256 syntax nodes, and more than 256 blocks created by the console.assert
+  // conditions of one function.
   | 'conditionDepth'
   | 'conditionChecks'
   | 'disjuncts'
   | 'helperDepth'
   | 'helperSize'
+  | 'functionBlocks'
 
 // Why one function's lowering stopped. String fields are display data (identifier text,
 // operator text, checker.typeToString results captured while the checker is alive). Code

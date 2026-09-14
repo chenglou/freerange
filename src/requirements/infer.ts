@@ -135,6 +135,7 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       case 'numberCheck':
       case 'staticRequire':
       case 'staticAssert':
+      case 'staticDisjunctionHolds':
       case 'tagCheck':
       case 'nullishCheck':
       case 'arrayLiteral':

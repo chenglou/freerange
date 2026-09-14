@@ -84,7 +84,7 @@ function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): 
   const bindingsBeforeBranch = new Map(context.bindings)
   const whenTrue = createBlock(context)
   const whenFalse = createBlock(context)
-  lowerBranchingCondition(statement.expression, whenTrue, whenFalse, context)
+  lowerBranchingCondition(statement.expression, whenTrue, whenFalse, 'heldValue', context)
 
   const trueBranch = lowerBranch(statement.thenStatement, whenTrue, bindingsBeforeBranch, context)
   const falseBranch = statement.elseStatement == null
@@ -206,6 +206,7 @@ function lowerSwitchStatement(statement: ts.SwitchStatement, context: FunctionCo
         whenTrue: {block: bodyBlock, arguments: []},
         whenFalse: {block: nextTest, arguments: []},
         site: addSite(context, label),
+        decision: 'heldValue',
       })
       context.currentBlock = context.blocks[nextTest]!
     }
@@ -291,6 +292,7 @@ function lowerForOfStatement(statement: ts.ForOfStatement, context: FunctionCont
     whenTrue: {block: body, arguments: []},
     whenFalse: {block: exit, arguments: []},
     site: addSite(context, statement),
+    decision: 'heldValue',
   })
 
   // The counter is a raw header parameter, not a symbol binding, so a continue cannot
@@ -364,7 +366,7 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
   const conditionBindings = new Map(context.bindings)
   const body = createBlock(context)
   const exit = createBlock(context)
-  lowerBranchingCondition(statement.condition, body, exit, context)
+  lowerBranchingCondition(statement.condition, body, exit, 'heldValue', context)
 
   // A continue runs the incrementor before jumping back, same as the normal body end —
   // JavaScript's order (continue in a for loop still advances the counter). An absent
@@ -417,7 +419,7 @@ function lowerWhileStatement(statement: ts.WhileStatement, context: FunctionCont
   const conditionBindings = new Map(context.bindings)
   const body = createBlock(context)
   const exit = createBlock(context)
-  lowerBranchingCondition(statement.expression, body, exit, context)
+  lowerBranchingCondition(statement.expression, body, exit, 'heldValue', context)
 
   context.currentBlock = context.blocks[body]!
   context.bindings = new Map(conditionBindings)
