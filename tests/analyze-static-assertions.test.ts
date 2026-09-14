@@ -1350,7 +1350,8 @@ describe('the wider console.assert reading behind FREERANGE_ASSERT_FORMS', () =>
       export function argumentEvaluatedOnce(raw: number): number {
         const same = (value: number) => value === value
         const result = raw
-        console.assert(same(Math.max(0, raw)))
+        console.assert(same(Math.abs(raw)))
+        console.assert(Math.abs(raw) === Math.abs(raw))
         return result
       }
       function scale(value: number): number { return value * 2 }
@@ -1388,7 +1389,9 @@ describe('the wider console.assert reading behind FREERANGE_ASSERT_FORMS', () =>
     `)
     expect(verdictsOf(report, 'withHelper')).toEqual(verdictsOf(report, 'handInlined'))
     expect(verdictsOf(report, 'withHelper')).toEqual(['unproven', 'proven', 'unproven'])
-    expect(verdictsOf(report, 'argumentEvaluatedOnce')).toEqual(['proven'])
+    // The helper's parameter names one lowered value, so comparing it with itself proves; the
+    // hand-written condition lowers Math.abs twice, and no producer rule identifies the two.
+    expect(verdictsOf(report, 'argumentEvaluatedOnce')).toEqual(['proven', 'unproven'])
     expect(unsupportedReasonOf(report, 'callArgument')).toContain('cannot call a function')
     for (const name of ['escapingReference', 'ordinaryReference', 'nonMathBody', 'negatedHelper']) {
       expect(unsupportedReasonOf(report, name)).toContain('expression (ArrowFunction)')
