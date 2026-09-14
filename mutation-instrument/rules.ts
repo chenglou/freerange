@@ -79,6 +79,8 @@ export type RunScoring = {registration: string; sha1: string; carried: {run: str
 // files. `substitute` replaces one exact line of the script first, e.g. probe-field.ts's hard-coded copy path. `tiers`:
 // packing-in-domain drops the calls of packing sweep.ts's degenerate widths (witness.ts packingTier).
 export type WitnessSet = {family: string; name: string; script: string; scriptSha1: string; args: string[]; substitute: {from: string; to: string} | null; tiers: 'all' | 'packing-in-domain'; copies: string[]}
+// witness-run.ts --patched-plan: contract-writing.ts's witness sets against a writer's patched trees, e.g. W1 sweep5 on c13-tooltip.
+export type PatchedWitnessSets = {scratch: string; measuredOn: string; reservoir: number; childHardLimitMinutes: number; sets: WitnessSet[]}
 export type ScoringRegistration = {
   id: string
   version: string

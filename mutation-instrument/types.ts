@@ -160,20 +160,44 @@ export type WitnessRuleCheck = {id: string; checked: number; violations: number;
 // entry's caller rules they violate (bit i = rules[i]); `inputs` keeps the first `reservoir` encoded argument lists.
 export type WitnessReservoirOutput = {mask: number; count: number; inputs: string[]}
 export type WitnessSiteOutput = {site: number; key: string; file: string; line: number; firing: number; withoutDomainLine: number; reservoirs: WitnessReservoirOutput[]}
+// Witness calls within the step budget that raise the site to level 2 or above and fire no domain line, e.g. a writer's added
+// leading assert that callers' arguments violate (contract-writing-v1 4d).
+export type WitnessRaisedOutput = {site: number; key: string; file: string; line: number; withoutDomainLine: number}
 // calls: every wrapped call; inDomain, degenerate, unclassified: the calls per sweep tier (only packing's sweep has a
 // degenerate tier); overBudget, threw and domainLineFired count in-domain calls.
-export type WitnessEntryOutput = {name: string; rules: string[]; calls: number; inDomain: number; degenerate: number; unclassified: number; overBudget: number; threw: number; domainLineFired: number; sites: WitnessSiteOutput[]; ruleChecks: WitnessRuleCheck[]}
+export type WitnessEntryOutput = {name: string; rules: string[]; calls: number; inDomain: number; degenerate: number; unclassified: number; overBudget: number; threw: number; domainLineFired: number; sites: WitnessSiteOutput[]; raised: WitnessRaisedOutput[]; ruleChecks: WitnessRuleCheck[]}
 export type WitnessSetOutput = {family: string; copy: string; set: string; script: string; scriptSha1: string; executed: string; executedSha1: string; args: string[]; ms: number; maxRssKb: number; entries: WitnessEntryOutput[]}
 // witness-run.ts's table per copy, merged over the copy's witness sets, with each stored input called on the uninstrumented
 // copy: `verified` counts inputs that record the site's line and no domain line of the entry.
 export type WitnessReservoir = {mask: number; count: number; stored: number; verified: number; firstVerified: string | null; failures: {input: string; fired: string[]; thrown: string | null}[]}
 export type WitnessSite = {key: string; file: string; line: number; firing: number; withoutDomainLine: number; reservoirs: WitnessReservoir[]}
-export type WitnessEntry = {name: string; rules: string[]; calls: number; inDomain: number; degenerate: number; unclassified: number; overBudget: number; threw: number; domainLineFired: number; sites: WitnessSite[]; ruleChecks: WitnessRuleCheck[]}
+export type WitnessRaised = {key: string; file: string; line: number; withoutDomainLine: number}
+export type WitnessEntry = {name: string; rules: string[]; calls: number; inDomain: number; degenerate: number; unclassified: number; overBudget: number; threw: number; domainLineFired: number; sites: WitnessSite[]; raised: WitnessRaised[]; ruleChecks: WitnessRuleCheck[]}
 export type WitnessTable = {family: string; copy: string; sets: {set: string; output: string; outputSha1: string}[]; entries: WitnessEntry[]}
+
+// -- contract-writing-v1 (contract-writing.ts, contract-writing-worker.ts) ------------------------------
+
+// A writer's patched copy beside its plan copy: the sites on writer lines of the patched subject file, and per entry those in
+// the entry's leading console.assert prefix. `runPlan` is the m7 run's plan.json, whose original trees decide the domain.
+export type ContractCopy = {copy: string; addedSites: number[]; addedLeading: {entry: string; sites: number[]}[]}
+export type ContractPlan = {runPlan: string; copies: ContractCopy[]}
+// 4d: an added site other than the entry's added leading asserts at level >= 3 on P, per cause class, on in-domain inputs where
+// no added leading assert of the entry reaches level >= 2.
+export type ContractRow = {site: number; cause: CauseClass; count: number; first: FirstFiring}
+// One entry of one copy through the run's original and P. inDomain = inputs - discarded - callerDiscarded - overBudget, as
+// baseline.jsonl counts them; usable: inputs a kill can use; addedLeadingRaised: in-domain inputs where an added leading assert
+// of the entry reaches level >= 2 (4e); behavior: differences on inputs where no added site reaches level >= 2 (4c).
+export type ContractPrepareLine = {
+  type: 'cw-prepare'; base: string; entry: string; inputs: number; digest: number; discarded: number; callerDiscarded: number; overBudget: number; inDomain: number; usable: number
+  addedLeadingRaised: number; addedLeadingBySite: {site: number; count: number}[]; behaviorSkipped: number; behavior: Difference; patchedOverBudget: Difference; patchedThrew: Difference; rows: ContractRow[]; ms: number
+}
+// A site that kills on some usable input; quietFileCount: kills on inputs where no site of P reaches level >= 3 (kill@quietFile).
+export type ContractKill = {site: number; count: number; quietFileCount: number; first: FirstFiring}
+export type ContractResultLine = {type: 'cw-result'; mutant: string; base: string; entry: string; inputs: number; digest: number; usable: number; eligibilityMismatches: number; mutantOnlyDiscards: number; mutantOverBudget: Difference; kills: ContractKill[]; throws: Difference; behavior: Difference; ms: number}
 
 export type DoneLine = {type: 'done'; maxRssKb: number; ms: number}
 export type HeartbeatLine = {type: 'heartbeat'; entry: string; index: number}
-export type ChildLine = ResultLine | BaselineLine | ReplayLine | VerifyLine | CallLine | VerifyItemLine | ScoreLine | DoneLine | HeartbeatLine
+export type ChildLine = ResultLine | BaselineLine | ReplayLine | VerifyLine | CallLine | VerifyItemLine | ScoreLine | ContractPrepareLine | ContractResultLine | DoneLine | HeartbeatLine
 
 export type Job =
   | {mode: 'baseline'; plan: string}
@@ -184,3 +208,6 @@ export type Job =
   // items: a JSON file of {entry, args} with args encoded, e.g. [{"entry": "packRows", "args": "[[], 320, 8]"}]
   | {mode: 'verify-batch'; plan: string; base: string; items: string}
   | {mode: 'score'; plan: string; base: string; samplesPerRow: number; missedSamples: number; maxDrawsPerEntry: number}
+  // contract-writing-v1: plan is a writer's patched plan; eligibility is the per-copy file cw-prepare writes and cw-mutant reads
+  | {mode: 'cw-prepare'; plan: string; contract: string; base: string; eligibility: string}
+  | {mode: 'cw-mutant'; plan: string; mutant: string; eligibility: string}

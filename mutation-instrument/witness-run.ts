@@ -21,7 +21,7 @@ import {domainLines} from './domain-lines.ts'
 import {decodeJson, encodeJson} from './encode.ts'
 import type {MjGalleryRegistration} from './mj-gallery.ts'
 import {decodePlan} from './plan-file.ts'
-import type {ScoringRegistration, WitnessSet} from './rules.ts'
+import type {PatchedWitnessSets, ScoringRegistration, WitnessSet} from './rules.ts'
 import type {CopyPlan, Plan, VerifyItemLine, WitnessEntry, WitnessJob, WitnessSetOutput, WitnessTable} from './types.ts'
 
 const WITNESS = realpathSync(new URL('./witness.ts', import.meta.url).pathname)
@@ -85,14 +85,28 @@ function mjGalleryConfig(path: string, planRun: string, out: string): WitnessRun
   }
 }
 
+/** contract-writing.ts's witness sets against a writer's patched plan, whose copies are the patched trees and whose entries carry the run's domain lines at their mapped lines. */
+function patchedConfig(planPath: string, setsPath: string, out: string): WitnessRunConfig {
+  const setsText = readFileSync(setsPath, 'utf8')
+  const sets = decodeJson(setsText) as PatchedWitnessSets
+  return {
+    scratch: sets.scratch, runDir: out, scoring: {path: setsPath, sha1: sha1(setsText)}, callerRules: null,
+    plans: new Map(sets.sets.map((set) => [set.family, planPath])), sets: sets.sets, reservoir: sets.reservoir, childHardLimitMinutes: sets.childHardLimitMinutes,
+    measuredOn: sets.measuredOn, planRun: {path: planPath, metaSha1: sha1(readFileSync(planPath))},
+  }
+}
+
 const scoringPath = option('--scoring')
 const rulesPath = option('--rules')
 const planRunPath = option('--plan')
+const patchedPlanPath = option('--patched-plan')
+const setsPath = option('--sets')
 const outPath = option('--out')
 const config = scoringPath != null ? w1Config(scoringPath)
   : rulesPath != null && planRunPath != null && outPath != null ? mjGalleryConfig(rulesPath, realpathSync(planRunPath), outPath)
+  : patchedPlanPath != null && setsPath != null && outPath != null ? patchedConfig(realpathSync(patchedPlanPath), realpathSync(setsPath), outPath)
   : null
-if (config == null) throw new Error('usage: bun mutation-instrument/witness-run.ts --scoring <registered/w1-scoring.json> | --rules <mj-gallery registration> --plan <run dir> --out <witness run dir>')
+if (config == null) throw new Error('usage: bun mutation-instrument/witness-run.ts --scoring <registered/w1-scoring.json> | --rules <mj-gallery registration> --plan <run dir> --out <witness run dir> | --patched-plan <plan.json> --sets <sets.json> --out <witness run dir>')
 const scratch = config.scratch
 const runDir = config.runDir
 if (existsSync(runDir)) throw new Error(`refusing to overwrite ${runDir}`)
@@ -237,10 +251,18 @@ for (const pair of pairs) {
       const lines = domainLines(copy, plannedEntry)
       let found = entries.find((candidate) => candidate.name === entryOutput.name)
       if (found == null) {
-        found = {name: entryOutput.name, rules: entryOutput.rules, calls: 0, inDomain: 0, degenerate: 0, unclassified: 0, overBudget: 0, threw: 0, domainLineFired: 0, sites: [], ruleChecks: entryOutput.rules.map((id) => ({id, checked: 0, violations: 0, firstViolation: null}))}
+        found = {name: entryOutput.name, rules: entryOutput.rules, calls: 0, inDomain: 0, degenerate: 0, unclassified: 0, overBudget: 0, threw: 0, domainLineFired: 0, sites: [], raised: [], ruleChecks: entryOutput.rules.map((id) => ({id, checked: 0, violations: 0, firstViolation: null}))}
         entries.push(found)
       }
       const entry = found
+      for (const raisedOutput of entryOutput.raised) {
+        let raised = entry.raised.find((candidate) => candidate.key === raisedOutput.key)
+        if (raised == null) {
+          raised = {key: raisedOutput.key, file: raisedOutput.file, line: raisedOutput.line, withoutDomainLine: 0}
+          entry.raised.push(raised)
+        }
+        raised.withoutDomainLine += raisedOutput.withoutDomainLine
+      }
       entry.calls += entryOutput.calls
       entry.inDomain += entryOutput.inDomain
       entry.degenerate += entryOutput.degenerate

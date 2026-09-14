@@ -4,6 +4,7 @@ const config: KnipConfig = {
   entry: [
     'demo/index.ts',
     'mutation-instrument/astmut.ts', // m7's operator mutant generator, run before a milestone's plan
+    'mutation-instrument/contract-writing.ts', // contract-writing-v1's scorer of one writer's patch
     'mutation-instrument/report.ts', // also runnable on its own, to rewrite an existing run's report
     'mutation-instrument/run.ts',
     'mutation-instrument/witness-run.ts',

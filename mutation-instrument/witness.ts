@@ -7,7 +7,7 @@
 // Calls between functions inside the spliced tree don't go through the wrappers, so each wrapped call is one call by the
 // sweep. Per call of an entry this child keeps the sites at level 3 or above, whether a domain line of the entry reached
 // level 2 or above, which caller rules of the entry the arguments violate, and, among calls that fire no domain line, up to
-// `reservoir` encoded argument lists per (site, rule-violation mask).
+// `reservoir` encoded argument lists per (site, rule-violation mask), and per site the calls that raise it to level 2 or above.
 // usage: bun witness.ts '<job json>'   (writes job.out; the sweep's own output goes to this process's stdout)
 import {createHash} from 'node:crypto'
 import {readFileSync, writeFileSync} from 'node:fs'
@@ -32,7 +32,8 @@ recorder.setEntry([])
 const ruleFile: CallerRuleFile = job.callerRules == null ? {version: 'none', rules: []} : decodeJson(readFileSync(job.callerRules, 'utf8')) as CallerRuleFile
 
 type Outcome = 'returned' | 'threw' | 'budget'
-type EntryState = {rules: CallerRulePlan[]; domainSites: Uint8Array; sites: (WitnessSiteOutput | null)[]; output: WitnessEntryOutput}
+// raised: per site, the calls that raise it to level 2 or above and fire no domain line
+type EntryState = {rules: CallerRulePlan[]; domainSites: Uint8Array; sites: (WitnessSiteOutput | null)[]; raised: Uint32Array; output: WitnessEntryOutput}
 
 const states: EntryState[] = copy.entries.map((entry) => {
   const rules: CallerRulePlan[] = []
@@ -45,9 +46,9 @@ const states: EntryState[] = copy.entries.map((entry) => {
   for (const site of sites) if (lines.has(`${site.file}:${site.line}`)) domainSites[site.index] = 1
   const output: WitnessEntryOutput = {
     name: entry.name, rules: rules.map((rule) => rule.id), calls: 0, inDomain: 0, degenerate: 0, unclassified: 0, overBudget: 0, threw: 0, domainLineFired: 0,
-    sites: [], ruleChecks: rules.map((rule) => ({id: rule.id, checked: 0, violations: 0, firstViolation: null})),
+    sites: [], raised: [], ruleChecks: rules.map((rule) => ({id: rule.id, checked: 0, violations: 0, firstViolation: null})),
   }
-  return {rules, domainSites, sites: new Array<WitnessSiteOutput | null>(sites.length).fill(null), output}
+  return {rules, domainSites, sites: new Array<WitnessSiteOutput | null>(sites.length).fill(null), raised: new Uint32Array(sites.length), output}
 })
 
 // packing sweep.ts's degenerate widths: the container widths of allWidths (sweep.ts:64) and the card section's column widths (:255).
@@ -125,7 +126,14 @@ function record(state: EntryState, args: Value[], outcome: Outcome) {
     const site = recorder.touched[touchedIndex]!
     if (state.domainSites[site] === 1 && recorder.levels[site]! >= 2) domainLineFired = true
   }
-  if (domainLineFired) output.domainLineFired += 1
+  if (domainLineFired) {
+    output.domainLineFired += 1
+  } else {
+    for (let touchedIndex = 0; touchedIndex < recorder.touchedCount; touchedIndex++) {
+      const site = recorder.touched[touchedIndex]!
+      if (recorder.levels[site]! >= 2) state.raised[site]! += 1
+    }
+  }
   let encoded: string | null = null
   for (let touchedIndex = 0; touchedIndex < recorder.touchedCount; touchedIndex++) {
     const siteIndex = recorder.touched[touchedIndex]!
@@ -191,6 +199,13 @@ await import(executed)
 const output: WitnessSetOutput = {
   family: job.family, copy: job.copy, set: job.set, script: job.script, scriptSha1: sha1(scriptText), executed, executedSha1: sha1(executedText), args: job.args,
   ms: performance.now() - started, maxRssKb: process.resourceUsage().maxRSS,
-  entries: states.map((state) => ({...state.output, sites: state.sites.filter((site): site is WitnessSiteOutput => site != null)})),
+  entries: states.map((state) => {
+    const raised = []
+    for (let site = 0; site < sites.length; site++) {
+      const count = state.raised[site]!
+      if (count > 0) raised.push({site, key: sites[site]!.key, file: sites[site]!.file, line: sites[site]!.line, withoutDomainLine: count})
+    }
+    return {...state.output, sites: state.sites.filter((site): site is WitnessSiteOutput => site != null), raised}
+  }),
 }
 writeFileSync(job.out, encodeJson(output))
