@@ -4,13 +4,16 @@ import {readFileSync} from 'node:fs'
 import {basename, join} from 'node:path'
 import type {Value} from './domain.ts'
 import {decodeJson} from './encode.ts'
+import {mjGalleryRules, type MjGalleryExtras, type MjGalleryRegistration} from './mj-gallery.ts'
 import type {HarnessSignature} from './popovers-harness.ts'
 
 // A copy is a directory of files that import each other; each file has a logical name that site keys carry.
 export type CopyRule = {
   id: string
   dir: string
-  files: {name: string; path: string}[] // path: inside the copy directory, e.g. `src/MidUI/PageFrame.ts`
+  // path: inside the copy directory, e.g. `src/MidUI/PageFrame.ts`. entries false: the file is spliced and imported, but its
+  // exported functions aren't entries, e.g. m7's PageFrame.ts in the composer copy, which only supplies MOBILE_NAV_HEIGHT.
+  files: {name: string; path: string; entries?: boolean}[]
   // A tsconfig.json inside the copy, copied to the root of every spliced tree so the copy's `@/…` path aliases resolve there
   tsconfig?: string
   role: string
@@ -18,6 +21,9 @@ export type CopyRule = {
   signature?: HarnessSignature // popovers: which entry signatures recorded sweep inputs replay through
   expectedKills?: string[] // popovers: mutant ids the registered kill clause requires on this copy
   staticOnly?: string[] // popovers: mutant ids whose only recorded catch is static, checked at their registered input
+  exportShim?: string[] // export@v1: top-level functions made exported in every tree of the copy, e.g. ['shrinkRow']
+  excludedEntries?: string[] // exported functions that aren't entries, e.g. ['tooltipContentLayout']
+  nodeModules?: string // a node_modules directory every spliced tree root links to, so package imports resolve there
 }
 
 type MutantBase = {id: string; copy: string; family: string; author: string}
@@ -31,7 +37,7 @@ export type KnownFalseRule = {label: string; path: string; stage: 'before-baseli
 
 export type Rules = {
   id: string
-  family: 'virtualization' | 'popovers' | 'frames' | 'packing'
+  family: 'virtualization' | 'popovers' | 'frames' | 'packing' | 'mj-gallery'
   measured_on: string
   domains_label: string
   data: {
@@ -56,6 +62,14 @@ export type Rules = {
   // A domain@v3-callers milestone scores itself under scoring@witness-v1 after its report (scoring.ts), next to the as-written
   // verdict carried from the domain@v2 run it reruns (`run`, its registration `rules`, and that run's rescoring `rescored`).
   scoring?: RunScoring
+  // Family mj-gallery: the registration as written, which the report and the scoring read for labels, plants and witness sets
+  mjGallery?: MjGalleryExtras
+}
+
+/** A registered rules file as run.ts, report.ts and scoring.ts read it. m7's layout (family mj-gallery) is converted first. */
+export function readRules(path: string): Rules {
+  const decoded = decodeJson(readFileSync(path, 'utf8'))
+  return (decoded as {family: string}).family === 'mj-gallery' ? mjGalleryRules(decoded as MjGalleryRegistration) : decoded as Rules
 }
 
 export type RunScoring = {registration: string; sha1: string; carried: {run: string; rules: string; rescored: string}}

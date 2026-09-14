@@ -15,7 +15,7 @@ import {violatedRules} from './callers.ts'
 import {runChild} from './children.ts'
 import type {Value} from './domain.ts'
 import {decodeJson, encodeJson} from './encode.ts'
-import type {Rules, RunScoring, ScoringRegistration} from './rules.ts'
+import {readRules, type Rules, type RunScoring, type ScoringRegistration} from './rules.ts'
 import {formatInput, listOrNone, loadRun, PRODUCERS, readLines, siteLabel, table, type AsWrittenReport, type Run} from './run-data.ts'
 import {CAUSES, CRITERION_RULE, type CauseClass, type EntryPlan, type ScoreLine, type ScoreRow, type Site, type WitnessTable} from './types.ts'
 
@@ -167,7 +167,7 @@ export async function writeScoring(job: ScoringJob) {
   let carriedRun: Run | null = null
   const carriedRows: CarriedRow[] = []
   if (job.carried != null) {
-    carriedRun = await loadRun(join(scratch, job.carried.run), decodeJson(readFileSync(join(scratch, job.carried.rules), 'utf8')) as Rules)
+    carriedRun = await loadRun(join(scratch, job.carried.run), readRules(join(scratch, job.carried.rules)))
     const carriedScores = new Map<string, ScoreLine>()
     for (const line of await readLines<ScoreLine>(join(scratch, job.carried.rescored, 'gates.jsonl'))) carriedScores.set(`${line.base}.${line.entry}`, line)
     for (const line of carriedRun.baseline.values()) {

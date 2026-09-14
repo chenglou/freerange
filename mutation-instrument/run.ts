@@ -10,7 +10,7 @@
 //   7 Freerange's own findings on the copies, then the report; a domain@v3-callers run then scores itself (scoring.ts)
 // usage: bun mutation-instrument/run.ts --rules <rules.json> --out <run dir> [--mutants key,key] [--baseline-only | --plan-only]
 import {createHash} from 'node:crypto'
-import {appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync} from 'node:fs'
+import {appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync} from 'node:fs'
 import {dirname, join} from 'node:path'
 import {exportedEntries, loadProgram} from './analyze.ts'
 import {applyCallerRules, type CallerRule, type CallerRuleFile, type CallerRulePlan, type DropList} from './callers.ts'
@@ -23,8 +23,9 @@ import {compileLattice, DIGEST_START, digestValue, inputAt} from './lattice.ts'
 import {packingHarnessCall} from './packing-harness.ts'
 import {harnessCall} from './popovers-harness.ts'
 import {writeReport} from './report.ts'
-import {normalizedMutants, type CopyRule, type FramesReference, type KeyedMutantRule, type PackingReference, type PlantedReference, type Rules, type SysmutRow} from './rules.ts'
+import {normalizedMutants, readRules, type CopyRule, type FramesReference, type KeyedMutantRule, type PackingReference, type PlantedReference, type SysmutRow} from './rules.ts'
 import {ORACLE_AS_WRITTEN_TITLE, writeScoring} from './scoring.ts'
+import {plantExamples} from './tooltip-harness.ts'
 import {CRITERION_RULE, type BaselineLine, type CallLine, type CopyPlan, type EntryPlan, type FilePlan, type MutantPlan, type Plan, type ReplayLine, type Site, type VerifyLine} from './types.ts'
 
 const FR = realpathSync(new URL('../fr.ts', import.meta.url).pathname)
@@ -55,7 +56,7 @@ const baselineOnly = process.argv.includes('--baseline-only')
 const planOnly = process.argv.includes('--plan-only')
 
 const rulesText = readFileSync(rulesPath, 'utf8')
-const rules = decodeJson(rulesText) as Rules
+const rules = readRules(rulesPath)
 const scratch = rules.data.scratch
 // Lists published before the milestone must exist before anything runs; lists frozen from the baseline-only run must
 // exist before a run with a mutant pass.
@@ -122,6 +123,7 @@ const meta: Record<string, unknown> = {
   knownFalse: rules.data.knownFalse.map((list) => ({...list, sha1: existsSync(join(scratch, list.path)) ? sha1(readFileSync(join(scratch, list.path))) : null})),
   domainVersion: rules.domain.version,
   callerRules: callerRules.record,
+  mjGallery: rules.mjGallery == null ? null : {worktree: rules.mjGallery.worktree, astmutTable: rules.mjGallery.astmutTable, astmutTableSha1: rules.mjGallery.astmutTableSha1},
   settings,
   stepBudget,
   children: rules.execution.children,
@@ -152,24 +154,62 @@ function callerRulesFor(copy: string, file: string, entry: string): CallerRulePl
   return result
 }
 
+function linkNodeModules(rule: CopyRule, root: string) {
+  if (rule.nodeModules == null) return
+  mkdirSync(root, {recursive: true})
+  symlinkSync(rule.nodeModules, join(root, 'node_modules'))
+}
+
+/**
+ * export@v1: in one tree's file texts, `function <name>(` becomes `export function <name>(` on the same line for every name,
+ * e.g. m7's tooltip copy exports shrinkRow, so the lattice can call it. A name whose declaration token doesn't occur exactly
+ * once in the tree aborts the run before any child starts.
+ */
+function exportShimmed(texts: string[], names: string[], label: string): string[] {
+  const result = texts.slice()
+  for (const name of names) {
+    const token = `function ${name}(`
+    const counts = result.map((text) => text.split(token).length - 1)
+    let total = 0
+    for (const count of counts) total += count
+    if (total !== 1) throw new Error(`export@v1 ${label}: expected exactly one ${JSON.stringify(token)} in the tree, found ${total}`)
+    const index = counts.indexOf(1)
+    result[index] = result[index]!.replace(token, `export ${token}`)
+  }
+  return result
+}
+
 function planCopy(rule: CopyRule): CopyPlan {
   const dir = realpathSync(join(scratch, rule.dir))
-  const sources = rule.files.map((file) => join(dir, file.path))
-  const program = loadProgram(sources)
   const root = join(realOut, 'work', 'original', rule.id)
+  const shim = rule.exportShim ?? []
+  const texts = exportShimmed(rule.files.map((file) => readFileSync(join(dir, file.path), 'utf8')), shim, rule.id)
+  // A copy with export@v1 names reads its uninstrumented files from work/source/<copy>, where the shimmed texts are written
+  // next to the copy's tsconfig and node_modules link, so analysis, the splice and uninstrumented calls all see one text.
+  const sourceRoot = shim.length === 0 ? dir : join(realOut, 'work', 'source', rule.id)
+  const sources = rule.files.map((file) => join(sourceRoot, file.path))
+  if (shim.length > 0) {
+    for (let index = 0; index < sources.length; index++) writeFileWithDirs(sources[index]!, texts[index]!)
+    if (rule.tsconfig != null) copyFileWithDirs(join(dir, rule.tsconfig), join(sourceRoot, rule.tsconfig))
+    linkNodeModules(rule, sourceRoot)
+  }
+  const program = loadProgram(sources)
   if (rule.tsconfig != null) copyFileWithDirs(join(dir, rule.tsconfig), join(root, rule.tsconfig))
+  linkNodeModules(rule, root)
   const files: FilePlan[] = []
   const sites: Site[] = []
   const entries: EntryPlan[] = []
+  const excluded = rule.excludedEntries ?? []
   rule.files.forEach((fileRule, index) => {
     const source = sources[index]!
-    const text = readFileSync(source, 'utf8')
+    const text = texts[index]!
     const instrumented = join(root, fileRule.path)
     const {output, sites: fileSites} = instrumentSource(text, source, fileRule.name, sites.length)
     writeFileWithDirs(instrumented, output)
     files.push({file: fileRule.name, path: fileRule.path, source, sourceSha1: sha1(text), instrumented})
     sites.push(...fileSites)
-    for (const analyzed of exportedEntries(program, source, fileRule.name, entries.length, rules.domain.version, [])) {
+    if (fileRule.entries === false) return
+    for (const analyzed of exportedEntries(program, source, fileRule.name, entries.length, rules.domain.version, excluded)) {
       const {leakAsserts, ...entry} = analyzed
       const entryCallerRules = callerRulesFor(rule.id, fileRule.name, entry.name)
       const provenance = applyCallerRules(entry.args, entry.parameterNames, entryCallerRules)
@@ -187,7 +227,10 @@ function planCopy(rule: CopyRule): CopyPlan {
   })
   const names = entries.map((entry) => entry.name)
   if (new Set(names).size !== names.length) throw new Error(`copy ${rule.id}: two exported functions share a name`)
-  return {copy: rule.id, files, sites, entries}
+  for (const name of excluded) {
+    if (!texts.some((text) => text.includes(`export function ${name}(`))) throw new Error(`copy ${rule.id}: the excluded entry ${name} isn't an exported function declaration`)
+  }
+  return {copy: rule.id, files, sites, entries, excludedEntries: excluded, nodeModules: rule.nodeModules ?? null}
 }
 
 function applyChanges(text: string, changes: {from: string; to: string}[], label: string) {
@@ -202,38 +245,45 @@ function applyChanges(text: string, changes: {from: string; to: string}[], label
 
 function planMutant(item: KeyedMutantRule, copy: CopyPlan, copyRule: CopyRule): MutantPlan {
   const root = join(realOut, 'work', 'mutants', item.key)
-  const tree = copy.files.map((file) => {
-    if ('tree' in item) {
-      const source = join(scratch, item.tree, file.path)
-      return {base: file, source, text: readFileSync(source, 'utf8')}
+  const copyDir = realpathSync(join(scratch, copyRule.dir))
+  const shim = copyRule.exportShim ?? []
+  // Change-table mutants edit the copy's files as they are on disk, before export@v1, so a registered `from` is unique in the
+  // pinned text.
+  const texts = exportShimmed(copy.files.map((file) => {
+    if ('tree' in item) return readFileSync(join(scratch, item.tree, file.path), 'utf8')
+    if ('replace' in item) return readFileSync(item.replace.file === file.file ? item.replace.path : join(copyDir, file.path), 'utf8')
+    return applyChanges(readFileSync(join(copyDir, file.path), 'utf8'), item.changes.filter((change) => change.file === file.path), `${item.key}/${file.file}`)
+  }), shim, item.key)
+  // A tree whose texts aren't files on disk, a change-table mutant or any tree of an export@v1 copy, is written out, every file
+  // of it, so the uninstrumented tree can be imported.
+  const written = !('tree' in item || 'replace' in item) || shim.length > 0
+  const sources = copy.files.map((file, index) => {
+    if (written) {
+      const path = join(root, 'source', file.path)
+      writeFileWithDirs(path, texts[index]!)
+      return path
     }
-    if ('replace' in item) {
-      const source = item.replace.file === file.file ? item.replace.path : file.source
-      return {base: file, source, text: readFileSync(source, 'utf8')}
-    }
-    // Change-table mutants are written out, every file of the tree, so the uninstrumented tree can be imported.
-    const changes = item.changes.filter((change) => change.file === file.path)
-    const text = applyChanges(readFileSync(file.source, 'utf8'), changes, `${item.key}/${file.file}`)
-    const source = join(root, 'source', file.path)
-    writeFileWithDirs(source, text)
-    return {base: file, source, text}
+    if ('tree' in item) return join(scratch, item.tree, file.path)
+    return 'replace' in item && item.replace.file === file.file ? item.replace.path : join(copyDir, file.path)
   })
-  const changedFiles = tree.filter((file) => sha1(file.text) !== file.base.sourceSha1).map((file) => file.base.file)
+  const changedFiles = copy.files.filter((file, index) => sha1(texts[index]!) !== file.sourceSha1).map((file) => file.file)
   if (changedFiles.length === 0) throw new Error(`${item.key}: the mutant tree is identical to copy ${copy.copy}`)
   if (copyRule.tsconfig != null) {
-    const tsconfig = join(realpathSync(join(scratch, copyRule.dir)), copyRule.tsconfig)
+    const tsconfig = join(copyDir, copyRule.tsconfig)
     copyFileWithDirs(tsconfig, join(root, copyRule.tsconfig))
-    if (!('tree' in item) && !('replace' in item)) copyFileWithDirs(tsconfig, join(root, 'source', copyRule.tsconfig))
+    if (written) copyFileWithDirs(tsconfig, join(root, 'source', copyRule.tsconfig))
   }
+  linkNodeModules(copyRule, root)
+  if (written) linkNodeModules(copyRule, join(root, 'source'))
   const files: FilePlan[] = []
   const mutantSites: Site[] = []
-  for (const file of tree) {
-    const {output, sites} = instrumentSource(file.text, file.source, file.base.file, mutantSites.length)
+  copy.files.forEach((file, index) => {
+    const {output, sites} = instrumentSource(texts[index]!, sources[index]!, file.file, mutantSites.length)
     mutantSites.push(...sites)
-    const instrumented = join(root, file.base.path)
+    const instrumented = join(root, file.path)
     writeFileWithDirs(instrumented, output)
-    files.push({file: file.base.file, path: file.base.path, source: file.source, sourceSha1: sha1(file.text), instrumented})
-  }
+    files.push({file: file.file, path: file.path, source: sources[index]!, sourceSha1: sha1(texts[index]!), instrumented})
+  })
   const differs = mutantSites.length !== copy.sites.length || mutantSites.some((site, index) => site.key !== copy.sites[index]!.key || site.line !== copy.sites[index]!.line)
   if (differs) throw new Error(`site check: ${item.key} has ${mutantSites.length} sites against ${copy.sites.length} in copy ${copy.copy}, or different keys or lines; aborting before any child starts`)
   return {key: item.key, id: item.id, copy: item.copy, family: item.family, files, changedFiles}
@@ -510,6 +560,18 @@ if (rules.replay.kind === 'sweep-first') {
     }
   }
   log(`replay: ${replayed} recorded inputs of missed expected kills`)
+} else if (rules.family === 'mj-gallery') {
+  // A planted catch replays the examples its recorded tt sweep printed with the plant's flag (tooltip-harness.ts).
+  let replayed = 0
+  for (const plant of rules.mjGallery?.plants ?? []) {
+    const key = `${plant.copy}/${plant.id}`
+    if (!plannedKeys.has(key) || criterionKilled.has(key)) continue
+    for (const example of plantExamples(scratch, plant.flag, plant.recorded)) {
+      replayed += 1
+      appendFileSync(replayPath, `${encodeJson({mutant: key, copy: plant.copy, id: plant.id, source: example.source, helper: plant.flag, entry: example.entry, args: encodeJson(example.args), replay: await replay(key, example.entry, example.args)})}\n`)
+    }
+  }
+  log(`replay: ${replayed} recorded inputs of missed planted catches`)
 } else {
   const reference = decodeJson(readFileSync(join(scratch, rules.data.reference), 'utf8')) as PlantedReference
   let replayed = 0
@@ -544,11 +606,14 @@ log(`first-kill calls: ${firstKills.length}`)
 // -- 7: Freerange findings on the copies, report ------------------------------------------
 
 const frRevision = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], {cwd: dirname(FR)}).stdout.toString().trim()
-for (const copy of plan.copies) {
+for (const copyRule of rules.data.copies) {
+  const copy = plan.copies.find((candidate) => candidate.copy === copyRule.id)
+  if (copy == null) continue
+  // From the copy directory, on the files as they are there, as the families' own runs call fr, e.g.
+  // `bun fr.ts src/MidUI/PageFrame.ts` in frames/inv.
+  const copyDir = realpathSync(join(scratch, copyRule.dir))
   for (const file of copy.files) {
     if (!copy.entries.some((entry) => entry.file === file.file)) continue
-    // From the copy directory, as the families' own runs call fr, e.g. `bun fr.ts src/MidUI/PageFrame.ts` in frames/inv.
-    const copyDir = file.source.slice(0, file.source.length - file.path.length)
     const findings = Bun.spawnSync(['bun', FR, file.path], {cwd: copyDir, timeout: 300_000})
     writeFileSync(join(outDir, `fr-${copy.copy}-${file.file}.txt`), `fr revision ${frRevision}\n${findings.stdout.toString()}${findings.stderr.toString()}`)
   }

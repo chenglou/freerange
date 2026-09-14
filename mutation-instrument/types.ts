@@ -47,7 +47,9 @@ export type Site = {
 // One file of a copy or of a mutant tree. `path` is where the file sits inside the tree, e.g. `src/MidUI/PageFrame.ts`, and
 // spliced trees keep that layout; `source` is the uninstrumented file, `instrumented` the spliced one.
 export type FilePlan = {file: string; path: string; source: string; sourceSha1: string; instrumented: string}
-export type CopyPlan = {copy: string; files: FilePlan[]; sites: Site[]; entries: EntryPlan[]}
+// excludedEntries: exported functions the registration keeps out of the entries (CopyRule.excludedEntries); nodeModules: the
+// node_modules directory every spliced tree root of the copy links to, or null.
+export type CopyPlan = {copy: string; files: FilePlan[]; sites: Site[]; entries: EntryPlan[]; excludedEntries: string[]; nodeModules: string | null}
 // A mutant is a whole tree of the copy's files; `changedFiles` lists the files whose text differs from the copy's.
 export type MutantPlan = {key: string; id: string; copy: string; family: string; files: FilePlan[]; changedFiles: string[]}
 

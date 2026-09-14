@@ -9,7 +9,7 @@ import {join} from 'node:path'
 import {maxMagnitude, type Value} from './domain.ts'
 import {domainLines} from './domain-lines.ts'
 import {decodeJson, formatCall} from './encode.ts'
-import type {FramesReference, PackingReference, PlantedReference, RecordedCatch, Rules, SysmutRow} from './rules.ts'
+import {readRules, type FramesReference, type PackingReference, type PlantedReference, type RecordedCatch, type Rules, type SysmutRow} from './rules.ts'
 import {formatInput, jsonLines, killed, listOrNone, loadRun, PRODUCERS, readLines, siteLabel, siteOf, table, type AsWrittenReport, type KillClause, type Run} from './run-data.ts'
 import {writeScoring} from './scoring.ts'
 import {CRITERION_RULE, NOISE_RULES, type CallLine, type CopyPlan, type FirstFiring, type ReplayLine, type Site} from './types.ts'
@@ -893,7 +893,7 @@ if (import.meta.main) {
     return index < 0 ? null : process.argv[index + 1] ?? null
   }
   if (runDir == null || rulesPath == null) throw new Error('usage: bun mutation-instrument/report.ts <run dir> <rules.json> [--out <new dir> [--scoring <w1-scoring.json>]]')
-  const rules = decodeJson(readFileSync(rulesPath, 'utf8')) as Rules
+  const rules = readRules(rulesPath)
   const outDir = optionValue('--out')
   const scoringPath = optionValue('--scoring')
   if (outDir == null) {

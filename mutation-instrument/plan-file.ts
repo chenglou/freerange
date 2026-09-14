@@ -4,6 +4,7 @@
 // - Plan.stepBudget (before m4-packing, e.g. the m1c, m2 and m3 runs): null, no step budget
 // - FilePlan.path (before 53e1e52, e.g. the m1c and m2 runs): the spliced file's path inside its tree, e.g. `menuGeometry.ts`
 //   for `<run>/work/original/contracts/menuGeometry.ts`, since spliced trees always kept the copy's layout
+// - CopyPlan.excludedEntries and nodeModules (before m7): none excluded, no node_modules link
 import type {CallerRulePlan} from './callers.ts'
 import {decodeJson} from './encode.ts'
 import type {CopyPlan, EntryPlan, FilePlan, MutantPlan, Plan} from './types.ts'
@@ -12,7 +13,7 @@ type RecordedFile = Omit<FilePlan, 'path'> & {path?: string}
 type RecordedEntry = Omit<EntryPlan, 'callerRules' | 'provenance'> & {callerRules?: CallerRulePlan[]; provenance?: string[]}
 type RecordedPlan = Omit<Plan, 'copies' | 'mutants' | 'stepBudget'> & {
   stepBudget?: number | null
-  copies: (Omit<CopyPlan, 'entries' | 'files'> & {entries: RecordedEntry[]; files: RecordedFile[]})[]
+  copies: (Omit<CopyPlan, 'entries' | 'files' | 'excludedEntries' | 'nodeModules'> & {entries: RecordedEntry[]; files: RecordedFile[]; excludedEntries?: string[]; nodeModules?: string | null})[]
   mutants: (Omit<MutantPlan, 'files'> & {files: RecordedFile[]})[]
 }
 
@@ -30,6 +31,8 @@ export function decodePlan(text: string): Plan {
     stepBudget: recorded.stepBudget ?? null,
     copies: recorded.copies.map((copy) => ({
       ...copy,
+      excludedEntries: copy.excludedEntries ?? [],
+      nodeModules: copy.nodeModules ?? null,
       files: copy.files.map((file) => withPath(file, `/work/original/${copy.copy}/`)),
       entries: copy.entries.map((entry) => ({...entry, callerRules: entry.callerRules ?? [], provenance: entry.provenance ?? []})),
     })),
