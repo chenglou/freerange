@@ -71,19 +71,28 @@ function sha1(text: string | Buffer) {
   return createHash('sha1').update(text).digest('hex')
 }
 
+/** The registered worktree relative to the scratch directory, e.g. `wt/m7-prealpha-93b9935807` for source.worktree "S/wt/m7-prealpha-93b9935807, created with …". */
+export function worktreeOf(registration: MjGalleryRegistration): string {
+  const match = /^S\/(\S+?),/.exec(registration.source.worktree)
+  if (match == null) throw new Error(`source.worktree doesn't start with an S/ path: ${registration.source.worktree}`)
+  return match[1]!
+}
+
+/** A worktree file's sha1, checked against source.fileSha1, e.g. before astmut.ts reads the file or run.ts plans its copy. */
+export function checkedFile(registration: MjGalleryRegistration, path: string): string {
+  const text = readFileSync(join(registration.data.scratch, worktreeOf(registration), path), 'utf8')
+  const expected = registration.source.fileSha1[path]
+  const actual = sha1(text)
+  if (actual !== expected) throw new Error(`${path}: sha1 ${actual} differs from the registered ${expected ?? '(none)'}`)
+  return text
+}
+
 export function mjGalleryRules(registration: MjGalleryRegistration): Rules {
   const scratch = registration.data.scratch
-  // e.g. "S/wt/m7-prealpha-93b9935807, created with `git -C … worktree add --detach …`"
-  const worktreeMatch = /^S\/(\S+?),/.exec(registration.source.worktree)
-  if (worktreeMatch == null) throw new Error(`source.worktree doesn't start with an S/ path: ${registration.source.worktree}`)
-  const worktree = worktreeMatch[1]!
+  const worktree = worktreeOf(registration)
   const worktreeDir = join(scratch, worktree)
   const copies = registration.copies.list.map((copy) => {
-    for (const file of copy.files) {
-      const expected = registration.source.fileSha1[file.path]
-      const actual = sha1(readFileSync(join(worktreeDir, file.path)))
-      if (actual !== expected) throw new Error(`${copy.id}: ${file.path} sha1 ${actual} differs from the registered ${expected ?? '(none)'}`)
-    }
+    for (const file of copy.files) checkedFile(registration, file.path)
     const rule: CopyRule = {
       id: copy.id, dir: worktree, tsconfig: 'tsconfig.json', role: `prealpha ${registration.source.commit.slice(0, 10)}`, criterion: true,
       files: copy.files.map((file) => ({name: basename(file.path, extname(file.path)), path: file.path, entries: file.entries})),

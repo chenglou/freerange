@@ -190,7 +190,7 @@ function conjuncts(condition: ts.Expression): ts.Expression[] {
 type FunctionLike = ts.SignatureDeclaration & {body?: ts.ConciseBody | undefined}
 type NamedFunction = {name: string; node: FunctionLike}
 
-function hasExport(node: ts.Node) {
+export function hasExport(node: ts.Node) {
   return ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
 }
 
