@@ -1,4 +1,5 @@
 import type {AbstractValue} from '../domain/value.ts'
+import type {ValueID} from '../ir/ids.ts'
 import {joinValues, sameValues, widenValue} from '../domain/value.ts'
 import {
   sameValueIdentity,
@@ -20,6 +21,28 @@ export type ExecutionState = {
   // so intersection drops facts introduced during a cycle before a replacement is observed.
   // Joins otherwise keep only shared facts. The set is direct, with no transitive closure.
   valueFacts: ValueFact[]
+  // Facts about block parameters, kept only in static-relations mode
+  // (FREERANGE_STATIC_RELATIONS=1) and read only by interior console.assert proofs, never by
+  // requirement checks or ordinary analysis. Always empty otherwise. See maintainedJoinFacts
+  // in analyze.ts for how they are proposed, verified per incoming edge, and dropped.
+  joinFacts: JoinFact[]
+}
+
+// Plain IR values, not identities: a join fact never leaves the evaluation that minted it.
+// Every fact is non-strict.
+export type JoinFact =
+  | {kind: 'atMost'; parameter: ValueID; bound: ValueID}
+  | {kind: 'atLeast'; parameter: ValueID; bound: ValueID}
+  | {kind: 'nonnegative'; parameter: ValueID}
+
+export function sameJoinFact(left: JoinFact, right: JoinFact): boolean {
+  switch (left.kind) {
+    case 'atMost':
+    case 'atLeast':
+      return right.kind === left.kind && right.parameter === left.parameter && right.bound === left.bound
+    case 'nonnegative':
+      return right.kind === 'nonnegative' && right.parameter === left.parameter
+  }
 }
 
 export type ValueFact =
@@ -133,12 +156,13 @@ export function cloneState(state: ExecutionState): ExecutionState {
     shared: cloneSharedState(state.shared),
     // Fact objects are immutable; entries may be replaced whole, so a shallow copy suffices.
     valueFacts: state.valueFacts.slice(),
+    joinFacts: state.joinFacts.slice(),
   }
 }
 
 // A new state field must participate in both the merged value and `changed`. Listing the
 // fields here makes that review mandatory when ExecutionState grows.
-const mergedStateFields: Record<keyof ExecutionState, true> = {values: true, shared: true, valueFacts: true}
+const mergedStateFields: Record<keyof ExecutionState, true> = {values: true, shared: true, valueFacts: true, joinFacts: true}
 
 // Joins one incoming state into the block's previous state and reports whether the block
 // must run again. The comparison happens while each joined value is already in hand, so
@@ -182,10 +206,15 @@ export function mergeStates(previous: ExecutionState, candidate: ExecutionState,
     valueFacts.length !== previous.valueFacts.length
     || valueFacts.some(fact => !previous.valueFacts.some(previousFact => sameValueFact(fact, previousFact)))
   ) changed = true
+  // The intersection is a subset of the previous facts, so a shorter list is exactly a drop.
+  const joinFacts = previous.joinFacts.filter(fact =>
+    candidate.joinFacts.some(candidateFact => sameJoinFact(fact, candidateFact)))
+  if (joinFacts.length !== previous.joinFacts.length) changed = true
   const state: ExecutionState = {
     values,
     shared,
     valueFacts,
+    joinFacts,
   }
   return {state, changed}
 }
