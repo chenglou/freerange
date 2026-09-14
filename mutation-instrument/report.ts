@@ -9,10 +9,11 @@ import {join} from 'node:path'
 import {maxMagnitude, type Value} from './domain.ts'
 import {domainLines} from './domain-lines.ts'
 import {decodeJson, formatCall} from './encode.ts'
+import type {AstmutTable, MjGalleryExtras} from './mj-gallery.ts'
 import {readRules, type FramesReference, type PackingReference, type PlantedReference, type RecordedCatch, type Rules, type SysmutRow} from './rules.ts'
-import {formatInput, jsonLines, killed, listOrNone, loadRun, PRODUCERS, readLines, siteLabel, siteOf, table, type AsWrittenReport, type KillClause, type Run} from './run-data.ts'
+import {formatInput, jsonLines, killed, listOrNone, loadRun, PRODUCERS, readLines, siteLabel, siteOf, table, type AsWrittenReport, type FailureLine, type KillClause, type Run} from './run-data.ts'
 import {writeScoring} from './scoring.ts'
-import {CRITERION_RULE, NOISE_RULES, type CallLine, type CopyPlan, type FirstFiring, type ReplayLine, type Site} from './types.ts'
+import {CRITERION_RULE, NOISE_RULES, type CallLine, type CopyPlan, type FirstFiring, type ReplayLine, type ResultLine, type Site} from './types.ts'
 
 type SweepReplayRecord = {mutant: string; sweepExit: number | null; sweepFirst: {fn: string; label: string; line: number; firstCall: string; firstArgs: string} | null; sweepEvaluations: number | null; replay: ReplayLine | null}
 type ExampleReplayRecord = {mutant: string; copy: string; id: string; source: string; helper: string; entry: string; args: string; replay: ReplayLine | null}
@@ -847,6 +848,214 @@ async function packingSections(run: Run, write: Writer, verdicts: () => FalseAla
   }
 }
 
+// -- mj-gallery: astmut@v1 mutants, the seven planted tooltip catches, and criterion 2's per-assert inputs ---------------------
+
+type Label = 'precondition' | 'real' | 'restated'
+
+/** An in-scope assert's label under the reader's labels and under the stricter reading, or null for a site out of m7's scope. */
+function labelsOf(extras: MjGalleryExtras, site: Site): {reader: Label; stricter: Label} | null {
+  const groups = extras.registration.labels.inScope
+  const holds = (group: Record<string, number[]>) => (group[site.file] ?? []).includes(site.line)
+  if (holds(groups.precondition)) return {reader: 'precondition', stricter: 'precondition'}
+  if (holds(groups.real)) return {reader: 'real', stricter: 'real'}
+  if (holds(groups.realRestatedUnderStricter)) return {reader: 'real', stricter: 'restated'}
+  if (holds(groups.restated)) return {reader: 'restated', stricter: 'restated'}
+  return null
+}
+
+type AssertRow = {copy: string; site: Site; labels: {reader: Label; stricter: Label}; kills: number; unique: number; operators: Map<string, number>; equivalentKills: number; first: {mutant: string; entry: string; first: FirstFiring} | null}
+
+async function mjGallerySections(run: Run, write: Writer, verdicts: () => FalseAlarmVerdicts | null, title: string, outDir: string): Promise<FamilySections> {
+  const {rules} = run
+  const extras = rules.mjGallery
+  if (extras == null) throw new Error('an mj-gallery run needs its registration (rules.mjGallery)')
+  const astmut = decodeJson(readFileSync(join(rules.data.scratch, extras.astmutTable), 'utf8')) as AstmutTable
+  const rowOf = new Map(astmut.rows.map((row) => [row.id, row]))
+  const replays = await readLines<ExampleReplayRecord>(join(run.outDir, 'replay.jsonl'))
+  const planned = run.plan.mutants
+  const plantKeys = new Set(extras.plants.map((plant) => `${plant.copy}/${plant.id}`))
+  const generated = planned.filter((mutant) => !plantKeys.has(mutant.key))
+  const ruleCells = (key: string) => NOISE_RULES.map((_rule, rule) => (killed(run, key, rule) ? 'y' : 'n')).join('/')
+  // behavior@v1 on the lattice: a finished mutant with 0 differing inputs over every entry of its copy is lattice-equivalent (E3).
+  const equivalent = (key: string) => {
+    const summary = run.summaries.get(key)
+    return summary != null && summary.failure == null && summary.behaviorDiffs === 0
+  }
+  const changesBehavior = (key: string) => (run.summaries.get(key)?.behaviorDiffs ?? 0) > 0
+  const killedNow = (key: string) => killed(run, key, CRITERION_RULE)
+  const cell = (text: string) => text.replaceAll('\t', ' ').replaceAll('\n', '\\n')
+
+  write('## Criterion 1 kill clause: the seven planted tooltip catches')
+  write()
+  write(table(['plant', 'change', 'recorded catch', 'killed none/abs1e-9/literal', 'killing sites (criterion)', 'first killing input (criterion)', 'producer', 'cause', 'differing inputs'], extras.plants.map((plant) => {
+    const key = `${plant.copy}/${plant.id}`
+    const changes = extras.registration.criterion1.planted.find((candidate) => candidate.id === plant.id)?.changes ?? []
+    const first = run.summaries.get(key)?.first[CRITERION_RULE] ?? null
+    return [plant.id, changes.map((change) => `${change.from} → ${change.to}`).join('; '), plant.recorded, ruleCells(key), listOrNone(killingLines(run, key, CRITERION_RULE)),
+      first == null ? '' : formatInput(first.entry, first.first).slice(0, 400), first == null ? '' : PRODUCERS[first.first.producer]!, first?.first.cause ?? '', run.summaries.get(key)?.behaviorDiffs ?? '']
+  })))
+  write()
+  const plantsKilled = extras.plants.filter((plant) => killedNow(`${plant.copy}/${plant.id}`))
+  const killClause = extras.plants.length > 0 && plantsKilled.length === extras.plants.length
+  const plantCopies = [...new Set(extras.plants.map((plant) => plant.copy))]
+  write(`- **Kill clause** (the planted catches on ${plantCopies.join(', ')}): ${plantsKilled.length} of ${extras.plants.length} killed under kill@perInput noise@abs1e-9 → ${killClause ? 'pass' : 'fail'}`)
+  write(`- No registered catches (their kill clause never passes on its own): ${rules.data.copies.filter((copy) => !plantCopies.includes(copy.id)).map((copy) => copy.id).join(', ')}`)
+  write()
+  if (replays.length > 0) {
+    write('### Missed plants, with replay of recorded examples')
+    write()
+    write(table(['plant', 'recorded example', 'call', 'replay'], replays.map((record) => [record.id, record.source, formatCall(record.entry, decodeJson(record.args) as Value[]).slice(0, 400), replayVerdict(run, record.copy, record.replay)])))
+    write()
+  }
+
+  write('## astmut@v1 mutants per copy (criterion rule)')
+  write()
+  const countRow = (label: string, keys: string[], copyRows: typeof astmut.copies) => {
+    const count = (predicate: (key: string) => boolean) => keys.filter(predicate).length
+    let generatedCount = 0
+    let dropped = 0
+    let duplicates = 0
+    let invalid = 0
+    for (const copyRow of copyRows) {
+      generatedCount += copyRow.generated
+      dropped += copyRow.droppedUnchangedText
+      duplicates += copyRow.duplicates
+      invalid += copyRow.invalid
+    }
+    return [label, generatedCount, dropped, duplicates, invalid, keys.length, count(equivalent), count(changesBehavior), count(killedNow), count((key) => changesBehavior(key) && killedNow(key)), count((key) => changesBehavior(key) && !killedNow(key)), count((key) => equivalent(key) && killedNow(key)),
+      count((key) => (run.summaries.get(key)?.throws ?? 0) > 0), count((key) => (run.summaries.get(key)?.nonFinite ?? 0) > 0), count((key) => (run.summaries.get(key)?.mutantOverBudget ?? 0) > 0), count((key) => run.summaries.get(key)?.failure != null)]
+  }
+  const perCopy = rules.data.copies.map((copyRule) => countRow(copyRule.id, generated.filter((mutant) => mutant.copy === copyRule.id).map((mutant) => mutant.key), astmut.copies.filter((copyRow) => copyRow.copy === copyRule.id)))
+  write(table(['copy', 'generated', 'O3 unchanged text dropped', 'E1 duplicates', 'E2 invalid', 'planned', 'lattice-equivalent (E3)', 'behavior-changing', 'killed', 'killed, behavior-changing', 'behavior-changing survivors', 'killed without a behavior difference', 'throw', 'nonFiniteReturn', 'mutant-only step budget', 'timeout or crash'],
+    [...perCopy, countRow('all copies', generated.map((mutant) => mutant.key), astmut.copies)]))
+  write()
+  write(table(['operator', 'planned', 'lattice-equivalent', 'behavior-changing', 'killed, behavior-changing', 'behavior-changing survivors'], ['O1', 'O2', 'O3', 'O4', 'O5', 'O6', 'O7', 'O8', 'O9'].map((operator) => {
+    const keys = generated.filter((mutant) => rowOf.get(mutant.id)?.operator === operator).map((mutant) => mutant.key)
+    return [operator, keys.length, keys.filter(equivalent).length, keys.filter(changesBehavior).length, keys.filter((key) => changesBehavior(key) && killedNow(key)).length, keys.filter((key) => changesBehavior(key) && !killedNow(key)).length]
+  })))
+  write()
+
+  // The first killing input of each site among behavior-changing astmut mutants: from the earliest mutant in plan order, then the lowest index.
+  const order = new Map(planned.map((mutant, index) => [mutant.key, index]))
+  const siteFirst = new Map<string, {order: number; mutant: string; entry: string; first: FirstFiring}>()
+  for await (const value of jsonLines(join(run.outDir, 'results.jsonl'))) {
+    const line = value as ResultLine | FailureLine
+    if (line.type === 'failure' || plantKeys.has(line.mutant) || !changesBehavior(line.mutant)) continue
+    const mutantOrder = order.get(line.mutant) ?? planned.length
+    for (const kill of line.kills) {
+      const first = kill.first[CRITERION_RULE] ?? null
+      if (first == null) continue
+      const slot = `${line.base}|${kill.site}`
+      const previous = siteFirst.get(slot)
+      if (previous == null || mutantOrder < previous.order || (mutantOrder === previous.order && first.index < previous.first.index)) siteFirst.set(slot, {order: mutantOrder, mutant: line.mutant, entry: line.entry, first})
+    }
+  }
+  const assertRows: AssertRow[] = []
+  for (const copy of run.plan.copies) {
+    const keys = generated.filter((mutant) => mutant.copy === copy.copy)
+    for (const site of copy.sites) {
+      const labels = labelsOf(extras, site)
+      if (labels == null) continue
+      const row: AssertRow = {copy: copy.copy, site, labels, kills: 0, unique: 0, operators: new Map(), equivalentKills: 0, first: siteFirst.get(`${copy.copy}|${site.index}`) ?? null}
+      for (const mutant of keys) {
+        const killingSites = run.summaries.get(mutant.key)?.killSites[CRITERION_RULE]
+        if (killingSites?.has(site.index) !== true) continue
+        if (!changesBehavior(mutant.key)) {
+          row.equivalentKills += 1
+          continue
+        }
+        row.kills += 1
+        const operator = rowOf.get(mutant.id)?.operator ?? '?'
+        row.operators.set(operator, (row.operators.get(operator) ?? 0) + 1)
+        if (![...killingSites].some((other) => other !== site.index && copy.sites[other]!.functionName === site.functionName && copy.sites[other]!.file === site.file)) row.unique += 1
+      }
+      assertRows.push(row)
+    }
+  }
+  const operatorsText = (row: AssertRow) => listOrNone([...row.operators].map(([operator, count]) => `${operator} ${count}`))
+  const firstText = (row: AssertRow) => row.first == null ? '' : `${row.first.mutant.slice(row.copy.length + 1)}: ${formatInput(row.first.entry, row.first.first)}`
+  write('## Kills per in-scope assert (criterion 2 inputs)')
+  write()
+  write(`${assertRows.length} in-scope asserts. Kills and unique kills count behavior-changing astmut@v1 mutants under kill@perInput noise@abs1e-9; a unique kill goes through no other assert of the same function. Planted mutants and lattice-equivalent mutants are left out; the last column counts the lattice-equivalent mutants killed through the assert.`)
+  write()
+  write(table(['copy', 'site', 'reader\'s label', 'stricter reading', 'kills', 'unique kills', 'operators of killing mutants', 'first killing input', 'lattice-equivalent kills'],
+    assertRows.map((row) => [row.copy, siteLabel(row.site), row.labels.reader, row.labels.stricter, row.kills, row.unique, operatorsText(row), firstText(row).slice(0, 400), row.equivalentKills])))
+  write()
+  const clause = (labelSet: 'reader' | 'stricter', name: string) => {
+    const real = assertRows.filter((row) => row.labels[labelSet] === 'real')
+    const restated = assertRows.filter((row) => row.labels[labelSet] === 'restated')
+    const realWithUnique = real.filter((row) => row.unique > 0).length
+    const restatedWithout = restated.filter((row) => row.unique === 0).length
+    const realNeeded = Math.ceil(real.length / 2)
+    const restatedNeeded = Math.ceil((restated.length * 4) / 5)
+    const realPass = realWithUnique >= realNeeded
+    const restatedPass = restatedWithout >= restatedNeeded
+    return `criterion 2, ${name} (one reader's labels, unadjudicated; calibration, decides nothing): real clause ${realWithUnique} of ${real.length} real asserts with at least 1 unique kill (at least ${realNeeded} needed) → ${realPass ? 'pass' : 'fail'}; restated clause ${restatedWithout} of ${restated.length} restated asserts with 0 unique kills (at least ${restatedNeeded} needed) → ${restatedPass ? 'pass' : 'fail'} → ${realPass && restatedPass ? 'pass' : 'fail'}`
+  }
+  const preconditions = assertRows.filter((row) => row.labels.reader === 'precondition')
+  const criterion2 = [
+    clause('reader', 'the reader\'s labels'),
+    clause('stricter', 'the stricter reading'),
+    `preconditions (no threshold): ${preconditions.length} asserts; ${preconditions.filter((row) => row.kills > 0).length} with a kill, ${preconditions.filter((row) => row.unique > 0).length} with a unique kill: ${preconditions.map((row) => `${row.site.file}:${row.site.line} kills ${row.kills} unique ${row.unique}`).join('; ')}`,
+    `real asserts without a unique kill (reader's labels): ${listOrNone(assertRows.filter((row) => row.labels.reader === 'real' && row.unique === 0).map((row) => `${row.site.file}:${row.site.line}`))}`,
+    `restated asserts with a unique kill (stricter reading): ${listOrNone(assertRows.filter((row) => row.labels.stricter === 'restated' && row.unique > 0).map((row) => `${row.site.file}:${row.site.line} (${row.unique})`))}`,
+  ]
+  write('```')
+  for (const line of criterion2) write(line)
+  write('```')
+  write()
+  writeFileSync(join(outDir, 'criterion2.txt'), `${criterion2.join('\n')}\n`)
+  const tsvRows = [['copy', 'file', 'line', 'function', 'condition', 'reader_label', 'stricter_label', 'kills', 'unique_kills', 'operators', 'first_killing_input', 'lattice_equivalent_kills'].join('\t')]
+  for (const row of assertRows) tsvRows.push([row.copy, row.site.file, String(row.site.line), row.site.functionName ?? '', cell(row.site.text), row.labels.reader, row.labels.stricter, String(row.kills), String(row.unique), operatorsText(row), cell(firstText(row)), String(row.equivalentKills)].join('\t'))
+  writeFileSync(join(outDir, 'criterion2.tsv'), `${tsvRows.join('\n')}\n`)
+
+  write('## Kills without a behavior difference (lattice-equivalent astmut@v1 mutants)')
+  write()
+  write(table(['mutant', 'operator', 'function:line', 'change', 'killing sites (criterion)', 'first killing input'], generated.filter((mutant) => equivalent(mutant.key) && killedNow(mutant.key)).map((mutant) => {
+    const row = rowOf.get(mutant.id)
+    const first = run.summaries.get(mutant.key)!.first[CRITERION_RULE]!
+    return [mutant.key, row?.operator ?? '', `${row?.function ?? ''}:${row?.line ?? ''}`, `${row?.before ?? ''} → ${row?.after ?? ''}`, listOrNone(killingLines(run, mutant.key, CRITERION_RULE)), formatInput(first.entry, first.first).slice(0, 400)]
+  })))
+  write()
+
+  return {
+    criterion: () => {
+      const falseAlarms = verdicts()
+      const lines = [`${title}, mj-gallery (exposed development data; calibration, not a benchmark)`]
+      for (const copy of plantCopies) {
+        const plants = extras.plants.filter((plant) => plant.copy === copy)
+        lines.push(`kill clause ${copy}: ${plants.map((plant) => `${plant.id} ${killedNow(`${plant.copy}/${plant.id}`) ? 'killed' : 'not killed'}`).join(', ')} → ${plants.filter((plant) => killedNow(`${plant.copy}/${plant.id}`)).length}/${plants.length} → ${plants.every((plant) => killedNow(`${plant.copy}/${plant.id}`)) ? 'pass' : 'fail'}`)
+      }
+      for (const copyRule of rules.data.copies.filter((candidate) => !plantCopies.includes(candidate.id))) lines.push(`kill clause ${copyRule.id}: no registered catches`)
+      lines.push(`kill clause (the family's registered catches, the planted tooltip mutants): ${killClause ? 'pass' : 'fail'}`)
+      let falseAlarmClause = true
+      if (falseAlarms != null) {
+        for (const copyRule of rules.data.copies.filter((candidate) => candidate.criterion)) {
+          for (const list of run.knownFalse.filter((candidate) => candidate.rule.copies.includes(copyRule.id))) {
+            const off = falseAlarms.offList.get(list.rule.label)!.get(copyRule.id) ?? 0
+            if (list.rule.criterion && off > 0) falseAlarmClause = false
+            lines.push(`falseAlarm@asWritten ${copyRule.id} against ${list.rule.label}${list.rule.criterion ? '' : ' (not scored)'}: ${off} off-list firing (entry, site) pairs → ${off === 0 ? 'pass' : 'fail'}`)
+          }
+          const notReproducible = falseAlarms.notReproducible.get(copyRule.id) ?? 0
+          if (notReproducible > 0) falseAlarmClause = false
+          lines.push(`falseAlarm@reproducible ${copyRule.id}: ${notReproducible} → ${notReproducible === 0 ? 'pass' : 'fail'}`)
+        }
+      }
+      lines.push(`false-alarm clause (every copy): ${falseAlarmClause ? 'pass' : 'fail'}`)
+      lines.push(`${title} on mj-gallery: ${killClause && falseAlarmClause ? 'pass' : 'fail'}`)
+      return lines
+    },
+    // One clause for the family, as for virtualization's four bases: the planted catches play the role of its registered kill list.
+    killClauses: [{copies: rules.data.copies.map((copy) => copy.id), criterion: true, pass: killClause}],
+    tsvColumns: ['id', 'operator', 'function', 'line', 'column', 'before', 'after', 'planted', 'lattice_equivalent'],
+    tsv: (key) => {
+      const mutant = planned.find((candidate) => candidate.key === key)!
+      const row = rowOf.get(mutant.id)
+      return [mutant.id, row?.operator ?? 'planted', row?.function ?? '', row?.line ?? '', row?.column ?? '', cell(row?.before ?? ''), cell(row?.after ?? ''), plantKeys.has(key), equivalent(key)]
+    },
+  }
+}
+
 /**
  * Writes report.md, criterion1.txt and kills.tsv for the run in `sourceDir` into `outDir`, and returns criterion 1 as written.
  * `criterionTitle` replaces "criterion 1" in the criterion lines, e.g. for a domain@v3-callers run, whose clauses aren't criterion 1.
@@ -858,9 +1067,14 @@ export async function writeReport(sourceDir: string, rules: Rules, outDir = sour
   const write: Writer = (text = '') => out.push(text)
   provenance(run, write, `Plan A ${rules.id}: ${rules.family} calibration run`)
   let falseAlarms: FalseAlarmVerdicts | null = null
-  const family = rules.family === 'virtualization' ? await virtualizationSections(run, write, title)
-    : rules.family === 'popovers' ? await popoversSections(run, write, () => falseAlarms, title)
-    : rules.family === 'frames' ? await framesSections(run, write, () => falseAlarms, title) : await packingSections(run, write, () => falseAlarms, title)
+  let family: FamilySections
+  switch (rules.family) {
+    case 'virtualization': family = await virtualizationSections(run, write, title); break
+    case 'popovers': family = await popoversSections(run, write, () => falseAlarms, title); break
+    case 'frames': family = await framesSections(run, write, () => falseAlarms, title); break
+    case 'packing': family = await packingSections(run, write, () => falseAlarms, title); break
+    case 'mj-gallery': family = await mjGallerySections(run, write, () => falseAlarms, title, outDir); break
+  }
   falseAlarms = baselineSection(run, write)
   domainSection(run, write)
   freerangeSection(run, write)
