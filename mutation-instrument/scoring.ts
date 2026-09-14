@@ -24,13 +24,41 @@ export const ORACLE_AS_WRITTEN_TITLE = 'as-written clauses under domain@v3-calle
 
 export type ScoringJob = {
   sourceDir: string // the run scored; only read
-  outDir: string // a new directory for a rescoring (R-S7); the run directory itself for a domain@v3-callers run
+  outDir: string // a new directory for a rescoring (R-S7); the run directory itself for a domain@v3-callers or mj-gallery run
   rules: Rules
   rulesPath: string
   asWritten: AsWrittenReport
-  registrationPath: string
-  registrationSha1: string | null // checked when the run's own registration names it
+  config: ScoringConfig
   carried: RunScoring['carried'] | null // domain@v3-callers only: the domain@v2 run, its registration, and its rescoring
+}
+
+// Where a scoring's rules and gates come from: registered/w1-scoring.json for the four families' runs, or an mj-gallery
+// registration's scoringWitness block, which applies w1's rules R-S0 to R-S7 with its own witness run.
+export type ScoringConfig = {
+  id: string
+  path: string // the file that registers the scoring
+  sha1: string
+  witnessRunDir: string // absolute
+  gates: ScoringRegistration['gates']
+  // R-S5's budget starvation: w1 gates the entries with a caller rule of a domain@v3-callers run; m7 gates every entry whose own
+  // function holds a site, e.g. tooltipPosition, whose && leading asserts discard most inputs under domain@v1b.
+  starvation: 'caller-rule-entries' | 'entries-holding-sites'
+}
+
+/** registered/w1-scoring.json's scoring, with its sha1 checked when the run's own registration names one. */
+export function w1ScoringConfig(path: string, expectedSha1: string | null): ScoringConfig {
+  const text = readFileSync(path, 'utf8')
+  const actual = sha1(text)
+  if (expectedSha1 != null && actual !== expectedSha1) throw new Error(`scoring registration ${path}: sha1 ${actual} differs from the registered ${expectedSha1}`)
+  const registration = decodeJson(text) as ScoringRegistration
+  return {id: registration.id, path, sha1: actual, witnessRunDir: join(registration.data.scratch, registration.witness.runDir), gates: registration.gates, starvation: 'caller-rule-entries'}
+}
+
+/** An mj-gallery registration's scoringWitness, scored against the witness run witness-run.ts wrote for it. */
+export function mjGalleryScoringConfig(rulesPath: string, rules: Rules, witnessRunDir: string): ScoringConfig {
+  const registration = rules.mjGallery?.registration
+  if (registration == null) throw new Error('an mj-gallery scoring needs the registration (rules.mjGallery)')
+  return {id: `${registration.id} ${registration.scoringWitness.version}`, path: rulesPath, sha1: sha1(readFileSync(rulesPath)), witnessRunDir, gates: registration.scoringWitness.gates, starvation: 'entries-holding-sites'}
 }
 
 type ListStatus = 'on list' | 'off by cause' | 'off by site'
@@ -91,16 +119,13 @@ function formatEncoded(entry: string, encoded: string | null) {
 
 export async function writeScoring(job: ScoringJob) {
   const wallStart = performance.now()
-  const registrationText = readFileSync(job.registrationPath, 'utf8')
-  const registrationSha1 = sha1(registrationText)
-  if (job.registrationSha1 != null && registrationSha1 !== job.registrationSha1) throw new Error(`scoring registration ${job.registrationPath}: sha1 ${registrationSha1} differs from the registered ${job.registrationSha1}`)
-  const registration = decodeJson(registrationText) as ScoringRegistration
-  const scratch = registration.data.scratch
+  const config = job.config
+  const scratch = job.rules.data.scratch
   const oracle = job.rules.domain.version === 'domain@v3-callers'
   const prefix = oracle ? ORACLE_PREFIX : ''
   if (oracle !== (job.carried != null)) throw new Error('a domain@v3-callers run needs scoring.carried, and a domain@v2 rescoring has none')
   const run = await loadRun(job.sourceDir, job.rules)
-  const witnessDir = join(scratch, registration.witness.runDir)
+  const witnessDir = config.witnessRunDir
   const witnessMetaPath = join(witnessDir, 'meta.json')
   const witnessMeta = existsSync(witnessMetaPath) ? decodeJson(readFileSync(witnessMetaPath, 'utf8')) as Record<string, unknown> : null
   if (witnessMeta?.['status'] !== 'complete') throw new Error(`no complete witness run at ${witnessDir}`)
@@ -111,8 +136,8 @@ export async function writeScoring(job: ScoringJob) {
   const scores = new Map<string, ScoreLine>()
   const children: ChildRecord[] = []
   for (const copy of run.plan.copies) {
-    const child = await runChild({mode: 'score', plan: join(job.sourceDir, 'plan.json'), base: copy.copy, samplesPerRow: registration.gates.samplesPerRow, missedSamples: registration.gates.missedSamples, maxDrawsPerEntry: registration.gates.maxDrawsPerEntry},
-      registration.gates.childHardLimitMinutes * 60_000, registration.gates.heartbeatTimeoutSeconds * 1000, (line) => {
+    const child = await runChild({mode: 'score', plan: join(job.sourceDir, 'plan.json'), base: copy.copy, samplesPerRow: config.gates.samplesPerRow, missedSamples: config.gates.missedSamples, maxDrawsPerEntry: config.gates.maxDrawsPerEntry},
+      config.gates.childHardLimitMinutes * 60_000, config.gates.heartbeatTimeoutSeconds * 1000, (line) => {
         if (line.type !== 'score') return
         scores.set(`${line.base}.${line.entry}`, line)
         appendFileSync(gatesPath, `${encodeJson(line)}\n`)
@@ -198,13 +223,13 @@ export async function writeScoring(job: ScoringJob) {
       sampled += score.missed.sampled
     }
     const starved: string[] = []
-    if (oracle) {
-      for (const entry of copyPlan.entries) {
-        if (entry.callerRules.length === 0) continue
-        const line = run.baseline.get(`${copyRule.id}.${entry.name}`)
-        const inDomain = line == null ? 0 : line.inputs - line.discarded - line.callerDiscarded - line.overBudget
-        if (inDomain < registration.gates.budgetStarvationMinimum) starved.push(`${entry.name} ${inDomain}`)
-      }
+    for (const entry of copyPlan.entries) {
+      const gated = config.starvation === 'caller-rule-entries' ? oracle && entry.callerRules.length > 0
+        : entry.unsupported == null && copyPlan.sites.some((site) => site.file === entry.file && site.functionName === entry.name)
+      if (!gated) continue
+      const line = run.baseline.get(`${copyRule.id}.${entry.name}`)
+      const inDomain = line == null ? 0 : line.inputs - line.discarded - line.callerDiscarded - line.overBudget
+      if (inDomain < config.gates.budgetStarvationMinimum) starved.push(`${entry.name} ${inDomain}`)
     }
     let verifiedInputs = 0
     for (const row of copyRows) verifiedInputs += row.score?.verified ?? 0
@@ -222,13 +247,16 @@ export async function writeScoring(job: ScoringJob) {
     for (const carriedLine of readFileSync(join(scratch, job.carried.run, 'criterion1.txt'), 'utf8').trimEnd().split('\n')) lines.push(`  ${carriedLine}`)
   }
   lines.push(...job.asWritten.criterion)
-  lines.push(`${prefix}scoring@witness-v1 (${registration.id}, sha1 ${registrationSha1}; witness run ${registration.witness.runDir}, meta.json sha1 ${witnessMetaSha1}; exposed development data, calibration)`)
+  lines.push(`${prefix}scoring@witness-v1 (${config.id}, sha1 ${config.sha1}; witness run ${witnessDir.replace(`${scratch}/`, '')}, meta.json sha1 ${witnessMetaSha1}; exposed development data, calibration)`)
   for (const copyScore of copyScores) {
     const scope = copyScore.criterion ? '' : ' (not scored)'
     lines.push(`${prefix}falseAlarm@unwitnessed ${copyScore.copy}${scope}: ${copyScore.unwitnessed} of ${copyScore.offList} off-list rows without a verified witness; ${copyScore.findings} witnessed off-list rows are findings → ${passFail(copyScore.unwitnessed)}`)
     lines.push(`${prefix}falseAlarm@instrument ${copyScore.copy}${scope}: ${copyScore.instrumentFailures} failures over ${copyScore.rows} rows, ${copyScore.verifiedInputs} regenerated firing inputs verified → ${passFail(copyScore.instrumentFailures)}`)
     lines.push(`${prefix}missedFiring ${copyScore.copy}${scope}: ${copyScore.missCount} misses in ${copyScore.sampled} sampled quiet inputs over ${copyScore.entries} entries → ${passFail(copyScore.missCount)}`)
-    if (oracle) lines.push(`${prefix}budget starvation ${copyScore.copy}${scope}: ${listOrNone(copyScore.starved)} (an entry with a caller rule needs ${registration.gates.budgetStarvationMinimum} in-domain inputs)`)
+    if (oracle || config.starvation === 'entries-holding-sites') {
+      const gated = config.starvation === 'caller-rule-entries' ? 'an entry with a caller rule' : 'an entry whose function holds a site'
+      lines.push(`${prefix}budget starvation ${copyScore.copy}${scope}: ${listOrNone(copyScore.starved)} (${gated} needs ${config.gates.budgetStarvationMinimum} in-domain inputs)`)
+    }
     const verdictText = copyScore.verdict === 'incomplete' ? `incomplete: budget starved (${copyScore.starved.join(', ')})` : copyScore.verdict
     const killText = copyScore.killClause == null ? 'not registered' : copyScore.killClause ? 'pass' : 'fail'
     lines.push(`${prefix}criterion 1@witness-v1 ${copyScore.copy}${scope}: kill clause ${killText}; falseAlarm@unwitnessed ${copyScore.unwitnessed}; falseAlarm@instrument ${copyScore.instrumentFailures}; missedFiring ${copyScore.missCount} → ${verdictText}`)
@@ -276,7 +304,7 @@ export async function writeScoring(job: ScoringJob) {
   write(`- **measured_on:** ${job.rules.measured_on}. Everything here is calibration on exposed development data.`)
   write(`- **source run:** ${job.sourceDir}${job.outDir === job.sourceDir ? '' : `, only read; this scoring writes into ${job.outDir}`}`)
   write(`- **rules:** ${job.rulesPath} sha1 ${sha1(readFileSync(job.rulesPath))}`)
-  write(`- **scoring registration:** ${job.registrationPath} sha1 ${registrationSha1}`)
+  write(`- **scoring registration:** ${config.path} sha1 ${config.sha1}`)
   write(`- **witness run:** ${witnessDir}, meta.json sha1 ${witnessMetaSha1}; drop list ${JSON.stringify(witnessMeta['dropList'])}; tables ${JSON.stringify(tableSha1s)}`)
   if (job.carried != null) write(`- **carried:** ${JSON.stringify(job.carried)}`)
   write()
@@ -315,10 +343,10 @@ export async function writeScoring(job: ScoringJob) {
     write()
     write('## Caller discards and in-domain inputs (R-D5, budget gate)')
     write()
-    write(table(['copy', 'entry', 'caller rules', 'inputs', 'leading-assert and leak discards', 'caller discards', 'past the step budget', 'in-domain inputs', `at least ${registration.gates.budgetStarvationMinimum}`], [...run.baseline.values()].filter((line) => run.copyOf.get(line.base)!.entries.some((entry) => entry.name === line.entry && entry.callerRules.length > 0)).map((line) => {
+    write(table(['copy', 'entry', 'caller rules', 'inputs', 'leading-assert and leak discards', 'caller discards', 'past the step budget', 'in-domain inputs', `at least ${config.gates.budgetStarvationMinimum}`],[...run.baseline.values()].filter((line) => run.copyOf.get(line.base)!.entries.some((entry) => entry.name === line.entry && entry.callerRules.length > 0)).map((line) => {
       const inDomain = line.inputs - line.discarded - line.callerDiscarded - line.overBudget
       const entry = run.copyOf.get(line.base)!.entries.find((candidate) => candidate.name === line.entry)!
-      return [line.base, line.entry, entry.callerRules.map((callerRule) => callerRule.id).join(', '), line.inputs, line.discarded, line.callerDiscarded, line.overBudget, inDomain, inDomain >= registration.gates.budgetStarvationMinimum ? 'yes' : 'no: budget starved']
+      return [line.base, line.entry, entry.callerRules.map((callerRule) => callerRule.id).join(', '), line.inputs, line.discarded, line.callerDiscarded, line.overBudget, inDomain, inDomain >= config.gates.budgetStarvationMinimum ? 'yes' : 'no: budget starved']
     })))
     write()
     write('## removedByCallerDomain (R-D5): domain@v2 rows and domain@v3-callers rows')
@@ -370,7 +398,7 @@ export async function writeScoring(job: ScoringJob) {
   const instrumentFiles = readdirSync(instrumentDir).filter((name) => name.endsWith('.ts')).sort()
   writeFileSync(join(job.outDir, 'scoring.json'), `${JSON.stringify({
     id: job.rules.id, arm: oracle ? 'oracle arm (domain@v3-callers)' : 'domain@v2 run rescored', sourceDir: job.sourceDir, outDir: job.outDir,
-    rulesSha1: sha1(readFileSync(job.rulesPath)), registrationSha1, witnessMetaSha1, tableSha1s, carried: job.carried,
+    rulesSha1: sha1(readFileSync(job.rulesPath)), registrationSha1: config.sha1, witnessMetaSha1, tableSha1s, carried: job.carried,
     instrumentCommit: Bun.spawnSync(['git', 'rev-parse', 'HEAD'], {cwd: instrumentDir}).stdout.toString().trim(),
     instrumentDirty: Bun.spawnSync(['git', 'status', '--porcelain', '--', '.'], {cwd: instrumentDir}).stdout.toString().trim() !== '',
     instrumentSha1: sha1(instrumentFiles.map((name) => `${name}\n${readFileSync(join(instrumentDir, name), 'utf8')}`).join('\n')),

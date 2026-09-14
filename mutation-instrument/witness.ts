@@ -29,7 +29,7 @@ const recorder = createRecorder(sites, plan.stepBudget)
 // Collect mode: no site throws DISCARD, so a call runs past its domain lines, and the record reads afterwards whether one fired.
 recorder.setEntry([])
 ;(globalThis as Record<string, unknown>)['__fr'] = recorder
-const ruleFile = decodeJson(readFileSync(job.callerRules, 'utf8')) as CallerRuleFile
+const ruleFile: CallerRuleFile = job.callerRules == null ? {version: 'none', rules: []} : decodeJson(readFileSync(job.callerRules, 'utf8')) as CallerRuleFile
 
 type Outcome = 'returned' | 'threw' | 'budget'
 type EntryState = {rules: CallerRulePlan[]; domainSites: Uint8Array; sites: (WitnessSiteOutput | null)[]; output: WitnessEntryOutput}

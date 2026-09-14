@@ -7,8 +7,9 @@
 //     known-false lists can be frozen from the originals' firings before any mutant runs.
 //   5 mutant pass: at most `children` child processes, one per mutant
 //   6 replay the recorded kills this run missed, and call the registered first killing inputs on the uninstrumented trees
-//   7 Freerange's own findings on the copies, then the report; a domain@v3-callers run then scores itself (scoring.ts)
+//   7 Freerange's own findings on the copies, then the report; a domain@v3-callers or mj-gallery run then scores itself (scoring.ts)
 // usage: bun mutation-instrument/run.ts --rules <rules.json> --out <run dir> [--mutants key,key] [--baseline-only | --plan-only]
+//        [--witness <witness run dir>]   (required by an mj-gallery run with a mutant pass: witness-run.ts's output for its witness sets)
 import {createHash} from 'node:crypto'
 import {appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync} from 'node:fs'
 import {dirname, join} from 'node:path'
@@ -24,7 +25,7 @@ import {packingHarnessCall} from './packing-harness.ts'
 import {harnessCall} from './popovers-harness.ts'
 import {writeReport} from './report.ts'
 import {normalizedMutants, readRules, type CopyRule, type FramesReference, type KeyedMutantRule, type PackingReference, type PlantedReference, type SysmutRow} from './rules.ts'
-import {ORACLE_AS_WRITTEN_TITLE, writeScoring} from './scoring.ts'
+import {mjGalleryScoringConfig, ORACLE_AS_WRITTEN_TITLE, w1ScoringConfig, writeScoring} from './scoring.ts'
 import {plantExamples} from './tooltip-harness.ts'
 import {CRITERION_RULE, type BaselineLine, type CallLine, type CopyPlan, type EntryPlan, type FilePlan, type MutantPlan, type Plan, type ReplayLine, type Site, type VerifyLine} from './types.ts'
 
@@ -54,6 +55,8 @@ if (existsSync(outDir)) throw new Error(`refusing to overwrite ${outDir}`)
 const subset = option('--mutants')?.split(',') ?? null
 const baselineOnly = process.argv.includes('--baseline-only')
 const planOnly = process.argv.includes('--plan-only')
+const witnessOption = option('--witness')
+const witnessDir = witnessOption == null ? null : realpathSync(witnessOption)
 
 const rulesText = readFileSync(rulesPath, 'utf8')
 const rules = readRules(rulesPath)
@@ -96,6 +99,13 @@ function loadCallerRules(): {active: CallerRule[]; record: CallerRulesRecord | n
   return {active, record: {path: registered.path, sha1: registered.sha1, dropList, dropListSha1: sha1(dropListText), dropped, active: active.map((rule) => rule.id)}}
 }
 const callerRules = loadCallerRules()
+// An mj-gallery run with a mutant pass scores itself under scoring@witness-v1, so its witness run must be complete before it starts.
+if (rules.family === 'mj-gallery' && !planOnly && !baselineOnly) {
+  if (witnessDir == null) throw new Error('an mj-gallery run with a mutant pass needs --witness <witness run dir>')
+  const witnessMetaPath = join(witnessDir, 'meta.json')
+  const witnessMeta = existsSync(witnessMetaPath) ? decodeJson(readFileSync(witnessMetaPath, 'utf8')) as Record<string, unknown> : null
+  if (witnessMeta?.['status'] !== 'complete') throw new Error(`no complete witness run at ${witnessDir}`)
+}
 
 mkdirSync(join(outDir, 'work', 'original'), {recursive: true})
 mkdirSync(join(outDir, 'work', 'mutants'))
@@ -123,7 +133,7 @@ const meta: Record<string, unknown> = {
   knownFalse: rules.data.knownFalse.map((list) => ({...list, sha1: existsSync(join(scratch, list.path)) ? sha1(readFileSync(join(scratch, list.path))) : null})),
   domainVersion: rules.domain.version,
   callerRules: callerRules.record,
-  mjGallery: rules.mjGallery == null ? null : {worktree: rules.mjGallery.worktree, astmutTable: rules.mjGallery.astmutTable, astmutTableSha1: rules.mjGallery.astmutTableSha1},
+  mjGallery: rules.mjGallery == null ? null : {worktree: rules.mjGallery.worktree, astmutTable: rules.mjGallery.astmutTable, astmutTableSha1: rules.mjGallery.astmutTableSha1, witness: witnessDir},
   settings,
   stepBudget,
   children: rules.execution.children,
@@ -624,6 +634,10 @@ log('report')
 const asWritten = await writeReport(outDir, rules, outDir, rules.domain.version === 'domain@v3-callers' ? ORACLE_AS_WRITTEN_TITLE : null)
 if (rules.scoring != null) {
   log('scoring@witness-v1')
-  await writeScoring({sourceDir: outDir, outDir, rules, rulesPath, asWritten, registrationPath: join(scratch, rules.scoring.registration), registrationSha1: rules.scoring.sha1, carried: rules.scoring.carried})
+  await writeScoring({sourceDir: outDir, outDir, rules, rulesPath, asWritten, config: w1ScoringConfig(join(scratch, rules.scoring.registration), rules.scoring.sha1), carried: rules.scoring.carried})
+}
+if (rules.family === 'mj-gallery' && witnessDir != null) {
+  log('scoring@witness-v1')
+  await writeScoring({sourceDir: outDir, outDir, rules, rulesPath, asWritten, config: mjGalleryScoringConfig(rulesPath, rules, witnessDir), carried: null})
 }
 log(`done in ${((performance.now() - wallStart) / 1000).toFixed(1)} s`)

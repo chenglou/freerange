@@ -12,7 +12,7 @@ import {decodeJson, formatCall} from './encode.ts'
 import type {AstmutTable, MjGalleryExtras} from './mj-gallery.ts'
 import {readRules, type FramesReference, type PackingReference, type PlantedReference, type RecordedCatch, type Rules, type SysmutRow} from './rules.ts'
 import {formatInput, jsonLines, killed, listOrNone, loadRun, PRODUCERS, readLines, siteLabel, siteOf, table, type AsWrittenReport, type FailureLine, type KillClause, type Run} from './run-data.ts'
-import {writeScoring} from './scoring.ts'
+import {w1ScoringConfig, writeScoring} from './scoring.ts'
 import {CRITERION_RULE, NOISE_RULES, type CallLine, type CopyPlan, type FirstFiring, type ReplayLine, type ResultLine, type Site} from './types.ts'
 
 type SweepReplayRecord = {mutant: string; sweepExit: number | null; sweepFirst: {fn: string; label: string; line: number; firstCall: string; firstArgs: string} | null; sweepEvaluations: number | null; replay: ReplayLine | null}
@@ -1117,6 +1117,6 @@ if (import.meta.main) {
     if (existsSync(outDir)) throw new Error(`refusing to overwrite ${outDir}`)
     mkdirSync(outDir, {recursive: true})
     const asWritten = await writeReport(runDir, rules, outDir)
-    if (scoringPath != null) await writeScoring({sourceDir: runDir, outDir, rules, rulesPath, asWritten, registrationPath: scoringPath, registrationSha1: null, carried: null})
+    if (scoringPath != null) await writeScoring({sourceDir: runDir, outDir, rules, rulesPath, asWritten, config: w1ScoringConfig(scoringPath, null), carried: null})
   }
 }

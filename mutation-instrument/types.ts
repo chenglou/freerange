@@ -152,7 +152,8 @@ export type ScoreLine = {type: 'score'; base: string; entry: string; digest: num
 // -- scoring@witness-v1 witness sets (witness-run.ts, witness.ts) ----------------------------
 
 // witness-run.ts -> witness.ts: one witness set on one copy. `args` and `substitute` have their placeholders resolved.
-export type WitnessJob = {plan: string; family: string; copy: string; set: string; script: string; args: string[]; substitute: {from: string; to: string} | null; derivedScript: string; tiers: 'all' | 'packing-in-domain'; callerRules: string; reservoir: number; out: string}
+// callerRules: the caller rule file, or null for a family with none (mj-gallery).
+export type WitnessJob = {plan: string; family: string; copy: string; set: string; script: string; args: string[]; substitute: {from: string; to: string} | null; derivedScript: string; tiers: 'all' | 'packing-in-domain'; callerRules: string | null; reservoir: number; out: string}
 // A caller rule checked on every in-domain witness call of its entry (R-D1(ii)).
 export type WitnessRuleCheck = {id: string; checked: number; violations: number; firstViolation: string | null}
 // Witness calls of an entry that record a site at level 3 or above and fire no domain line, grouped by the bit mask of the

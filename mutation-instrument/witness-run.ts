@@ -2,21 +2,26 @@
 // names (witness.ts), then every stored witness input called on the uninstrumented copy (worker.ts verify-batch), then the
 // witness tables and R-D1(ii)'s drop list. It runs the recorded sweeps, never the lattice, and changes no rule or list.
 // usage: bun mutation-instrument/witness-run.ts --scoring <registered/w1-scoring.json>
-// Writes into the registered witness.runDir, which must not exist yet:
+//          the four families' witness sets, into the registered witness.runDir
+//        bun mutation-instrument/witness-run.ts --rules <registered/m7-mj-gallery.json> --plan <run dir> --out <witness run dir>
+//          an mj-gallery registration's scoringWitness sets, against the spliced original trees of that run's plan (m7's
+//          baseline-only run), into --out
+// Writes into the witness run directory, which must not exist yet:
 //   wrappers/<family>-<copy>/...       the wrapper trees the sweeps import
 //   <family>-<copy>-<set>.json, .log   each witness child's output and the sweep's own console output
 //   verify-items-<family>-<copy>.json  the stored witness inputs, in table order
 //   witness-<family>-<copy>.json       the witness table scoring.ts reads
 //   drop-list.json, meta.json
 import {createHash} from 'node:crypto'
-import {existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync} from 'node:fs'
+import {existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync} from 'node:fs'
 import {basename, dirname, join} from 'node:path'
 import type {CallerRuleFile} from './callers.ts'
 import {runChild} from './children.ts'
 import {domainLines} from './domain-lines.ts'
 import {decodeJson, encodeJson} from './encode.ts'
+import type {MjGalleryRegistration} from './mj-gallery.ts'
 import {decodePlan} from './plan-file.ts'
-import type {ScoringRegistration} from './rules.ts'
+import type {ScoringRegistration, WitnessSet} from './rules.ts'
 import type {CopyPlan, Plan, VerifyItemLine, WitnessEntry, WitnessJob, WitnessSetOutput, WitnessTable} from './types.ts'
 
 const WITNESS = realpathSync(new URL('./witness.ts', import.meta.url).pathname)
@@ -36,17 +41,65 @@ function log(line: string) {
   console.log(`[${new Date().toISOString()}] ${line}`)
 }
 
+// What one witness run runs, from registered/w1-scoring.json or from an mj-gallery registration's scoringWitness block.
+type WitnessRunConfig = {
+  scratch: string
+  runDir: string
+  scoring: {path: string; sha1: string}
+  callerRules: {path: string; sha1: string} | null
+  plans: Map<string, string> // family to plan.json, e.g. popovers to runs/20260913T151722Z-popovers-m2/plan.json
+  sets: WitnessSet[]
+  reservoir: number
+  childHardLimitMinutes: number
+  measuredOn: string
+  planRun: {path: string; metaSha1: string} | null
+}
+
+function w1Config(path: string): WitnessRunConfig {
+  const text = readFileSync(path, 'utf8')
+  const registration = decodeJson(text) as ScoringRegistration
+  const scratch = registration.data.scratch
+  return {
+    scratch, runDir: join(scratch, registration.witness.runDir), scoring: {path, sha1: sha1(text)}, callerRules: registration.witness.callerRules,
+    plans: new Map(Object.entries(registration.witness.plans).map(([family, run]) => [family, join(scratch, run, 'plan.json')])),
+    sets: registration.witness.sets, reservoir: registration.witness.reservoir, childHardLimitMinutes: registration.witness.childHardLimitMinutes,
+    measuredOn: 'exposed development data: the recorded caller-derived sweeps of popovers, frames and packing against the domain@v2 runs\' spliced original trees; calibration, not a benchmark',
+    planRun: null,
+  }
+}
+
+function mjGalleryConfig(path: string, planRun: string, out: string): WitnessRunConfig {
+  const text = readFileSync(path, 'utf8')
+  const registration = decodeJson(text) as MjGalleryRegistration
+  const witness = registration.scoringWitness
+  const planMetaPath = join(planRun, 'meta.json')
+  const planMeta = decodeJson(readFileSync(planMetaPath, 'utf8')) as Record<string, unknown>
+  if (typeof planMeta['status'] !== 'string' || !planMeta['status'].startsWith('complete') || planMeta['rulesSha1'] !== sha1(text)) throw new Error(`${planRun} is not a complete run of ${path}`)
+  return {
+    scratch: registration.data.scratch, runDir: out, scoring: {path, sha1: sha1(text)}, callerRules: null,
+    plans: new Map([[registration.family, join(planRun, 'plan.json')]]),
+    sets: witness.witnessSets.map((set) => ({family: registration.family, name: set.name, script: set.script, scriptSha1: set.scriptSha1, args: set.args, substitute: set.substitute, tiers: set.tiers, copies: set.copies})),
+    reservoir: witness.reservoir, childHardLimitMinutes: witness.gates.childHardLimitMinutes,
+    measuredOn: `${registration.measured_on}; witness sets ${witness.witnessSets.map((set) => set.name).join(', ')} against the spliced original trees of ${planRun}`,
+    planRun: {path: planRun, metaSha1: sha1(readFileSync(planMetaPath))},
+  }
+}
+
 const scoringPath = option('--scoring')
-if (scoringPath == null) throw new Error('usage: bun mutation-instrument/witness-run.ts --scoring <registered/w1-scoring.json>')
-const registrationText = readFileSync(scoringPath, 'utf8')
-const registration = decodeJson(registrationText) as ScoringRegistration
-const scratch = registration.data.scratch
-const runDir = join(scratch, registration.witness.runDir)
+const rulesPath = option('--rules')
+const planRunPath = option('--plan')
+const outPath = option('--out')
+const config = scoringPath != null ? w1Config(scoringPath)
+  : rulesPath != null && planRunPath != null && outPath != null ? mjGalleryConfig(rulesPath, realpathSync(planRunPath), outPath)
+  : null
+if (config == null) throw new Error('usage: bun mutation-instrument/witness-run.ts --scoring <registered/w1-scoring.json> | --rules <mj-gallery registration> --plan <run dir> --out <witness run dir>')
+const scratch = config.scratch
+const runDir = config.runDir
 if (existsSync(runDir)) throw new Error(`refusing to overwrite ${runDir}`)
-const callerRulesPath = join(scratch, registration.witness.callerRules.path)
-const callerRulesText = readFileSync(callerRulesPath, 'utf8')
-if (sha1(callerRulesText) !== registration.witness.callerRules.sha1) throw new Error(`caller rules ${callerRulesPath}: sha1 ${sha1(callerRulesText)} differs from the registered ${registration.witness.callerRules.sha1}`)
-for (const set of registration.witness.sets) {
+const callerRulesPath = config.callerRules == null ? null : join(scratch, config.callerRules.path)
+const callerRulesText = callerRulesPath == null ? null : readFileSync(callerRulesPath, 'utf8')
+if (config.callerRules != null && callerRulesText != null && sha1(callerRulesText) !== config.callerRules.sha1) throw new Error(`caller rules ${callerRulesPath}: sha1 ${sha1(callerRulesText)} differs from the registered ${config.callerRules.sha1}`)
+for (const set of config.sets) {
   const scriptSha1 = sha1(readFileSync(join(scratch, set.script)))
   if (scriptSha1 !== set.scriptSha1) throw new Error(`witness set ${set.name}: ${set.script} sha1 ${scriptSha1} differs from the registered ${set.scriptSha1}`)
 }
@@ -54,13 +107,14 @@ mkdirSync(join(runDir, 'outputs'), {recursive: true})
 
 const instrumentFiles = readdirSync(INSTRUMENT_DIR).filter((name) => name.endsWith('.ts')).sort()
 const meta: Record<string, unknown> = {
-  scoring: {path: scoringPath, sha1: sha1(registrationText)},
-  callerRules: {path: registration.witness.callerRules.path, sha1: registration.witness.callerRules.sha1},
+  scoring: config.scoring,
+  callerRules: config.callerRules,
+  planRun: config.planRun,
   instrumentCommit: Bun.spawnSync(['git', 'rev-parse', 'HEAD'], {cwd: INSTRUMENT_DIR}).stdout.toString().trim(),
   instrumentDirty: Bun.spawnSync(['git', 'status', '--porcelain', '--', '.'], {cwd: INSTRUMENT_DIR}).stdout.toString().trim() !== '',
   instrumentSha1: sha1(instrumentFiles.map((name) => `${name}\n${readFileSync(join(INSTRUMENT_DIR, name), 'utf8')}`).join('\n')),
   bun: Bun.version,
-  measured_on: 'exposed development data: the recorded caller-derived sweeps of popovers, frames and packing against the domain@v2 runs\' spliced original trees; calibration, not a benchmark',
+  measured_on: config.measuredOn,
   started: new Date().toISOString(),
   status: 'running',
 }
@@ -68,10 +122,7 @@ const writeMeta = () => writeFileSync(join(runDir, 'meta.json'), `${JSON.stringi
 writeMeta()
 
 const plans = new Map<string, {path: string; plan: Plan}>()
-for (const [family, run] of Object.entries(registration.witness.plans)) {
-  const path = join(scratch, run, 'plan.json')
-  plans.set(family, {path, plan: decodePlan(readFileSync(path, 'utf8'))})
-}
+for (const [family, path] of config.plans) plans.set(family, {path, plan: decodePlan(readFileSync(path, 'utf8'))})
 
 function planOf(family: string) {
   const found = plans.get(family)
@@ -86,7 +137,7 @@ function copyOf(plan: Plan, copyId: string): CopyPlan {
 }
 
 const pairs: {family: string; copy: string}[] = []
-for (const set of registration.witness.sets) {
+for (const set of config.sets) {
   for (const copyId of set.copies) if (!pairs.some((pair) => pair.family === set.family && pair.copy === copyId)) pairs.push({family: set.family, copy: copyId})
 }
 
@@ -94,22 +145,24 @@ for (const set of registration.witness.sets) {
 
 for (const pair of pairs) {
   const copy = copyOf(planOf(pair.family).plan, pair.copy)
+  const wrapperRoot = join(runDir, 'wrappers', `${pair.family}-${pair.copy}`)
   for (const file of copy.files) {
     const lines = [`import * as original from ${JSON.stringify(file.instrumented)}`, `export * from ${JSON.stringify(file.instrumented)}`]
     copy.entries.forEach((entry, index) => {
       if (entry.file === file.file) lines.push(`export const ${entry.name} = globalThis.__witness.wrap(${index}, original.${entry.name})`)
     })
-    const path = join(runDir, 'wrappers', `${pair.family}-${pair.copy}`, file.path)
+    const path = join(wrapperRoot, file.path)
     mkdirSync(dirname(path), {recursive: true})
     writeFileSync(path, `${lines.join('\n')}\n`)
   }
+  if (copy.nodeModules != null) symlinkSync(copy.nodeModules, join(wrapperRoot, 'node_modules'))
 }
 
 // -- witness children -------------------------------------------------------------------
 
 type ChildRecord = {name: string; exitCode: number | null; timedOut: boolean; ms: number; maxRssKb: number | null}
 const childRecords: ChildRecord[] = []
-for (const set of registration.witness.sets) {
+for (const set of config.sets) {
   for (const copyId of set.copies) {
     const name = `${set.family}-${copyId}-${set.name}`
     const wrapperDir = join(runDir, 'wrappers', `${set.family}-${copyId}`)
@@ -119,7 +172,7 @@ for (const set of registration.witness.sets) {
     const job: WitnessJob = {
       plan: planOf(set.family).path, family: set.family, copy: copyId, set: set.name, script: join(scratch, set.script), args: set.args.map(resolvePlaceholders),
       substitute: set.substitute == null ? null : {from: set.substitute.from, to: resolvePlaceholders(set.substitute.to)},
-      derivedScript: join(outputs, basename(set.script)), tiers: set.tiers, callerRules: callerRulesPath, reservoir: registration.witness.reservoir, out: join(runDir, `${name}.json`),
+      derivedScript: join(outputs, basename(set.script)), tiers: set.tiers, callerRules: callerRulesPath, reservoir: config.reservoir, out: join(runDir, `${name}.json`),
     }
     log(`witness set ${name}`)
     const childStart = performance.now()
@@ -128,7 +181,7 @@ for (const set of registration.witness.sets) {
     const timer = setTimeout(() => {
       limit.timedOut = true
       child.kill('SIGKILL')
-    }, registration.witness.childHardLimitMinutes * 60_000)
+    }, config.childHardLimitMinutes * 60_000)
     const exitCode = await child.exited
     clearTimeout(timer)
     const finished = existsSync(job.out)
@@ -151,7 +204,7 @@ const verifyRecords: {pair: string; items: number; exitCode: number | null; time
 for (const pair of pairs) {
   const {path: planPath, plan} = planOf(pair.family)
   const copy = copyOf(plan, pair.copy)
-  const outputs = registration.witness.sets.filter((set) => set.family === pair.family && set.copies.includes(pair.copy)).map((set) => ({set: set.name, path: join(runDir, `${pair.family}-${pair.copy}-${set.name}.json`)}))
+  const outputs = config.sets.filter((set) => set.family === pair.family && set.copies.includes(pair.copy)).map((set) => ({set: set.name, path: join(runDir, `${pair.family}-${pair.copy}-${set.name}.json`)}))
   const decoded = outputs.map((output) => decodeJson(readFileSync(output.path, 'utf8')) as WitnessSetOutput)
   const items: {entry: string; args: string}[] = []
   for (const setOutput of decoded) {
@@ -163,7 +216,7 @@ for (const pair of pairs) {
   writeFileSync(itemsPath, JSON.stringify(items))
   const results = new Array<VerifyItemLine | null>(items.length).fill(null)
   log(`uninstrumented calls ${pair.family}-${pair.copy}: ${items.length} stored witness inputs`)
-  const verifyRun = await runChild({mode: 'verify-batch', plan: planPath, base: pair.copy, items: itemsPath}, registration.witness.childHardLimitMinutes * 60_000, 60_000, (line) => {
+  const verifyRun = await runChild({mode: 'verify-batch', plan: planPath, base: pair.copy, items: itemsPath}, config.childHardLimitMinutes * 60_000, 60_000, (line) => {
     if (line.type === 'verify-item') results[line.item] = line
   })
   verifyRecords.push({pair: `${pair.family}-${pair.copy}`, items: items.length, exitCode: verifyRun.exitCode, timedOut: verifyRun.timedOut, ms: verifyRun.ms, maxRssKb: verifyRun.done?.maxRssKb ?? null})
@@ -240,7 +293,7 @@ for (const pair of pairs) {
 
 // -- R-D1(ii): the drop list --------------------------------------------------------------------
 
-const ruleFile = decodeJson(callerRulesText) as CallerRuleFile
+const ruleFile: CallerRuleFile = callerRulesText == null ? {version: 'none', rules: []} : decodeJson(callerRulesText) as CallerRuleFile
 const ruleRecords = ruleFile.rules.map((rule) => {
   const perEntry: {family: string; copy: string; entry: string; checked: number; violations: number; firstViolation: string | null}[] = []
   for (const table of tables) {
