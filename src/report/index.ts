@@ -962,6 +962,11 @@ export function formatUnsupportedReason(reason: UnsupportedReason): string {
         case 'bindValueFirst': return 'calculate or read the value before console.assert, then check the variable'
         case 'functionCall': return 'console.assert cannot call a function inside its condition except Number.isInteger, Number.isFinite, or Number.isNaN'
         case 'callerRequirement': return 'a leading console.assert describes what callers must provide. ===, <, <=, >, and >= may compare two parameters or fixed-record properties; !== needs one fixed finite number. It can also require a parameter to be an integer or a parameter or fixed-record property to be finite'
+        case 'conditionDepth': return 'console.assert condition nests && and || groups more than 32 levels deep'
+        case 'conditionChecks': return 'console.assert condition has more than 64 checks'
+        case 'disjuncts': return 'console.assert condition has more than 16 alternatives in one || chain'
+        case 'helperDepth': return 'a local predicate helper used in console.assert calls another local helper; write the inner check out in the outer helper'
+        case 'helperSize': return 'a local predicate helper used in console.assert has more than 256 syntax nodes'
       }
     }
     case 'varDeclaration': return 'var declarations (use let or const)'

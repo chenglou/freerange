@@ -50,6 +50,19 @@ export type FunctionContext = {
   // while), then jumps to the header carrying the loop's carried bindings plus whatever
   // extra arguments the advance step returns (the for-of counter).
   loops: LoopTarget[]
+  // FREERANGE_ASSERT_FORMS=1 turns on the wider console.assert reading: && and interior ||,
+  // boolean conditions, + - * and Math.* operands, and local predicate helpers. Without it,
+  // lowering accepts exactly the smaller spelling.
+  assertForms: boolean
+  // Local predicate helpers accepted under assertForms, keyed by the const's symbol, e.g.
+  // `const near = (a: number, b: number) => Math.abs(a - b) <= 1e-9` whose every reference
+  // is a direct call inside a console.assert condition.
+  predicateHelpers: Map<ts.Symbol, PredicateHelper>
+}
+
+export type PredicateHelper = {
+  parameters: ts.Symbol[]
+  body: ts.Expression
 }
 
 export type LoopTarget = {
@@ -85,6 +98,8 @@ export function createFunctionContext(
     assertions: [],
     returnsVoid,
     loops: [],
+    assertForms: process.env['FREERANGE_ASSERT_FORMS'] === '1',
+    predicateHelpers: new Map(),
   }
 }
 
@@ -100,6 +115,7 @@ export type LoweringSnapshot = {
   bindings: Map<ts.Symbol, ValueID>
   assertionCount: number
   loopCount: number
+  predicateHelpers: Map<ts.Symbol, PredicateHelper>
 }
 
 export function snapshotLowering(context: FunctionContext): LoweringSnapshot {
@@ -110,6 +126,7 @@ export function snapshotLowering(context: FunctionContext): LoweringSnapshot {
     bindings: new Map(context.bindings),
     assertionCount: context.assertions.length,
     loopCount: context.loops.length,
+    predicateHelpers: new Map(context.predicateHelpers),
   }
 }
 
@@ -121,6 +138,7 @@ export function restoreLowering(context: FunctionContext, snapshot: LoweringSnap
   context.bindings = snapshot.bindings
   context.assertions.length = snapshot.assertionCount
   context.loops.length = snapshot.loopCount
+  context.predicateHelpers = snapshot.predicateHelpers
 }
 
 export function addSite(context: FunctionContext, node: ts.Node): SiteID {
