@@ -34,16 +34,19 @@ import {
   type SharedState,
   type ValueFact,
 } from './state.ts'
+import {createJoinFlow} from './join-flow.ts'
 import {
   asRefinableCheck,
   branchConditionOutcome,
-  createValueNumbering,
+  chargeRelationalWork,
+  createStaticRelationCounters,
+  createStaticRelations,
   evaluateInstruction,
   refineCheck,
   relationalAtMost,
   relationalNonnegative,
   requiredValue,
-  staticRelationCapHits,
+  type StaticRelationCounters,
   type StaticRelations,
   type TransferContext,
 } from './transfer.ts'
@@ -56,19 +59,22 @@ const maximumLoopHeaderUpdates = 16
 // The static-relations prototype is off unless FREERANGE_STATIC_RELATIONS=1. With it on, the
 // relational rules in transfer.ts and the join facts below run only for interior
 // console.assert proofs (see StaticRelations in transfer.ts).
+// Passing a counters object turns the mode on for this analysis and collects its cap hits.
 export function analyzeProgram(
   program: ProgramIR,
-  staticRelations = process.env['FREERANGE_STATIC_RELATIONS'] === '1',
+  staticRelations: StaticRelationCounters | null = process.env['FREERANGE_STATIC_RELATIONS'] === '1'
+    ? createStaticRelationCounters()
+    : null,
 ): ProgramAnalysis {
   const analysis = analyzeProgramWith(program, staticRelations)
-  if (staticRelations && process.env['FREERANGE_STATIC_RELATIONS_DEBUG'] === '1') {
-    const hits = staticRelationCapHits
-    console.error(`static relations cap hits: closure budget ${hits.closureBudget}, fact cap ${hits.factCap}, join candidates ${hits.joinCandidates}`)
+  if (staticRelations != null && process.env['FREERANGE_STATIC_RELATIONS_DEBUG'] === '1') {
+    const counters = staticRelations
+    console.error(`static relations cap hits: closure budget ${counters.closureBudget}, fact cap ${counters.factCap}, join candidates ${counters.joinCandidates}, join facts ${counters.joinFacts}, evaluation work ${counters.evaluationWork}; peak work per instruction ${counters.peakWorkPerInstruction.toFixed(2)}`)
   }
   return analysis
 }
 
-function analyzeProgramWith(program: ProgramIR, staticRelations: boolean): ProgramAnalysis {
+function analyzeProgramWith(program: ProgramIR, staticRelations: StaticRelationCounters | null): ProgramAnalysis {
   // The initializer's slots start uninitialized — a top-level read before the writing
   // declaration must stop — except imported constants: the exporting module ran before
   // this module's first statement, so the slot already holds the literal. (A cycle read
@@ -313,8 +319,6 @@ type EvaluationRun = {
   assertionObservations: Array<AssertionObservation | undefined>
   // Module slots joined across every stop, then with the normal end by the publish rule.
   moduleEnd: SharedState | null
-  // Non-null exactly in static-relations mode.
-  joinFlow: JoinFlow | null
 }
 
 type EvaluationSeed = {
@@ -332,7 +336,7 @@ function runEvaluation(
   sharedState: SharedState,
   program: ProgramIR,
   callStack: FunctionID[],
-  staticRelations: boolean,
+  staticRelations: StaticRelationCounters | null,
   seed: EvaluationSeed = {},
 ): {evaluation: FunctionEvaluation; run: EvaluationRun} {
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
@@ -364,7 +368,6 @@ function runEvaluation(
     stops: [],
     assertionObservations: [],
     moduleEnd: null,
-    joinFlow: staticRelations ? createJoinFlow(fn, successors) : null,
   }
   run.blocks[fn.entry]!.incoming = {state: initial, updateCount: 0}
   // Invariant for the whole evaluation (engineering.md's loop-invariant rule): built once
@@ -376,7 +379,9 @@ function runEvaluation(
     expressionContext,
     preconditions,
     boundsAssumptions,
-    staticRelations: staticRelations ? {numbering: createValueNumbering(expressionContext)} : null,
+    staticRelations: staticRelations == null
+      ? null
+      : createStaticRelations(expressionContext, createJoinFlow(fn, successors), staticRelations),
     evaluateFunction: (
       callee: FunctionID,
       values: AbstractValue[],
@@ -513,6 +518,11 @@ function runEvaluation(
         break
       }
     }
+  }
+  const relations = transferContext.staticRelations
+  if (relations != null) {
+    const workPerInstruction = (relations.budget - relations.remainingWork) / Math.max(1, expressionContext.instructionCount)
+    relations.counters.peakWorkPerInstruction = Math.max(relations.counters.peakWorkPerInstruction, workPerInstruction)
   }
 
   // A stop inside a loop cuts the back edge, freezing the header short of its fixed point —
@@ -689,7 +699,7 @@ function propagate(
   // reads and writes share one value array.
   const argumentValues = edge.arguments.map(argument => requiredValue(state, argument))
   const previous = run.blocks[edge.block]!.incoming
-  if (run.joinFlow != null && context.staticRelations != null) {
+  if (context.staticRelations != null) {
     // Static relations: loop headers keep no join facts, so loop convergence and the
     // 16-update backstop see origin/main's states. Verification reads the edge state before
     // the parameter writes below.
@@ -703,7 +713,6 @@ function propagate(
         previous?.state.joinFacts ?? null,
         context.expressionContext,
         context.staticRelations,
-        run.joinFlow,
       )
     }
   }
@@ -733,62 +742,13 @@ function propagate(
   }
 }
 
-// The static CFG facts join maintenance consults, built once per evaluation in
-// static-relations mode.
-type JoinFlow = {
-  // Every value's producing block (block parameters included); function parameters have none.
-  blockOfValue: Array<BlockID | undefined>
-  // The arguments of every static CFG edge into each block.
-  incomingArguments: ValueID[][]
-  // dominators(block)[other]: every path from the entry to `block` passes `other`.
-  dominators: (block: BlockID) => boolean[]
-  // Whether a block lies on a cycle of static CFG edges.
-  cyclic: (block: BlockID) => boolean
-}
-
-function createJoinFlow(fn: FunctionIR, successors: BlockID[][]): JoinFlow {
-  const blockOfValue: Array<BlockID | undefined> = []
-  const incomingArguments: ValueID[][] = fn.blocks.map(() => [])
-  for (let blockID = 0; blockID < fn.blocks.length; blockID++) {
-    const block = fn.blocks[blockID]!
-    for (const parameter of block.parameters) blockOfValue[parameter] = blockID
-    for (const instruction of block.instructions) blockOfValue[instruction.result] = blockID
-    switch (block.terminator.kind) {
-      case 'jump':
-        incomingArguments[block.terminator.target.block]!.push(...block.terminator.target.arguments)
-        break
-      case 'branch':
-        incomingArguments[block.terminator.whenTrue.block]!.push(...block.terminator.whenTrue.arguments)
-        incomingArguments[block.terminator.whenFalse.block]!.push(...block.terminator.whenFalse.arguments)
-        break
-      case 'return':
-      case 'stop':
-      case 'thrown':
-        break
-    }
-  }
-  const dominatorsByBlock: Array<boolean[] | undefined> = []
-  // `other` dominates `block` when `block` is unreachable from the entry once `other` is
-  // removed: one breadth-first search per pair, bounded by the block count.
-  const dominators = (block: BlockID): boolean[] => dominatorsByBlock[block] ??= fn.blocks.map((_, other) => {
-    if (other === block || other === fn.entry) return true
-    const reached: boolean[] = []
-    reached[fn.entry] = true
-    const queue: BlockID[] = [fn.entry]
-    for (let index = 0; index < queue.length; index++) {
-      for (const next of successors[queue[index]!]!) {
-        if (next === other || reached[next] === true) continue
-        reached[next] = true
-        queue.push(next)
-      }
-    }
-    return reached[block] !== true
-  })
-  const cyclic = (block: BlockID): boolean => reachableFrom(successors, block)[block] === true
-  return {blockOfValue, incomingArguments, dominators, cyclic}
-}
-
 const maximumJoinCandidates = 32
+
+// Join facts kept per state, carried and new together. Without it, facts about every earlier
+// join ride along through a run of sequential joins, and each proof and merge reads them all.
+// Past the cap the oldest facts are dropped (failing closed) and counted, so the facts the
+// newest join verified stay.
+const maximumJoinFacts = 64
 
 // Join facts on a block's parameters (static-relations mode, blocks that are not loop
 // headers). The first arrival proposes candidates and keeps those that hold for the values
@@ -803,6 +763,9 @@ const maximumJoinCandidates = 32
 // Candidate order is stable: parameters in order, each with `nonnegative` first, then bounds
 // in ascending IR value order, `atMost` before `atLeast`. At most 32 verified candidates per
 // block; later ones are dropped (failing closed) and counted.
+// Carried facts never name the target's parameters, as parameter or bound: facts about a
+// block's parameters are minted only on arrival at that block, a block on a cycle mints
+// none, and a bound is never produced in the target itself.
 function maintainedJoinFacts(
   state: ExecutionState,
   edge: EdgeIR,
@@ -810,12 +773,9 @@ function maintainedJoinFacts(
   stored: JoinFact[] | null,
   context: TransferContext['expressionContext'],
   relations: StaticRelations,
-  flow: JoinFlow,
 ): JoinFact[] {
   const parameters = target.parameters
-  const namesParameter = (fact: JoinFact): boolean => parameters.includes(fact.parameter)
-    || (fact.kind !== 'nonnegative' && parameters.includes(fact.bound))
-  const facts = state.joinFacts.filter(fact => !namesParameter(fact))
+  const facts = state.joinFacts.slice()
   const holds = (fact: JoinFact): boolean => {
     const argument = edge.arguments[parameters.indexOf(fact.parameter)]!
     switch (fact.kind) {
@@ -828,10 +788,10 @@ function maintainedJoinFacts(
     for (const fact of stored) {
       if (parameters.includes(fact.parameter) && holds(fact)) facts.push(fact)
     }
-    return facts
+    return cappedJoinFacts(facts, relations)
   }
-  if (flow.cyclic(edge.block)) return facts
-  const bounds = joinBounds(state, edge.block, context, relations, flow)
+  if (relations.joinFlow.cyclic[edge.block] === true) return facts
+  const bounds = joinBounds(state, edge.block, context, relations)
   let verified = 0
   for (let index = 0; index < parameters.length; index++) {
     if (state.values[edge.arguments[index]!]?.kind !== 'number') continue
@@ -841,51 +801,76 @@ function maintainedJoinFacts(
       candidates.push({kind: 'atMost', parameter, bound}, {kind: 'atLeast', parameter, bound})
     }
     for (const candidate of candidates) {
+      if (relations.workExhausted) return cappedJoinFacts(facts, relations)
       if (!holds(candidate)) continue
       if (verified === maximumJoinCandidates) {
-        staticRelationCapHits.joinCandidates += 1
-        return facts
+        relations.counters.joinCandidates += 1
+        return cappedJoinFacts(facts, relations)
       }
       facts.push(candidate)
       verified += 1
     }
   }
-  return facts
+  return cappedJoinFacts(facts, relations)
+}
+
+function cappedJoinFacts(facts: JoinFact[], relations: StaticRelations): JoinFact[] {
+  if (facts.length <= maximumJoinFacts) return facts
+  relations.counters.joinFacts += 1
+  return facts.slice(facts.length - maximumJoinFacts)
 }
 
 // The values a join fact may name as its bound: numeric, non-NaN values held on the edge
 // that are function parameters or produced in a block dominating the target, and that are a
 // function parameter, an argument of some edge into the target, or named by an order fact on
-// this edge. One value per value number, the lowest IR value first.
+// this edge. One value per value number, the lowest IR value first. Only those three sources
+// are enumerated, not every value in the state, and the enumeration charges the evaluation's
+// work budget.
 function joinBounds(
   state: ExecutionState,
   target: BlockID,
   context: TransferContext['expressionContext'],
   relations: StaticRelations,
-  flow: JoinFlow,
 ): ValueID[] {
-  const dominators = flow.dominators(target)
+  const flow = relations.joinFlow
+  const numbering = relations.numbering
+  if (!chargeRelationalWork(relations, state.valueFacts.length + state.joinFacts.length)) return []
   const factNumbers = new Set<number>()
   for (const fact of state.valueFacts) {
     if (fact.kind !== 'order') continue
-    factNumbers.add(relations.numbering.ofIdentity(fact.left))
-    factNumbers.add(relations.numbering.ofIdentity(fact.right))
+    factNumbers.add(numbering.ofIdentity(fact.left))
+    factNumbers.add(numbering.ofIdentity(fact.right))
   }
   for (const fact of state.joinFacts) {
-    factNumbers.add(relations.numbering.ofValue(fact.parameter))
-    if (fact.kind !== 'nonnegative') factNumbers.add(relations.numbering.ofValue(fact.bound))
+    factNumbers.add(numbering.ofValue(fact.parameter))
+    if (fact.kind !== 'nonnegative') factNumbers.add(numbering.ofValue(fact.bound))
   }
-  const incoming = flow.incomingArguments[target]!
+  if (relations.functionValuesByNumber == null) {
+    if (!chargeRelationalWork(relations, flow.values.length)) return []
+    const valuesByNumber = new Map<number, ValueID[]>()
+    for (const value of flow.values) {
+      const number = numbering.ofValue(value)
+      const listed = valuesByNumber.get(number)
+      if (listed == null) valuesByNumber.set(number, [value])
+      else listed.push(value)
+    }
+    relations.functionValuesByNumber = valuesByNumber
+  }
+  const candidates = new Set<ValueID>(flow.functionParameters)
+  for (const argument of flow.incomingArguments[target]!) candidates.add(argument)
+  for (const number of factNumbers) {
+    for (const value of relations.functionValuesByNumber.get(number) ?? []) candidates.add(value)
+  }
+  if (!chargeRelationalWork(relations, candidates.size)) return []
   const bounds: ValueID[] = []
   const boundNumbers = new Set<number>()
-  for (let value = 0; value < state.values.length; value++) {
+  for (const value of [...candidates].sort((left, right) => left - right)) {
     const held = state.values[value]
     if (held?.kind !== 'number' || held.mayBeNaN) continue
-    const functionParameter = context.parameterIndexByValue[value] != null
     const block = flow.blockOfValue[value]
-    if (!functionParameter && (block == null || block === target || dominators[block] !== true)) continue
-    const number = relations.numbering.ofValue(value)
-    if (!functionParameter && !incoming.includes(value) && !factNumbers.has(number)) continue
+    if (context.parameterIndexByValue[value] == null
+      && (block == null || block === target || !flow.dominance.dominates(block, target))) continue
+    const number = numbering.ofValue(value)
     if (boundNumbers.has(number)) continue
     boundNumbers.add(number)
     bounds.push(value)

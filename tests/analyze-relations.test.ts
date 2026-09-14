@@ -1,6 +1,7 @@
 import {describe, expect, test} from 'bun:test'
 import {analyzeProgram} from '../src/engine/analyze.ts'
-import {createValueNumbering, staticRelationCapHits} from '../src/engine/transfer.ts'
+import {blockDominance, cyclicBlocks} from '../src/engine/join-flow.ts'
+import {createStaticRelationCounters, createValueNumbering} from '../src/engine/transfer.ts'
 import {analyzeSource} from '../src/index.ts'
 import type {InstructionIR} from '../src/ir/instructions.ts'
 import {lowerSource} from '../src/lower/program.ts'
@@ -10,10 +11,11 @@ import {checkSource} from '../src/typescript/check.ts'
 import {analyzedFunction, requirementsBesidesInputFiniteness} from './analyze-helpers.ts'
 
 // The static-relations prototype is selected per analysis here instead of through
-// FREERANGE_STATIC_RELATIONS, so tests in the same process cannot leak the mode.
-function analyze(source: string, staticRelations: boolean): AnalysisReport {
+// FREERANGE_STATIC_RELATIONS, so tests in the same process cannot leak the mode. Passing a
+// counters object turns the mode on and collects that analysis's cap hits.
+function analyze(source: string, staticRelations: boolean, counters = createStaticRelationCounters()): AnalysisReport {
   const program = lowerSource(checkSource('relations.ts', source))
-  return createReport(program, analyzeProgram(program, staticRelations))
+  return createReport(program, analyzeProgram(program, staticRelations ? counters : null))
 }
 
 function assertionVerdicts(report: AnalysisReport, name: string): string[] {
@@ -340,11 +342,13 @@ describe('static relations', () => {
         }
       `
     }
-    const before = staticRelationCapHits.closureBudget
-    expect(verdictsOffAndOn(chainSource('shortChain', 2, 1), 'shortChain')).toEqual({off: ['unproven'], on: ['proven']})
-    expect(staticRelationCapHits.closureBudget).toBe(before)
-    expect(verdictsOffAndOn(chainSource('longChain', 8, 40), 'longChain')).toEqual({off: ['unproven'], on: ['unproven']})
-    expect(staticRelationCapHits.closureBudget).toBeGreaterThan(before)
+    const shortCounters = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(chainSource('shortChain', 2, 1), true, shortCounters), 'shortChain')).toEqual(['proven'])
+    expect(shortCounters.closureBudget).toBe(0)
+    const longCounters = createStaticRelationCounters()
+    expect(verdictsOffAndOn(chainSource('longChain', 8, 40), 'longChain').off).toEqual(['unproven'])
+    expect(assertionVerdicts(analyze(chainSource('longChain', 8, 40), true, longCounters), 'longChain')).toEqual(['unproven'])
+    expect(longCounters.closureBudget).toBeGreaterThan(0)
   })
 
   test('fact cap: a helper evaluated with more caller facts than the cap finishes and proves nothing new', () => {
@@ -368,10 +372,10 @@ describe('static relations', () => {
         return width(start, end)
       }
     `
-    const before = staticRelationCapHits.factCap
+    const counters = createStaticRelationCounters()
     const off = analyze(source, false)
-    const on = analyze(source, true)
-    expect(staticRelationCapHits.factCap).toBeGreaterThan(before)
+    const on = analyze(source, true, counters)
+    expect(counters.factCap).toBeGreaterThan(0)
     expect(assertionVerdicts(on, 'width')).toEqual(assertionVerdicts(off, 'width'))
     expect(requirementsBesidesInputFiniteness(analyzedFunction(on, 'manyFacts')))
       .toEqual(requirementsBesidesInputFiniteness(analyzedFunction(off, 'manyFacts')))
@@ -394,9 +398,153 @@ describe('static relations', () => {
     `
     // Candidates on the first arrival, in order: chosen >= 0 fails; chosen <= first and
     // first <= chosen hold (2); second fails both ways; chosen <= bound0 .. bound29 hold (32).
-    const before = staticRelationCapHits.joinCandidates
-    expect(verdictsOffAndOn(source, 'manyBounds')).toEqual({off: ['unproven', 'unproven'], on: ['proven', 'unproven']})
-    expect(staticRelationCapHits.joinCandidates).toBeGreaterThan(before)
+    const counters = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(source, false), 'manyBounds')).toEqual(['unproven', 'unproven'])
+    expect(assertionVerdicts(analyze(source, true, counters), 'manyBounds')).toEqual(['proven', 'unproven'])
+    expect(counters.joinCandidates).toBeGreaterThan(0)
+  })
+
+  test('join facts per state cap: sequential joins keep the newest 64 facts', () => {
+    // Each `if` ends in a join with one parameter, and each join verifies up to 32 facts
+    // about that parameter, so facts about earlier joins pile up past the cap within a few
+    // statements. The last join's facts are the newest, so the assert about x3 still proves.
+    // 12 statements hit the cap without exhausting the evaluation's work budget.
+    const bounds = range(16).map(index => `b${index}`)
+    const source = `
+      export function sequentialJoins(s: number, lo: number, hi: number, ${bounds.map(bound => `${bound}: number`).join(', ')}) {
+        console.assert(s >= 0)
+        console.assert(s <= 12)
+        console.assert(lo >= 0)
+        console.assert(hi <= 1000)
+        ${bounds.map(bound => `console.assert(lo <= ${bound})\nconsole.assert(${bound} <= hi)`).join('\n')}
+        let x0 = lo
+        let x1 = lo
+        let x2 = hi
+        let x3 = hi
+        ${range(12).map(index => `if (s > ${index}) x${index % 4} = b${index % 16}`).join('\n')}
+        console.assert(x3 <= hi)
+      }
+    `
+    const counters = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(source, false), 'sequentialJoins')).toEqual(['unproven'])
+    expect(assertionVerdicts(analyze(source, true, counters), 'sequentialJoins')).toEqual(['proven'])
+    expect(counters.joinFacts).toBeGreaterThan(0)
+    expect(counters.evaluationWork).toBe(0)
+  })
+
+  test('evaluation work budget: a function with many wide joins stops relational work, and other functions keep theirs', () => {
+    // 16 variables reassigned inside each of 60 sequential ifs: every join has 16 parameters,
+    // each proposing candidates against every bound. Without a total budget the work grows
+    // roughly with the cube of the statement count (400 ifs ran past 300 s).
+    const variables = range(16)
+    const source = `
+      export function wideJoins(s: number, lo: number, hi: number, b0: number, b1: number, b2: number, b3: number) {
+        console.assert(s >= 0)
+        console.assert(s <= 60)
+        console.assert(lo >= 0)
+        console.assert(hi <= 1000)
+        ${range(4).map(index => `console.assert(lo <= b${index})\nconsole.assert(b${index} <= hi)`).join('\n')}
+        ${variables.map(index => `let x${index} = lo`).join('\n')}
+        ${range(60).map(join => `if (s > ${join}) {\n${variables.map(index => `x${index} = b${(join + index) % 4}`).join('\n')}\n}`).join('\n')}
+        ${variables.map(index => `console.assert(x${index} <= hi)`).join('\n')}
+      }
+      export function clamp(low: number, value: number, high: number): number {
+        console.assert(low <= high)
+        const result = value > high ? high : value < low ? low : value
+        console.assert(result >= low)
+        console.assert(result <= high)
+        return result
+      }
+    `
+    const counters = createStaticRelationCounters()
+    const off = analyze(source, false)
+    const on = analyze(source, true, counters)
+    expect(counters.evaluationWork).toBeGreaterThan(0)
+    const offVerdicts = assertionVerdicts(off, 'wideJoins')
+    const onVerdicts = assertionVerdicts(on, 'wideJoins')
+    expect(onVerdicts).toHaveLength(offVerdicts.length)
+    offVerdicts.forEach((verdict, index) => {
+      if (verdict === 'proven') expect(onVerdicts[index]).toBe('proven')
+    })
+    expect(assertionVerdicts(on, 'clamp')).toEqual(['proven', 'proven'])
+  })
+
+  test('block dominance and cycles match their definitions on random control flow graphs', () => {
+    let seed = 91415
+    const random = (): number => {
+      seed = (seed + 0x6d2b79f5) | 0
+      let mixed = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+      mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed
+      return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296
+    }
+    // Definitions: `dominator` dominates a reachable `block` when no path from the entry
+    // reaches `block` once `dominator` is removed; a block is on a cycle when it reaches itself
+    // through one or more edges.
+    const reachableAvoiding = (successors: number[][], entry: number, avoided: number | null): boolean[] => {
+      const reached: boolean[] = []
+      if (entry === avoided) return reached
+      reached[entry] = true
+      const queue = [entry]
+      for (let index = 0; index < queue.length; index++) {
+        for (const next of successors[queue[index]!]!) {
+          if (next === avoided || reached[next] === true) continue
+          reached[next] = true
+          queue.push(next)
+        }
+      }
+      return reached
+    }
+    const reachesItself = (successors: number[][], block: number): boolean => {
+      const reached: boolean[] = []
+      const queue = [...successors[block]!]
+      for (let index = 0; index < queue.length; index++) {
+        const next = queue[index]!
+        if (next === block) return true
+        if (reached[next] === true) continue
+        reached[next] = true
+        queue.push(...successors[next]!)
+      }
+      return false
+    }
+    const check = (successors: number[][]): boolean => {
+      const dominance = blockDominance(successors, 0)
+      const cyclic = cyclicBlocks(successors)
+      const reachable = reachableAvoiding(successors, 0, null)
+      for (let block = 0; block < successors.length; block++) {
+        expect(`${JSON.stringify(successors)} cyclic ${block}: ${cyclic[block]}`).toBe(`${JSON.stringify(successors)} cyclic ${block}: ${reachesItself(successors, block)}`)
+        for (let dominator = 0; dominator < successors.length; dominator++) {
+          const claimed = dominance.dominates(dominator, block)
+          if (reachable[block] !== true) {
+            expect(claimed).toBe(false)
+            continue
+          }
+          const definition = dominator === block || reachableAvoiding(successors, 0, dominator)[block] !== true
+          // Reducible graphs get exact dominance; otherwise only the entry and the block itself.
+          const expected = dominance.reducible ? definition : dominator === 0 || dominator === block
+          expect(`${JSON.stringify(successors)} ${dominator} dominates ${block}: ${claimed}`).toBe(`${JSON.stringify(successors)} ${dominator} dominates ${block}: ${expected}`)
+        }
+      }
+      return dominance.reducible
+    }
+    // Two entries into one cycle: the classic irreducible graph.
+    expect(check([[1, 2], [2], [1]])).toBe(false)
+    // A loop with a break and a continue, as lowered structured code produces.
+    expect(check([[1], [2, 5], [3, 4], [1], [5, 1], []])).toBe(true)
+    let reducible = 0
+    let irreducible = 0
+    for (let graph = 0; graph < 3000; graph++) {
+      const blockCount = 1 + Math.floor(random() * 9)
+      const successors = range(blockCount).map(() => {
+        const shape = random()
+        const target = (): number => Math.floor(random() * blockCount)
+        return shape < 0.25 ? [] : shape < 0.6 ? [target()] : [target(), target()]
+      })
+      if (check(successors)) reducible++
+      else irreducible++
+    }
+    // Both outcomes are exercised: with this seed, 67 of the 3000 graphs are irreducible.
+    expect(reducible).toBeGreaterThan(30)
+    expect(irreducible).toBeGreaterThan(30)
   })
 
   test('values computed on one arm never feed the closure after the join', () => {
