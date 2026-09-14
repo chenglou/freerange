@@ -23,7 +23,9 @@ type PlanCopy = {copy: string; files: PlanFile[]; sites: PlanSite[]; entries: Pl
 type Plan = {copies: PlanCopy[]}
 type BaselineFiring = {site: number; counts: number[][]; first: Array<{input: string} | null>; byCause: Record<string, number>}
 type BaselineRecord = {type: string; base: string; entry: string; reached: number[]; firings: BaselineFiring[]}
-type WitnessSite = {key: string; firing: number; reservoirs: Array<{firstVerified: string | null}>}
+// withoutDomainLine counts firing inputs where no domain line (a leading assert of the entry or a substituted callee
+// requirement) fired in the same call; reservoirs store only those inputs.
+type WitnessSite = {key: string; firing: number; withoutDomainLine: number; reservoirs: Array<{firstVerified: string | null}>}
 type WitnessFile = {sets: Array<{set: string}>; entries: Array<{name: string; sites: WitnessSite[]}>}
 type LabelGroups = Record<string, number[]>
 type M7Registration = {labels: {inScope: {precondition: LabelGroups; real: LabelGroups; realRestatedUnderStricter: LabelGroups; restated: LabelGroups}}}
@@ -84,6 +86,12 @@ function occurrenceOf(instrumentKey: string): number {
   return Number(instrumentKey.split('|').at(-1))
 }
 
+// Oracle keys are `<path>|<owner>|<condition>|<occurrence>`, and the condition itself can hold `||`.
+function splitOracleKey(key: string): {path: string; owner: string; text: string; occurrence: string} {
+  const parts = key.split('|')
+  return {path: parts[0]!, owner: parts[1] ?? '', text: parts.slice(2, -1).join('|'), occurrence: parts.at(-1) ?? '0'}
+}
+
 const units: CorpusUnit[] = []
 const skipped: CorpusManifest['skipped'] = []
 // Local node_modules directories by label, written to <corpus>/node-modules.json as the scorer's defaults.
@@ -128,16 +136,18 @@ function planGroundTruth(copy: PlanCopy, options: {run: string; domain: string; 
     let witness: GroundTruthSite['witness'] = null
     if (options.witness != null && options.witnessRun != null) {
       let witnessFiring = 0
+      let withoutDomainLine = 0
       for (const entry of options.witness.entries) {
         for (const witnessSite of entry.sites) {
           if (witnessSite.key !== site.key) continue
           witnessFiring += witnessSite.firing
+          withoutDomainLine += witnessSite.withoutDomainLine
           for (const reservoir of witnessSite.reservoirs) {
             if (reservoir.firstVerified != null && entryFile.has(entry.name)) addExample({entryFile: entryFile.get(entry.name)!, entry: entry.name, args: reservoir.firstVerified, source: 'witness set, first verified firing input'})
           }
         }
       }
-      witness = {run: options.witnessRun, sets: options.witness.sets.map(set => set.set), firing: witnessFiring}
+      witness = {run: options.witnessRun, sets: options.witness.sets.map(set => set.set), firing: witnessFiring, withoutDomainLine}
     }
 
     const killing = options.kills.filter(row =>
@@ -396,7 +406,7 @@ function decodeDirectExample(example: string, grid: Grid, stageFile: string): Ex
       nodeModulesPaths[nodeModulesLabel] = scratchPath(`replay/cache/node_modules/${cacheHash}/node_modules`)
       const fileOfContract = (contract: OracleContract): string => contract.key.split('|')[0]!
       const groundTruth: GroundTruthSite[] = credited.map(contract => {
-        const [path, owner, text, occurrence] = contract.key.split('|') as [string, string, string, string]
+        const {path, owner, text, occurrence} = splitOracleKey(contract.key)
         const firingAtStage = stage === 'c0' ? contract.firingAtC0 ?? 0 : contract.firingAtC1 ?? contract.insideImpactC1
         return {
           key: `${path}|${owner}|${normalizeConditionText(text)}|${occurrence}`,
@@ -481,7 +491,7 @@ function decodeDirectExample(example: string, grid: Grid, stageFile: string): Ex
         continue
       }
       const groundTruth: GroundTruthSite[] = oracle.caught.map(key => {
-        const [keyPath, owner, text, occurrence] = key.split('|') as [string, string, string, string]
+        const {path: keyPath, owner, text, occurrence} = splitOracleKey(key)
         const row = oracle.rows?.find(candidate => candidate.key === key)
         const cells: Record<string, unknown> = {}
         let firesAtStage = false
@@ -505,6 +515,8 @@ function decodeDirectExample(example: string, grid: Grid, stageFile: string): Ex
           examples: [],
         }
       })
+      // TanStack Virtual reads process.env.NODE_ENV; without @types/node the file stops on TS2591 before analysis.
+      closure.files.set('eval-ambient.d.ts', 'declare const process: {env: Record<string, string | undefined>}\n')
       addUnit({
         id,
         slice: 'replay',
@@ -518,7 +530,11 @@ function decodeDirectExample(example: string, grid: Grid, stageFile: string): Ex
         provenance: {
           sources: [...closure.files].map(([sourcePath, text]) => ({path: sourcePath, from: `S/external-replay/${repo} ${stage.commit}:${sourcePath}`, sha1: sha1(text)})),
           runs: [`S/${path}`],
-          notes: [`stage ${stage.label} of ${reportPath}; firings come from unit tests and probes, so no example input is stored`, 'tsconfig: a strict default with types []; packages listed in `packages` are not provided'],
+          notes: [
+            `stage ${stage.label} of ${reportPath}; firings come from unit tests and probes, so no example input is stored`,
+            'tsconfig: a strict default with types []; packages listed in `packages` are not provided',
+            'eval-ambient.d.ts declares `process` so files that read process.env type-check without @types/node',
+          ],
         },
         recordedFindings: [],
         groundTruth,

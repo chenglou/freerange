@@ -89,6 +89,11 @@ function ownerOf(call: ts.CallExpression, unitsByNode: Map<ts.Node, TopLevelUnit
       const memberName = ts.isConstructorDeclaration(current) ? 'constructor' : current.name.getText()
       return {owner: `${className}.${memberName}`, unit: null}
     }
+    // A class property initialized with a function, e.g. `getTotalSize = () => {...}`.
+    if ((ts.isArrowFunction(current) || ts.isFunctionExpression(current))
+      && ts.isPropertyDeclaration(current.parent) && ts.isClassLike(current.parent.parent)) {
+      return {owner: `${current.parent.parent.name?.text ?? ''}.${current.parent.name.getText()}`, unit: null}
+    }
     current = ts.findAncestor(current.parent, ts.isFunctionLike)
   }
   return {owner: '', unit: null}

@@ -27,6 +27,9 @@ class Virtualizer {
     console.assert(this.scrollOffset >= 0)
     return this.scrollOffset
   }
+  scrollToOffset = (offset: number) => {
+    console.assert(offset >= 0 || this.scrollOffset === 0)
+  }
 }
 `
 
@@ -40,6 +43,7 @@ test('classifies leading requirements, interior assertions, callbacks and class 
     [12, 'outside', 'layout'],
     [15, 'assertion', 'layout'],
     [24, 'outside', 'Virtualizer.getTotalSize'],
+    [28, 'outside', 'Virtualizer.scrollToOffset'],
   ])
   expect(sites[3]!.key).toBe('src/sample.ts|clampWidth|clamped <= max|1')
   expect(sites[5]!.text).toBe('total >= 0')

@@ -23,7 +23,9 @@ export type GroundTruthSite = {
   text: string
   labels: {reader: string; stricter: string} | null
   lattice: {run: string; domain: string; inputsReached: number; firing: {none: number; abs1e9: number; literal: number}; byCause: Record<string, number>} | null
-  witness: {run: string; sets: string[]; firing: number} | null
+  // firing counts every firing input of the witness sets; withoutDomainLine counts those where no domain line (a leading
+  // assert or a substituted callee requirement) fired in the same call, the only ones that can be in-domain.
+  witness: {run: string; sets: string[]; firing: number; withoutDomainLine: number} | null
   kills: {run: string; rule: string; count: number; generated: number; planted: number; mutants: string[]} | null
   catching: boolean
   replay: {report: string; stage: string; stageCommit: string; firesAtStage: boolean; evidence: Record<string, unknown>} | null

@@ -81,7 +81,9 @@ const scorerDirectory = new URL('.', import.meta.url).pathname
 const verdicts: Verdict[] = ['proved', 'could-not-prove', 'can-be-false', 'not-analyzed', 'requirement']
 const emptyCounts = (): Record<Verdict, number> => ({'proved': 0, 'could-not-prove': 0, 'can-be-false': 0, 'not-analyzed': 0, 'requirement': 0})
 
-type RuntimeSummary = {examplesRun: number; outcome: ExampleOutcome['status'] | 'no examples' | 'skipped'; why: string | null; example: string | null}
+// 'not run for this verdict': the site has examples, but its verdict is not-analyzed or requirement, which a firing
+// can't contradict. 'skipped by cap': the run's example cap was reached first.
+type RuntimeSummary = {examplesRun: number; outcome: ExampleOutcome['status'] | 'no examples' | 'not run for this verdict' | 'skipped by cap'; why: string | null; example: string | null}
 
 type Row = {
   unit: string
@@ -127,7 +129,7 @@ type SliceSummary = {
 function firesOnCorpusInputs(truth: GroundTruthSite | undefined): boolean {
   if (truth == null) return false
   if (truth.replay != null) return truth.replay.firesAtStage
-  return (truth.lattice?.firing.none ?? 0) > 0 || (truth.witness?.firing ?? 0) > 0
+  return (truth.lattice?.firing.none ?? 0) > 0 || (truth.witness?.withoutDomainLine ?? 0) > 0
 }
 
 async function main(): Promise<void> {
@@ -253,7 +255,7 @@ async function main(): Promise<void> {
           .map(entry => runtimeSiteID(entry.site)))
         const outcome = classifyEvents(result, runtimeSiteID(site), site.topLevelFunction, leadingIDs)
         const previous = runtimeOutcomes.get(site.key)
-        const rank = (status: RuntimeSummary['outcome']): number => ['fires-in-domain', 'fires-out-of-domain', 'holds', 'not-run', 'no examples', 'skipped'].indexOf(status)
+        const rank = (status: RuntimeSummary['outcome']): number => ['fires-in-domain', 'fires-out-of-domain', 'holds', 'not-run', 'no examples', 'not run for this verdict', 'skipped by cap'].indexOf(status)
         if (previous == null || rank(outcome.status) < rank(previous.outcome)) {
           runtimeOutcomes.set(site.key, {examplesRun: (previous?.examplesRun ?? 0) + 1, outcome: outcome.status, why: 'why' in outcome ? outcome.why : null, example: `${example.entry}(${example.args.slice(1, -1)}) [${example.source}]`})
         } else {
@@ -264,7 +266,13 @@ async function main(): Promise<void> {
 
     for (const {site, verdict} of sitesWithVerdicts) {
       const truth = truthByKey.get(site.key)
-      const runtime = runtimeOutcomes.get(site.key) ?? {examplesRun: 0, outcome: truth == null || truth.examples.length === 0 ? 'no examples' : 'skipped', why: null, example: null}
+      const checkableVerdict = verdict.verdict === 'proved' || verdict.verdict === 'can-be-false' || verdict.verdict === 'could-not-prove'
+      const runtime: RuntimeSummary = runtimeOutcomes.get(site.key) ?? {
+        examplesRun: 0,
+        outcome: truth == null || truth.examples.length === 0 ? 'no examples' : checkableVerdict && !options.skipRuntime ? 'skipped by cap' : 'not run for this verdict',
+        why: options.skipRuntime ? '--skip-runtime' : null,
+        example: null,
+      }
       const soundnessViolation = verdict.verdict === 'proved' && runtime.outcome === 'fires-in-domain'
       const fires = firesOnCorpusInputs(truth)
       const row: Row = {
@@ -316,7 +324,7 @@ async function main(): Promise<void> {
       canBeFalse: '`console.assert condition can be false` or a declared requirement reported false',
       notAnalyzed: 'the function wasn\'t lowered, the assert is outside a named top-level function, or the run failed (timeout, TypeScript errors, missing node_modules)',
       requirement: 'a leading assert of a lowered function with no finding: a caller requirement Freerange assumes inside the function',
-      firesOnCorpusInputs: 'lattice firing under noise@none > 0, or witness firing > 0, or for replay units the oracle\'s firings at that stage',
+      firesOnCorpusInputs: 'lattice firing under noise@none > 0, or witness firings without a domain line > 0, or for replay units the oracle\'s firings at that stage',
       confirmedInDomain: 'a stored example input, re-run on an instrumented copy, fires the assert in a call of its function whose leading asserts held and whose numeric inputs were finite',
       soundnessViolation: 'a proved site with a confirmed in-domain firing',
       catchingProved: 'catching sites (kills >= 1, or oracle-credited) with verdict proved',
