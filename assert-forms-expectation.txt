@@ -1,0 +1,27 @@
+Registered expectation for the assert-forms prototype, written before any code.
+
+Baseline: Freerange origin/main 1dfafc5, corpus night-eval@v1 (manifest sha1 3e312cbe), scorer 316f891.
+Feature switch: FREERANGE_ASSERT_FORMS=1. Without it, Freerange behaves exactly as origin/main.
+
+Forms, in build order:
+1. && in leading requirements (consecutive staticRequire) and interior assertions (parts under one assertion index)
+2. boolean-valued conditions whose lowering emits only removable instructions
+3. interior || (a true-edge constant, B's parts on the false edge, a removability gate over every block the condition creates, at most 16 disjuncts)
+4. pure + - * and supported Math.* operands, in assertion conditions only
+5. expression-bodied local predicate helpers, inlined only where every reference is a direct call inside a console.assert condition
+
+Cut: leading ||, helper references in ordinary code, element reads, / and % in conditions, asserts in loops, merging 3c02476, any src/engine or src/domain change.
+
+Caps, each past which the function is unsupported with a new staticAssertionForm reason: condition depth 32, parts per assert 64, disjuncts per || chain 16, helper inlining depth 1, helper body 256 AST nodes.
+
+Counting rules (joined to the baseline verdicts.jsonl by unit, file and line; a line's combined verdict is the worst over its parts, in the order not analyzed > can be false > could not prove > requirement > proved):
+- newly analyzed: baseline not analyzed, combined verdict anything else
+- newly proved: baseline not proved, combined verdict proved
+- lost proof: baseline proved, combined verdict not proved
+
+Expected:
+- newly analyzed: mj-gallery 8 (tooltipInPlacePosition :549, :550, :561, :562, :563, :564, :567, :568), families 14 (menuHoverCorridorProperties :189, :190, :196, :197, :200, :217, :225 in popovers contracts and contracts-k7t5b), replay 0
+- newly proved 0, catching newly proved 0, can be false 0, soundness violations 0, lost proofs 0
+- stored examples firing in domain on newly analyzed sites: 2 (menuGeometry :225 in both copies)
+- per-line verdicts equal to the L5 simulation (assert-forms/scores/L5/verdicts.jsonl) on all 1,947 lines
+- the 14 families sites are expected to appear at step 2 (boolean conditions); the 8 mj-gallery sites need steps 1, 3, 4 and 5
