@@ -128,38 +128,70 @@ function domainSection(run: Run, write: Writer) {
   write()
 }
 
+// Every [console-assert] finding in one fr output. `functionName` is set when Freerange didn't analyze the function at
+// all (an unsupported console.assert form or other unsupported code): none of its asserts were checked, so the finding
+// joins to every site of that function instead of to its own line. Freerange's messages are in src/project.ts
+// (assertionErrorMessage, collectAssertions and the notLowered finding).
+type FreerangeFinding = {line: number; verdict: string; functionName: string | null}
+
+function freerangeFindings(text: string): FreerangeFinding[] {
+  const findings: FreerangeFinding[] = []
+  for (const match of text.matchAll(/\((\d+),\d+\): (?:error|warning) \[console-assert\]: (.+)$/gm)) {
+    const line = Number(match[1])
+    const message = match[2]!
+    const verdict = /^could not (?:prove|check)/.exec(message)?.[0]
+      ?? (message.startsWith('console.assert condition can be false') ? 'can be false' : message.startsWith('console.assert is unreachable') ? 'unreachable' : null)
+    if (verdict != null) {
+      findings.push({line, verdict, functionName: null})
+      continue
+    }
+    // Not checked. A function Freerange didn't analyze is named after "console.assert in", or ends an assert-form message.
+    // The requirement and top-level messages name no such function and join by line.
+    const notAnalyzed = /^console\.assert in (\S+) was not checked because /.exec(message)
+      ?? (message.startsWith('console.assert requirements in ') || message.startsWith('console.assert is only supported') ? null : / in (\S+)$/.exec(message))
+    findings.push({line, verdict: notAnalyzed == null ? 'not checked' : `not checked: ${notAnalyzed[1]} not analyzed (finding at :${line})`, functionName: notAnalyzed?.[1] ?? null})
+  }
+  return findings
+}
+
 function freerangeSection(run: Run, write: Writer) {
-  write('### Asserts Freerange could not prove or check, joined by line')
+  write('### Asserts Freerange did not prove, joined by line (a function Freerange did not analyze joins to all of its sites)')
   write()
   const rows: (string | number)[][] = []
+  let findingCount = 0
+  let reachedRows = 0
+  let counterexamples = 0
   for (const copy of run.plan.copies) {
     for (const file of copy.files) {
       const path = join(run.outDir, `fr-${copy.copy}-${file.file}.txt`)
       if (!existsSync(path)) continue
-      for (const match of readFileSync(path, 'utf8').matchAll(/\((\d+),\d+\): (?:error|warning) \[console-assert\]: (could not (?:prove|check))/g)) {
-        const lineNumber = Number(match[1])
-        const site = copy.sites.find((candidate) => candidate.file === file.file && candidate.line === lineNumber)
-        if (site == null) {
-          rows.push([copy.copy, `${file.file}:${lineNumber}`, match[2]!, '(no site on this line)', '', '', ''])
+      for (const finding of freerangeFindings(readFileSync(path, 'utf8'))) {
+        findingCount += 1
+        const sites = copy.sites.filter((candidate) => candidate.file === file.file && (finding.functionName == null ? candidate.line === finding.line : candidate.functionName === finding.functionName))
+        if (sites.length === 0) {
+          rows.push([copy.copy, `${file.file}:${finding.line}`, finding.verdict, '(no site)', '', '', ''])
           continue
         }
-        let reached = 0
-        let firstFiring: {entry: string; first: FirstFiring; total: number} | null = null
-        for (const entry of copy.entries) {
-          const line = run.baseline.get(`${copy.copy}.${entry.name}`)
-          if (line == null) continue
-          reached += line.reached[site.index] ?? 0
-          const firing = line.firings.find((candidate) => candidate.site === site.index)
-          const first = firing?.first[CRITERION_RULE] ?? null
-          if (firing != null && first != null && (firstFiring == null || entry.name === site.functionName)) firstFiring = {entry: entry.name, first, total: firing.counts[CRITERION_RULE]!.reduce((sum, count) => sum + count, 0)}
+        for (const site of sites) {
+          let reached = 0
+          let firstFiring: {entry: string; first: FirstFiring; total: number} | null = null
+          for (const entry of copy.entries) {
+            const line = run.baseline.get(`${copy.copy}.${entry.name}`)
+            if (line == null) continue
+            reached += line.reached[site.index] ?? 0
+            const firing = line.firings.find((candidate) => candidate.site === site.index)
+            const first = firing?.first[CRITERION_RULE] ?? null
+            if (firing != null && first != null && (firstFiring == null || entry.name === site.functionName)) firstFiring = {entry: entry.name, first, total: firing.counts[CRITERION_RULE]!.reduce((sum, count) => sum + count, 0)}
+          }
+          if (reached > 0) reachedRows += 1
+          if (firstFiring != null) counterexamples += 1
+          const excluded = site.functionName != null && copy.excludedEntries.includes(site.functionName)
+          rows.push([copy.copy, siteLabel(site), finding.verdict, excluded ? `${reached} (excluded entry)` : reached, firstFiring == null ? 0 : firstFiring.total, firstFiring == null ? '' : firstFiring.first.cause, firstFiring == null ? '' : formatInput(firstFiring.entry, firstFiring.first)])
         }
-        rows.push([copy.copy, siteLabel(site), match[2]!, reached, firstFiring == null ? 0 : firstFiring.total, firstFiring == null ? '' : firstFiring.first.cause, firstFiring == null ? '' : formatInput(firstFiring.entry, firstFiring.first)])
       }
     }
   }
-  const counterexamples = rows.filter((row) => typeof row[4] === 'number' && row[4] > 0).length
-  const unreached = rows.filter((row) => row[3] === 0).length
-  write(`${rows.length} Freerange console-assert findings on the copies; ${rows.length - unreached} reached by the lattice; ${counterexamples} with a counterexample under noise@abs1e-9. Reached counts sum over entries.`)
+  write(`${findingCount} Freerange console-assert findings on the copies, joined to ${rows.length} sites; ${reachedRows} sites reached by the lattice; ${counterexamples} with a counterexample under noise@abs1e-9. Reached counts sum over entries.`)
   write()
   write(table(['copy', 'site', 'Freerange', 'in-domain inputs reaching it', 'firing inputs (criterion)', 'cause', 'first counterexample'], rows))
   write()
