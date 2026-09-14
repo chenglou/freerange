@@ -1,0 +1,39 @@
+Static relations prototype: registered expectation
+
+Written before any code on proto/static-relations (from origin/main 1dfafc5).
+
+Mode: every new rule runs only with FREERANGE_STATIC_RELATIONS=1, and only inside the proof of interior console.assert conditions (staticAssert). Leading requirements (staticRequire), requirement inference and ordinary analysis keep origin/main's rules.
+
+Mechanisms in build order: value numbering, bounded order closure (including max(xs) <= min(ys)), sign through order, facts at joins (not at loop headers), integer offsets (first to cut). No return relations, no float algebra or tolerance rules.
+
+Counting rules are the corpus scorer's (eval/score.ts at 316f891), joined to baseline-main-1dfafc5/verdicts.jsonl by (unit, file, line):
+- newly proved: baseline verdict not proved, new verdict proved
+- catching: the baseline's `catching` field
+- lost proof: baseline proved, new verdict not proved
+
+Upper bounds, from the static-relations proposal's one-reader classification with return relations removed:
+
+| slice | proved | catching proved | newly analyzed | can be false | soundness violations | lost proofs |
+|---|---|---|---|---|---|---|
+| mj-gallery | 48 -> at most 49 (c05 virtualizedGridLayout :75) | 40 -> at most 41 | 0 | 0 | 0 | 0 |
+| families | 286 -> at most 306; at most 304 if integer offsets are cut | 99 -> at most 112; at most 110 if integer offsets are cut | 0 | 0 | 0 | 0 |
+| replay | 0 -> 0 | 0 -> 0 | 0 | 0 | 0 | 0 |
+
+Predicted family sites:
+- value numbering: picker :66, popovers contracts menuGeometry :355, k7t5b menuGeometry :355, k7t5b coachmarkLayout :54, packing contracts geometry :23
+- order closure: grid base_grid :88 (and mj-gallery c05 :75)
+- sign through order: frames inv NewSidebarLayout :79, frames reshaped NewSidebarLayout :83, packing reshaped geometry :137
+- value numbering plus sign: packing contracts geometry :101
+- joins: sref :58, popovers contracts and k7t5b personalizePopupGeometry :62, frames inv appLayoutGeometry :63, packing contracts masonry :77 and :78
+- joins plus sign: frames reshaped NewSidebarLayout :214 and :215
+- integer offsets: grid :220, picker :70
+
+Gates:
+- scorer soundness violations 0 in every slice
+- none of the 53 families sites whose stored example fires in domain moves to proved
+- any newly proved site outside the predicted list is listed with its mechanism and stored-example outcome
+- fr --audit requires, ensures and assumes lines identical to origin/main on every corpus file
+- per file: wall time at most 2x baseline, max RSS at most baseline + 100 MB
+- the proposal's float, NaN, 2^53, strictness and join negative tests stay unproven
+
+Caps, each with a test that hits it: closure visit budget 4x the function's instruction count per query; facts read per state max(64, 2x instruction count); 32 join candidates per block.
