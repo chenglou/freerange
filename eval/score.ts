@@ -4,12 +4,15 @@
 //     [--slice mj-gallery|families|replay]... [--unit <id>]... [--timeout-seconds 300]
 //     [--node-modules mj-gallery=<dir>] [--examples-per-site 3] [--max-runtime-runs 3000]
 //     [--runtime-timeout-seconds 20] [--skip-runtime]
+//     [--sweep 1|error] [--sweep-filters base|default] [--sweep-cap <number>]
 //
 // For every analyzed file of every unit it runs `bun <freerange>/fr.ts <file>` in a copy of the unit's tree, under
 // `/usr/bin/time -l` and a per-file timeout, and joins the findings to each console.assert site (lib/findings.ts). Sites
 // that are proved, can be false or could not be proved, and have stored example inputs, are run on those inputs
 // (lib/runtime.ts): a firing in-domain confirms a counterexample, and on a proved site it is a soundness violation.
 // Outputs: run.json, verdicts.jsonl (one row per site), files.tsv, summary.json, summary.md, raw/ and work/.
+// With --sweep, `fr` runs with FREERANGE_SWEEP (proto/runtime-sweeps) and writes <work>/<file>.sweep.json; every verdicts.jsonl
+// row gains a `sweep` column (lib/sweep.ts) and summary.json gains per-slice sweep outcomes by verdict and by role.
 import {spawnSync} from 'node:child_process'
 import {createHash} from 'node:crypto'
 import {appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync} from 'node:fs'
@@ -18,6 +21,7 @@ import {extractAssertSites, runtimeSiteID, type AssertSite} from './lib/asserts.
 import {failedRunReason, joinVerdicts, parseFreerangeOutput, type RunOutcome, type SiteVerdict, type Verdict} from './lib/findings.ts'
 import {findConfigUpward, loadManifest, readJsonFile, type GroundTruthSite, type Slice} from './lib/manifest.ts'
 import {runMeasured} from './lib/process.ts'
+import {readSweepJson, sweepColumn, type SweepColumn} from './lib/sweep.ts'
 import {classifyEvents, runExample, selectExamples, writeRuntimeTree, type ExampleOutcome, type RuntimeResult} from './lib/runtime.ts'
 
 type Options = {
@@ -32,12 +36,16 @@ type Options = {
   examplesPerSite: number
   maxRuntimeRuns: number
   skipRuntime: boolean
+  sweep: '1' | 'error' | null
+  sweepFilters: 'base' | 'default' | null
+  sweepCap: number | null
 }
 
 function parseOptions(argv: string[]): Options {
   const options: Options = {
     freerange: '', out: '', corpus: '', slices: null, units: null,
     timeoutMs: 300_000, runtimeTimeoutMs: 20_000, nodeModules: new Map(), examplesPerSite: 3, maxRuntimeRuns: 3000, skipRuntime: false,
+    sweep: null, sweepFilters: null, sweepCap: null,
   }
   for (let index = 0; index < argv.length; index++) {
     const name = argv[index]!
@@ -57,6 +65,19 @@ function parseOptions(argv: string[]): Options {
       case '--examples-per-site': options.examplesPerSite = Number(value()); break
       case '--max-runtime-runs': options.maxRuntimeRuns = Number(value()); break
       case '--skip-runtime': options.skipRuntime = true; break
+      case '--sweep': {
+        const flag = value()
+        if (flag !== '1' && flag !== 'error') throw new Error('--sweep takes 1 or error')
+        options.sweep = flag
+        break
+      }
+      case '--sweep-filters': {
+        const filters = value()
+        if (filters !== 'base' && filters !== 'default') throw new Error('--sweep-filters takes base or default')
+        options.sweepFilters = filters
+        break
+      }
+      case '--sweep-cap': options.sweepCap = Number(value()); break
       case '--node-modules': {
         const [label, directory] = value().split('=')
         if (label == null || directory == null) throw new Error('--node-modules takes <name>=<directory>')
@@ -69,6 +90,7 @@ function parseOptions(argv: string[]): Options {
   if (options.freerange === '' || options.out === '' || options.corpus === '') throw new Error('--freerange, --corpus and --out are required')
   if (!existsSync(join(options.freerange, 'fr.ts'))) throw new Error(`no fr.ts in ${options.freerange}`)
   if (existsSync(options.out)) throw new Error(`${options.out} exists; each run writes a new directory`)
+  if (options.sweep == null && (options.sweepFilters != null || options.sweepCap != null)) throw new Error('--sweep-filters and --sweep-cap need --sweep')
   return options
 }
 
@@ -108,6 +130,7 @@ type Row = {
   firesOnCorpusInputs: boolean
   runtime: RuntimeSummary
   soundnessViolation: boolean
+  sweep?: SweepColumn
 }
 
 // recordedMatch compares this run's finding lines with the lines the unit's source run recorded for the file: null when
@@ -124,6 +147,7 @@ type SliceSummary = {
   canBeFalse: {total: number; confirmedInDomain: number; firesOutOfDomainOnly: number; notConfirmed: number}
   soundnessViolations: Array<{unit: string; key: string; example: string | null}>
   unmatchedGroundTruth: string[]
+  sweep?: {byVerdict: Record<string, Record<string, number>>; byRole: Record<string, Record<string, number>>}
 }
 
 function firesOnCorpusInputs(truth: GroundTruthSite | undefined): boolean {
@@ -151,7 +175,7 @@ async function main(): Promise<void> {
     corpus: {directory: options.corpus, version: manifest.version, builtAt: manifest.builtAt, manifestSha1: createHash('sha1').update(readFileSync(join(options.corpus, 'manifest.json'))).digest('hex')},
     scorer: {revision: git(scorerDirectory, ['rev-parse', 'HEAD']), dirtyFiles: git(scorerDirectory, ['status', '--porcelain', '--', '.']).split('\n').filter(line => line.length > 0).length},
     bun: Bun.version,
-    options: {timeoutSeconds: options.timeoutMs / 1000, runtimeTimeoutSeconds: options.runtimeTimeoutMs / 1000, examplesPerSite: options.examplesPerSite, maxRuntimeRuns: options.maxRuntimeRuns, skipRuntime: options.skipRuntime, slices: options.slices == null ? null : [...options.slices], units: options.units == null ? null : [...options.units], nodeModules: Object.fromEntries(options.nodeModules)},
+    options: {timeoutSeconds: options.timeoutMs / 1000, runtimeTimeoutSeconds: options.runtimeTimeoutMs / 1000, examplesPerSite: options.examplesPerSite, maxRuntimeRuns: options.maxRuntimeRuns, skipRuntime: options.skipRuntime, slices: options.slices == null ? null : [...options.slices], units: options.units == null ? null : [...options.units], nodeModules: Object.fromEntries(options.nodeModules), ...(options.sweep == null ? {} : {sweep: options.sweep, sweepFilters: options.sweepFilters ?? 'default', sweepCap: options.sweepCap ?? 1e6})},
     unitsSelected: selected.length,
   }
   writeFileSync(join(options.out, 'run.json'), `${JSON.stringify(runInfo, null, 1)}\n`)
@@ -187,7 +211,7 @@ async function main(): Promise<void> {
       if (found != null) unitFailure = `a tsconfig.json above the unit's work directory (${found}) would replace the single-file program`
     }
 
-    const sitesWithVerdicts: Array<{site: AssertSite; verdict: SiteVerdict}> = []
+    const sitesWithVerdicts: Array<{site: AssertSite; verdict: SiteVerdict; sweep: SweepColumn | null}> = []
     for (const file of unit.analyze) {
       summary.files++
       const sites = extractAssertSites(file, readFileSync(join(workRoot, file), 'utf8'))
@@ -197,7 +221,13 @@ async function main(): Promise<void> {
         outcome = {kind: 'failed', reason: unitFailure}
         fileRow.failure = unitFailure
       } else {
-        const run = await runMeasured([process.execPath, frPath, file], workRoot, {timeoutMs: options.timeoutMs, maxOutputBytes: 16 * 1024 * 1024})
+        const sweepEnvironment: Record<string, string> = options.sweep == null ? {} : {
+          FREERANGE_SWEEP: options.sweep,
+          FREERANGE_SWEEP_JSON: join(workRoot, `${file}.sweep.json`),
+          ...(options.sweepFilters == null ? {} : {FREERANGE_SWEEP_FILTERS: options.sweepFilters}),
+          ...(options.sweepCap == null ? {} : {FREERANGE_SWEEP_CAP: String(options.sweepCap)}),
+        }
+        const run = await runMeasured([process.execPath, frPath, file], workRoot, {timeoutMs: options.timeoutMs, maxOutputBytes: 16 * 1024 * 1024}, true, sweepEnvironment)
         const rawBase = join(options.out, 'raw', unit.id, file.replaceAll('/', '__'))
         mkdirSync(join(options.out, 'raw', unit.id), {recursive: true})
         writeFileSync(`${rawBase}.stdout.txt`, run.stdout)
@@ -220,7 +250,8 @@ async function main(): Promise<void> {
       fileRows.push(fileRow)
       appendFileSync(join(options.out, 'files.tsv'), `${[fileRow.unit, fileRow.slice, fileRow.file, fileRow.exitCode ?? '', fileRow.timedOut, fileRow.wallSeconds?.toFixed(3) ?? '', fileRow.maxRssBytes ?? '', fileRow.findings, fileRow.coverage, fileRow.failure].join('\t')}\n`)
       const joined = joinVerdicts(sites, outcome)
-      for (const site of sites) sitesWithVerdicts.push({site, verdict: joined.get(site.key)!})
+      const sweepJson = options.sweep == null ? null : readSweepJson(join(workRoot, `${file}.sweep.json`))
+      for (const site of sites) sitesWithVerdicts.push({site, verdict: joined.get(site.key)!, sweep: options.sweep == null ? null : sweepColumn(sweepJson, site, fileRow.failure)})
     }
 
     const truthByKey = new Map(unit.groundTruth.map(truth => [truth.key, truth]))
@@ -264,7 +295,7 @@ async function main(): Promise<void> {
       }
     }
 
-    for (const {site, verdict} of sitesWithVerdicts) {
+    for (const {site, verdict, sweep} of sitesWithVerdicts) {
       const truth = truthByKey.get(site.key)
       const checkableVerdict = verdict.verdict === 'proved' || verdict.verdict === 'can-be-false' || verdict.verdict === 'could-not-prove'
       const runtime: RuntimeSummary = runtimeOutcomes.get(site.key) ?? {
@@ -281,6 +312,7 @@ async function main(): Promise<void> {
         latticeFiringNone: truth?.lattice?.firing.none ?? null, witnessFiring: truth?.witness?.firing ?? null, kills: truth?.kills?.count ?? null,
         catching: truth?.catching ?? false, replay: truth?.replay == null ? null : {stage: truth.replay.stage, firesAtStage: truth.replay.firesAtStage},
         firesOnCorpusInputs: fires, runtime, soundnessViolation,
+        ...(sweep == null ? {} : {sweep}),
       }
       appendFileSync(join(options.out, 'verdicts.jsonl'), `${JSON.stringify(row)}\n`)
       summary.sites[row.verdict]++
@@ -301,6 +333,13 @@ async function main(): Promise<void> {
         else summary.canBeFalse.notConfirmed++
       }
       if (soundnessViolation) summary.soundnessViolations.push({unit: unit.id, key: row.key, example: runtime.example})
+      if (sweep != null) {
+        summary.sweep ??= {byVerdict: {}, byRole: {}}
+        const byVerdict = summary.sweep.byVerdict[row.verdict] ??= {}
+        byVerdict[sweep.outcome] = (byVerdict[sweep.outcome] ?? 0) + 1
+        const byRole = summary.sweep.byRole[row.role] ??= {}
+        byRole[sweep.outcome] = (byRole[sweep.outcome] ?? 0) + 1
+      }
     }
     console.log(`${unit.id}: ${sitesWithVerdicts.length} sites`)
   }
@@ -352,6 +391,16 @@ function formatSummary(slices: Record<string, SliceSummary>, fileRows: FileRow[]
   }
   for (const [name, slice] of Object.entries(slices)) {
     for (const violation of slice.soundnessViolations) lines.push(`- soundness violation (${name}): ${violation.unit} ${violation.key} on ${violation.example ?? '(no example)'}`)
+  }
+  const sweepOutcomes = ['counterexample', 'fails-1e-9', 'held', 'starved', 'not-reached', 'precondition', 'unverified', 'not-run']
+  if (Object.values(slices).some(slice => slice.sweep != null)) {
+    lines.push('', '## Sweep outcomes (FREERANGE_SWEEP), sites by verdict and by role', '', `| slice | group | ${sweepOutcomes.join(' | ')} |`, `|---|---|${sweepOutcomes.map(() => '---:').join('|')}|`)
+    for (const [name, slice] of Object.entries(slices)) {
+      if (slice.sweep == null) continue
+      for (const [group, counts] of [...Object.entries(slice.sweep.byVerdict).map(([verdict, counts]) => [`verdict ${verdict}`, counts] as const), ...Object.entries(slice.sweep.byRole).map(([role, counts]) => [`role ${role}`, counts] as const)]) {
+        lines.push(`| ${name} | ${group} | ${sweepOutcomes.map(outcome => counts[outcome] ?? 0).join(' | ')} |`)
+      }
+    }
   }
   lines.push('', '## Runtime and peak RSS per file', '', '| unit | file | exit | wall s | max RSS MB | findings | failure |', '|---|---|---:|---:|---:|---:|---|')
   for (const row of fileRows) {

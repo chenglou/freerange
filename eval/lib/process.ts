@@ -61,7 +61,9 @@ export function parseMaxRssBytes(stderr: string): number | null {
   return bytes
 }
 
-export function runMeasured(command: string[], cwd: string, limits: RunLimits, measure = true): Promise<MeasuredRun> {
+// `env`: variables added to the scorer's own environment for this command, e.g. FREERANGE_SWEEP; with none, the command
+// inherits the environment unchanged.
+export function runMeasured(command: string[], cwd: string, limits: RunLimits, measure = true, env: Record<string, string> = {}): Promise<MeasuredRun> {
   const argv = measure ? ['/usr/bin/time', '-l', ...command] : command
   const started = performance.now()
   return new Promise(resolve => {
@@ -69,7 +71,9 @@ export function runMeasured(command: string[], cwd: string, limits: RunLimits, m
     const stderr = new CappedOutput(limits.maxOutputBytes)
     let timedOut = false
     let spawnError: string | null = null
-    const child = spawn(argv[0]!, argv.slice(1), {cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe']})
+    const child = Object.keys(env).length === 0
+      ? spawn(argv[0]!, argv.slice(1), {cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe']})
+      : spawn(argv[0]!, argv.slice(1), {cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: {...process.env, ...env}})
     child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk))
     child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
     const timer = setTimeout(() => {
