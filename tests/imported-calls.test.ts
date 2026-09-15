@@ -14,13 +14,15 @@ afterAll(() => {
   for (const directory of projectDirectories) rmSync(directory, {recursive: true, force: true})
 })
 
-function writeProject(files: Record<string, string>): string {
+function writeProject(files: Record<string, string>, withTsconfig = true): string {
   const directory = mkdtempSync(join(tmpdir(), 'freerange-imported-calls-'))
   projectDirectories.push(directory)
-  writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({
-    compilerOptions: {strict: true, target: 'ESNext', module: 'ESNext', moduleResolution: 'bundler', noEmit: true},
-    include: ['*.ts'],
-  }))
+  if (withTsconfig) {
+    writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({
+      compilerOptions: {strict: true, target: 'ESNext', module: 'ESNext', moduleResolution: 'bundler', noEmit: true},
+      include: ['*.ts'],
+    }))
+  }
   for (const [file, source] of Object.entries(files)) {
     const path = join(directory, file)
     mkdirSync(dirname(path), {recursive: true})
@@ -659,6 +661,28 @@ describe('contract: which function an import names', () => {
 
   test('an import cycle of types only runs no module code, so the call applies', () => {
     expect(functionBlock(contractAudit(), 'box-user.ts', 'framedWidth')).toContain('proves: fitted <= maximumWidth (assertion at box-user.ts:10:3)')
+  })
+
+  test('a file analyzed without a tsconfig follows imports into the files its program loads', () => {
+    const directory = writeProject({
+      'geometry.ts': `export function clampOrigin(origin: number, size: number, nearEdge: number, farEdge: number): number {
+  const clamped = Math.max(nearEdge, Math.min(origin, farEdge - size))
+  console.assert(nearEdge <= clamped)
+  return clamped
+}
+`,
+      'tooltip.ts': `import {clampOrigin} from './geometry'
+
+export function tooltipLeft(anchorX: number, width: number, viewportWidth: number): number {
+  const margin = 8
+  const left = clampOrigin(anchorX - width / 2, width, margin, viewportWidth - margin)
+  console.assert(margin <= left)
+  return left
+}
+`,
+    }, false)
+    expect(findingLines(runCli(directory, 'off', 'tooltip.ts'))).toContain('tooltip.ts(5,16): error [console-assert]: console.assert in tooltipLeft was not checked because function call clampOrigin')
+    expect(functionBlock(runCli(directory, 'contract', '--audit', 'tooltip.ts'), 'tooltip.ts', 'tooltipLeft')).toContain('proves: margin <= left (assertion at tooltip.ts:6:3)')
   })
 
   test('a callee file with TypeScript errors stops the call instead of failing the run', () => {

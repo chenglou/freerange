@@ -6,7 +6,7 @@
 // formats, one file's slice.
 
 import {existsSync, realpathSync} from 'node:fs'
-import {resolve} from 'node:path'
+import {resolve, sep} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
 import {createFileAudit, formatFileAuditUnit} from './audit.ts'
@@ -16,7 +16,7 @@ import type {ModuleID, SiteID} from './ir/ids.ts'
 import {createProjectIR, functionRefName, reportPath, siteLocation, siteProgram} from './ir/program.ts'
 import {lowerSource} from './lower/program.ts'
 import {formatUnsupportedReason} from './report/index.ts'
-import {checkFile} from './typescript/check.ts'
+import {checkFile, type CheckedSource} from './typescript/check.ts'
 import {formatDiagnosticLocation, formatDiagnosticPrefix, formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
 import {
   findTypeScriptConfig,
@@ -123,7 +123,7 @@ function analyzeProject(searchFrom: string): ProjectScan {
   let unsupported = 0
 
   // Every source passed the diagnostics gate above.
-  const analyzeModule = createProjectRun(sources, importedCallMode(), () => false)
+  const analyzeModule = createProjectRun(sources.map(checkedProjectSource), importedCallMode(), () => false)
   for (let module = 0; module < sources.length; module++) {
     const detailed = analyzeModule(module)
     files.push(detailed)
@@ -452,8 +452,8 @@ function analyzeTargetFile(file: string): TargetFile {
   // An imported call lowers its callee's module too, and the analysis trusts that module's
   // declared types, so a module with TypeScript errors is never lowered for an imported call.
   // The call stops instead of failing the whole run: the target file itself is error-free.
-  const analyzeModule = createProjectRun(sources, importedCallMode(), imported =>
-    hasErrorDiagnostics(ts.getPreEmitDiagnostics(imported.project.program, imported.sourceFile)))
+  const analyzeModule = createProjectRun(sources.map(checkedProjectSource), importedCallMode(), imported =>
+    hasErrorDiagnostics(ts.getPreEmitDiagnostics(imported.program, imported.sourceFile)))
   return {
     detailed: analyzeModule(targetModule),
     pretty: usePrettyOutput(rootProject.parsed.options['pretty']),
@@ -465,20 +465,34 @@ function canonicalFilePath(file: string): string {
   return ts.sys.useCaseSensitiveFileNames ? real : real.toLowerCase()
 }
 
-// A single-file program when no tsconfig resolves from the current directory.
+// A single-file program when no tsconfig resolves from the current directory. The program also
+// loads the project files the file imports, and checkFile has already rejected TypeScript errors
+// in every one of them. With imported calls on, those files are the modules a call can reach, by
+// the same rule projectSources applies to a tsconfig project: no declaration files, nothing
+// under node_modules.
 function analyzeFileAlone(absoluteFile: string): TargetFile {
-  return {
-    detailed: analyzeCheckedSource(checkFile(absoluteFile), process.cwd()),
-    pretty: usePrettyOutput(undefined),
-  }
+  const checked = checkFile(absoluteFile)
+  const pretty = usePrettyOutput(undefined)
+  const mode = importedCallMode()
+  if (mode === 'off') return {detailed: analyzeCheckedSource(checked, process.cwd()), pretty}
+  const sources = checked.program.getSourceFiles()
+    .filter(sourceFile => !sourceFile.isDeclarationFile && !sourceFile.fileName.includes(`${sep}node_modules${sep}`))
+    .map(sourceFile => ({sourceFile, program: checked.program}))
+  const targetModule = sources.findIndex(source => source.sourceFile === checked.sourceFile)
+  if (targetModule === -1) throw new Error(`TypeScript did not load ${absoluteFile} as a source file`)
+  return {detailed: createProjectRun(sources, mode, () => false)(targetModule), pretty}
+}
+
+function checkedProjectSource(source: ProjectSource): CheckedSource {
+  return {sourceFile: source.sourceFile, program: source.project.program}
 }
 
 // A project's modules, lowered and analyzed on first use. With imported calls off, a module
 // lowers only when its own report needs it, matching independent per-file analysis.
 function createProjectRun(
-  sources: ProjectSource[],
+  sources: CheckedSource[],
   mode: ImportedCallMode,
-  hasTypeScriptErrors: (imported: ProjectSource) => boolean,
+  hasTypeScriptErrors: (imported: CheckedSource) => boolean,
 ): (module: ModuleID) => DetailedAnalysis {
   const project = createProjectIR(process.cwd())
   const moduleByFile = mode === 'off'
@@ -487,7 +501,7 @@ function createProjectRun(
   const analysis = createProjectAnalysis(project, (module, purpose) => {
     const source = sources[module]!
     if (purpose === 'import' && hasTypeScriptErrors(source)) return 'typeScriptErrors'
-    return lowerSource({sourceFile: source.sourceFile, program: source.project.program}, project, module, moduleByFile)
+    return lowerSource(source, project, module, moduleByFile)
   }, mode)
   return module => ({program: analysis.program(module), analysis: analysis.module(module)})
 }
