@@ -1,8 +1,8 @@
 // Runs `fr` flag off and flag on (FREERANGE_SWEEP=1) over Plan A mutant trees and their originals, for runtime-sweeps M2, and
 // flag on over plan-c writers' patched trees, for M4a. It records outputs and sidecars; the counting happens afterwards.
 //
-//   bun eval/sweep-mutants.ts --freerange <checkout> --corpus <corpus> --runs m7,m1c,m2,m3,m4 --concurrency 2 --out <dir>
-//     --phase pilot|full [--pilot 16] [--budget-minutes 50]
+//   bun eval/sweep-mutants.ts --freerange <checkout> --corpus <corpus> --scratch <scratchpad root> --runs m7,m1c,m2,m3,m4
+//     --concurrency 2 --out <dir> --phase pilot|full [--pilot 16] [--budget-minutes 50]
 //   bun eval/sweep-mutants.ts --freerange <checkout> --writers <writer-paths.txt> --concurrency 2 --out <dir>
 //
 // M2 trees: the corpus unit's tree with the mutant's changed files replaced by the plan's mutant sources, refused unless
@@ -33,10 +33,10 @@ const MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 // A cap on mutants per run, far above the largest recorded run (m7, 901 rows).
 const MAX_MUTANTS_PER_RUN = 10_000
 
-type Options = {freerange: string; corpus: string; runs: string[]; writers: string | null; concurrency: number; out: string; phase: 'pilot' | 'full'; pilot: number; budgetMinutes: number}
+type Options = {freerange: string; corpus: string; scratch: string; runs: string[]; writers: string | null; concurrency: number; out: string; phase: 'pilot' | 'full'; pilot: number; budgetMinutes: number}
 
 function parseOptions(argv: string[]): Options {
-  const options: Options = {freerange: '', corpus: '', runs: [], writers: null, concurrency: 2, out: '', phase: 'pilot', pilot: 16, budgetMinutes: 50}
+  const options: Options = {freerange: '', corpus: '', scratch: '', runs: [], writers: null, concurrency: 2, out: '', phase: 'pilot', pilot: 16, budgetMinutes: 50}
   for (let index = 0; index < argv.length; index++) {
     const name = argv[index]!
     const value = (): string => {
@@ -47,6 +47,7 @@ function parseOptions(argv: string[]): Options {
     switch (name) {
       case '--freerange': options.freerange = resolve(value()); break
       case '--corpus': options.corpus = resolve(value()); break
+      case '--scratch': options.scratch = resolve(value()); break
       case '--runs': options.runs = value().split(','); break
       case '--writers': options.writers = resolve(value()); break
       case '--concurrency': options.concurrency = Number(value()); break
@@ -63,6 +64,7 @@ function parseOptions(argv: string[]): Options {
     }
   }
   if (options.freerange === '' || options.out === '') throw new Error('--freerange and --out are required')
+  if (options.writers == null && options.scratch === '') throw new Error('--scratch is required for Plan A mutant runs')
   if (!(options.concurrency >= 1 && options.concurrency <= 2)) throw new Error('--concurrency must be 1 or 2')
   for (const run of options.runs) if (RUN_DIRECTORIES[run] == null) throw new Error(`unknown run ${run}`)
   return options
@@ -186,10 +188,10 @@ function loadRun(scratchRoot: string, run: string, units: CorpusUnit[]): MutantT
 }
 
 async function runM2(options: Options): Promise<void> {
-  const {manifest, units} = loadManifest(options.corpus)
+  const {units} = loadManifest(options.corpus)
   const nodeModules = readJsonFile<Record<string, string>>(join(options.corpus, 'node-modules.json'))
   mkdirSync(options.out, {recursive: true})
-  const tasks = options.runs.flatMap(run => loadRun(manifest.scratchRoot, run, units))
+  const tasks = options.runs.flatMap(run => loadRun(options.scratch, run, units))
   const mutantsPath = join(options.out, 'mutants.jsonl')
   const originalsPath = join(options.out, 'originals.jsonl')
   const done = new Set(existsSync(mutantsPath) ? readFileSync(mutantsPath, 'utf8').split('\n').filter(line => line.length > 0).map(line => (JSON.parse(line) as {run: string; key: string})).map(row => `${row.run}|${row.key}`) : [])
