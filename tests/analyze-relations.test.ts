@@ -1028,6 +1028,69 @@ describe('static relations', () => {
     })
   })
 
+  test('relational rules never refute through a negation: f57 with !(v0 <= v9) under FREERANGE_ASSERT_FORMS', () => {
+    // FREERANGE_ASSERT_FORMS reads `!` in console.assert. A relational answer is only ever definitely
+    // true, so negated it would be a refutation, with f57's optimistic early visit behind it.
+    // !(v0 <= v9) equals v9 < v0 for these integers, which holds on every execution.
+    const source = `
+      export function f57(a: number, b: number, c: number, flag: boolean, n: number): void {
+        console.assert(Number.isInteger(a))
+        console.assert(a >= -8)
+        console.assert(a <= 8)
+        console.assert(Number.isInteger(b))
+        console.assert(b >= -8)
+        console.assert(b <= 8)
+        console.assert(Number.isInteger(c))
+        console.assert(c >= -8)
+        console.assert(c <= 8)
+        console.assert(Number.isInteger(n))
+        console.assert(n >= 0)
+        console.assert(n <= 3)
+        console.assert(a <= b)
+        let v0 = b
+        for (let i = 0; i < n; i++) {
+          v0 = flag ? v0 + 1 : c
+        }
+        const v1 = v0 - 1
+        let v2 = v1
+        for (let i = 0; i < n; i++) {
+          v2 = flag ? v2 + 1 : c
+        }
+        if (v0 <= v2) {
+          console.assert(a > c)
+          console.assert(b <= v2)
+          const v6 = b % v2
+          const v7 = a * 1e300
+          const v8 = c + a
+          let v9 = v1
+          for (let i = 0; i < n; i++) {
+            v9 = Math.min(v9 + 1, v0 - 1)
+          }
+          console.assert(v9 < v0)
+          console.assert(!(v0 <= v9))
+          console.assert(v7 > v2)
+          console.assert(v6 === v8)
+          console.assert(a === b)
+          console.assert(v9 >= 0)
+        }
+      }
+    `
+    const previous = process.env['FREERANGE_ASSERT_FORMS']
+    process.env['FREERANGE_ASSERT_FORMS'] = '1'
+    try {
+      const off = assertionVerdicts(analyze(source, false), 'f57')
+      const on = assertionVerdicts(analyze(source, true), 'f57')
+      expect(on.length).toBe(8)
+      expect(on[3]).not.toBe('refuted')
+      on.forEach((verdict, index) => {
+        if (verdict === 'refuted') expect(off[index]).toBe('refuted')
+      })
+    } finally {
+      if (previous === undefined) delete process.env['FREERANGE_ASSERT_FORMS']
+      else process.env['FREERANGE_ASSERT_FORMS'] = previous
+    }
+  })
+
   test('arm splitting proves every incoming argument against a bound computed after the join, and stops at the depth cap', () => {
     const source = `
       export function srefHeight(count: number, cellSize: number, expanded: boolean) {

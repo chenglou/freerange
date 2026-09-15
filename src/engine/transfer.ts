@@ -1667,7 +1667,11 @@ export function staticConditionObservation(
   if (!held.canBeTrue || !held.canBeFalse) return held
   const producer = context.expressionContext.instructionByValue[valueID]
   if (producer?.kind === 'not') {
-    const operand = staticConditionObservation(producer.value, state, context, relational)
+    // The relational rules answer only definitely true, and negated that would be a refutation,
+    // which comes only from origin/main's rules (see comparisonLocalProof). So a negated operand is
+    // observed without them. FREERANGE_ASSERT_FORMS reads `!` in console.assert, e.g. f57's
+    // !(v0 <= v9), which an optimistic early visit would otherwise refute for good.
+    const operand = staticConditionObservation(producer.value, state, context, false)
     return {kind: 'boolean', canBeTrue: operand.canBeFalse, canBeFalse: operand.canBeTrue}
   }
   if (producer?.kind !== 'compare') return held
