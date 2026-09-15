@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test'
-import {copyPaths, errorFindings, multisetDifference, planMutantTree, siteSetDifference} from '../lib/mutant-trees.ts'
+import {copyPaths, errorFindings, exportShimLines, planMutantTree, removeExportShim} from '../lib/mutant-trees.ts'
 
 const unitSources = [
   {path: 'geometry.ts', sha1: 'aaa'},
@@ -37,25 +37,34 @@ test('check 2 refuses a tree whose unchanged file differs from the corpus tree',
   expect(plan).toEqual({kind: 'refused', reason: 'check 2: the unchanged file masonry (sha1 edited) differs from the corpus tree'})
 })
 
-test('the site-set difference keeps keys only the mutant prints, once each', () => {
-  expect(siteSetDifference(
-    ['geometry.ts|packRows|x >= 0|0', 'geometry.ts|packRows|y >= 0|0', 'geometry.ts|packRows|y >= 0|0', 'masonry.ts|placeMasonryCard|itemWidth >= 0|0|layoutRows'],
-    ['geometry.ts|packRows|x >= 0|0', 'masonry.ts|placeMasonryCard|itemWidth >= 0|0|layoutColumns'],
-  )).toEqual(['geometry.ts|packRows|y >= 0|0', 'masonry.ts|placeMasonryCard|itemWidth >= 0|0|layoutRows'])
-  expect(siteSetDifference(['a|f|x|0'], ['a|f|x|0'])).toEqual([])
+const corpusText = 'function shrinkRow(naturals: number[]): number[] {\n  return naturals\n}\n\nexport function tooltipWidth(): number {\n  return 0\n}\n'
+const shimmedText = 'export function shrinkRow(naturals: number[]): number[] {\n  return naturals\n}\n\nexport function tooltipWidth(): number {\n  return 0\n}\n'
+
+test('an export-shimmed copy differs from its corpus file only by `export ` before some lines', () => {
+  expect(exportShimLines(shimmedText, corpusText)).toEqual([1])
+  expect(exportShimLines(corpusText, corpusText)).toEqual([])
+  // Any other difference, e.g. a changed statement or an extra line, is not a shim.
+  expect(exportShimLines(shimmedText.replace('return 0', 'return 1'), corpusText)).toBeNull()
+  expect(exportShimLines(`${shimmedText}\n`, corpusText)).toBeNull()
+  expect(exportShimLines(corpusText, shimmedText)).toBeNull()
 })
 
-test('the static finding difference is a multiset difference of error-level (rule, message) entries', () => {
-  const original = errorFindings([
+test('removing the shim from a mutant of the shimmed copy gives the corpus file with the mutation', () => {
+  const mutant = 'export function shrinkRow(naturals: number[]): number[] {\n  return naturals.slice(1)\n}\n\nexport function tooltipWidth(): number {\n  return 0\n}\n'
+  expect(removeExportShim(mutant, [1])).toBe('function shrinkRow(naturals: number[]): number[] {\n  return naturals.slice(1)\n}\n\nexport function tooltipWidth(): number {\n  return 0\n}\n')
+  // A mutant whose shim line no longer starts with `export ` can't be mapped back.
+  expect(removeExportShim(mutant.replace('export function shrinkRow', 'function shrinkRow'), [1])).toBeNull()
+  expect(removeExportShim(mutant, [9])).toBeNull()
+})
+
+test('error-level findings of fr stdout become rule|message entries; warnings and detail lines are skipped', () => {
+  expect(errorFindings([
     'geometry.ts(10,3): error [console-assert]: could not prove console.assert condition in packRows: x >= 0',
     'geometry.ts(12,3): warning [console-assert-sweep]: console.assert condition failed on a generated input in packRows: x >= 0',
     '  input: packRows([])',
-  ].join('\n'))
-  expect(original).toEqual(['console-assert|could not prove console.assert condition in packRows: x >= 0'])
-  const mutant = errorFindings([
-    'geometry.ts(10,3): error [console-assert]: could not prove console.assert condition in packRows: x >= 0',
-    'geometry.ts(11,3): error [console-assert]: could not prove console.assert condition in packRows: x >= 0',
-  ].join('\n'))
-  expect(multisetDifference(mutant, original)).toEqual(['console-assert|could not prove console.assert condition in packRows: x >= 0'])
-  expect(multisetDifference(original, mutant)).toEqual([])
+    'geometry.ts(14,5): error [declared-requirement]: call to placeItem makes its declared requirement definitely false',
+  ].join('\n'))).toEqual([
+    'console-assert|could not prove console.assert condition in packRows: x >= 0',
+    'declared-requirement|call to placeItem makes its declared requirement definitely false',
+  ])
 })

@@ -1,9 +1,10 @@
 // What eval/sweep-mutants.ts decides without running anything: which corpus unit a Plan A copy is, the files a mutant tree
 // replaces (refusing a tree whose files don't match the corpus), and the differences between a mutant's output and its
-// original's that make a mutant sweep-caught or static-caught (runtime-sweeps registration §2 M2).
+// original's that make a mutant static-caught (runtime-sweeps registration §2 M2). The other counts are made from the recorded
+// outputs afterwards.
 
 // `path` is the file's place in the tree; plans written before m3 have none, and their files are matched by sha1.
-export type CopyFile = {file: string; sourceSha1: string; path?: string}
+export type CopyFile = {file: string; sourceSha1: string; path?: string; source?: string}
 export type MutantFile = {file: string; source: string; sourceSha1: string}
 export type UnitSource = {path: string; sha1: string}
 
@@ -44,23 +45,32 @@ export function planMutantTree(copyFiles: CopyFile[], mutantFiles: MutantFile[],
   return {kind: 'tree', replacements}
 }
 
-/** Keys the mutant's output has and the original's doesn't, in the mutant's order, each once. */
-export function siteSetDifference(mutantKeys: string[], originalKeys: string[]): string[] {
-  const original = new Set(originalKeys)
-  return [...new Set(mutantKeys)].filter(key => !original.has(key))
+/**
+ * The 1-based lines where `copyText` is `export ` followed by `corpusText`'s line, when every other line is equal, e.g. [409]
+ * for a copy that exports a function the corpus file keeps private so a harness can call it. Null for any other difference.
+ */
+export function exportShimLines(copyText: string, corpusText: string): number[] | null {
+  const copyLines = copyText.split('\n')
+  const corpusLines = corpusText.split('\n')
+  if (copyLines.length !== corpusLines.length) return null
+  const lines: number[] = []
+  for (let index = 0; index < copyLines.length; index++) {
+    if (copyLines[index] === corpusLines[index]) continue
+    if (copyLines[index] !== `export ${corpusLines[index]!}`) return null
+    lines.push(index + 1)
+  }
+  return lines
 }
 
-/** Multiset difference: each mutant entry not matched by a distinct equal original entry, e.g. two equal findings against one. */
-export function multisetDifference(mutant: string[], original: string[]): string[] {
-  const remaining = new Map<string, number>()
-  for (const entry of original) remaining.set(entry, (remaining.get(entry) ?? 0) + 1)
-  const result: string[] = []
-  for (const entry of mutant) {
-    const count = remaining.get(entry) ?? 0
-    if (count > 0) remaining.set(entry, count - 1)
-    else result.push(entry)
+/** `text` with the leading `export ` removed on each of `lines`, or null when one of those lines doesn't start with it. */
+export function removeExportShim(text: string, lines: number[]): string | null {
+  const textLines = text.split('\n')
+  for (const line of lines) {
+    const current = textLines[line - 1]
+    if (current?.startsWith('export ') !== true) return null
+    textLines[line - 1] = current.slice('export '.length)
   }
-  return result
+  return textLines.join('\n')
 }
 
 const findingPattern = /^(.+?)\((\d+),(\d+)\): (error|warning) \[([a-z-]+)\]: (.*)$/

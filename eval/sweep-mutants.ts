@@ -7,7 +7,9 @@
 //
 // M2 trees: the corpus unit's tree with the mutant's changed files replaced by the plan's mutant sources, refused unless
 // every replaced file's original sha1 equals the corpus file's and every other mutant file equals the corpus tree
-// (lib/mutant-trees.ts). `fr` runs on every analyzed file of the unit, at most `concurrency` processes at a time.
+// (lib/mutant-trees.ts). A copy file that is the corpus file with `export ` added on some lines, e.g. m7's c13-tooltip copy of
+// tooltipLayout.ts exporting shrinkRow, counts as the corpus file, and each mutant's file has those `export `s removed before it
+// replaces the corpus file. `fr` runs on every analyzed file of the unit, at most `concurrency` processes at a time.
 // Phases: `pilot` runs the originals and the first `pilot` mutants of each run in kills.tsv order, projects the full set's
 // wall time from the pilot means, and writes sample.json: every mutant when the projection fits `budget-minutes`, otherwise
 // each run's keys sorted by sha256('runtime-sweeps-m2-2026-09-15|' + key), the largest prefix that fits, apportioned by run
@@ -16,7 +18,7 @@ import {createHash} from 'node:crypto'
 import {appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync} from 'node:fs'
 import {basename, join, resolve} from 'node:path'
 import {loadManifest, readJsonFile, type CorpusUnit} from './lib/manifest.ts'
-import {copyPaths, errorFindings, planMutantTree, type CopyFile, type MutantFile} from './lib/mutant-trees.ts'
+import {copyPaths, errorFindings, exportShimLines, planMutantTree, removeExportShim, type CopyFile, type MutantFile} from './lib/mutant-trees.ts'
 import {runMeasured, type MeasuredRun} from './lib/process.ts'
 import {readSweepJson} from './lib/sweep.ts'
 
@@ -165,9 +167,10 @@ function readTsv(path: string): Array<Record<string, string>> {
   return lines.map(line => Object.fromEntries(line.split('\t').map((value, index) => [columns[index]!, value])))
 }
 
-type MutantTask = {run: string; kill: KillRow; mutant: PlanMutant; copy: PlanCopy; unit: CorpusUnit}
+// exportShims: per corpus path, the lines where the copy's file adds `export ` to the corpus file.
+type MutantTask = {run: string; kill: KillRow; mutant: PlanMutant; copy: PlanCopy; unit: CorpusUnit; exportShims: Map<string, number[]>}
 
-function loadRun(scratchRoot: string, run: string, units: CorpusUnit[]): MutantTask[] {
+function loadRun(scratchRoot: string, corpus: string, run: string, units: CorpusUnit[]): MutantTask[] {
   const directory = join(scratchRoot, 'freerange-focus', 'plan-a', 'runs', RUN_DIRECTORIES[run]!)
   const plan = readJsonFile<{copies: PlanCopy[]; mutants: PlanMutant[]}>(join(directory, 'plan.json'))
   const kills = readTsv(join(directory, 'kills.tsv')) as unknown as KillRow[]
@@ -176,8 +179,7 @@ function loadRun(scratchRoot: string, run: string, units: CorpusUnit[]): MutantT
   const unitOfCopy = new Map<string, CorpusUnit>()
   for (const copy of plan.copies) {
     // A copy's files can sit in several units' import closures, e.g. MidUI.ts; the copy's unit analyzes one of them. Units are
-    // matched by sha1 first. m7's c13-tooltip copy holds an export-shimmed file no unit has, so it falls back to paths, and
-    // check 1 refuses its mutants.
+    // matched by sha1 first. m7's c13-tooltip copy holds an export-shimmed file no unit has, so it falls back to paths.
     const analyzesACopyFile = (unit: CorpusUnit) => {
       const paths = copyPaths(copy.files, unit.provenance.sources)
       return paths != null && [...paths.values()].some(path => unit.analyze.includes(path))
@@ -187,11 +189,27 @@ function loadRun(scratchRoot: string, run: string, units: CorpusUnit[]): MutantT
     if (matches.length !== 1) throw new Error(`${run}: copy ${copy.copy} matches ${matches.length} corpus units`)
     unitOfCopy.set(copy.copy, matches[0]!)
   }
+  // A copy file that differs from its corpus file only by added `export `s takes the corpus file's sha1, so check 1 passes.
+  const shimmed = new Map<string, {copy: PlanCopy; exportShims: Map<string, number[]>}>()
+  for (const copy of plan.copies) {
+    const unit = unitOfCopy.get(copy.copy)!
+    const paths = copyPaths(copy.files, unit.provenance.sources)!
+    const exportShims = new Map<string, number[]>()
+    const files = copy.files.map(file => {
+      const corpusSource = unit.provenance.sources.find(source => source.path === paths.get(file.file))
+      if (corpusSource == null || corpusSource.sha1 === file.sourceSha1 || file.source == null) return file
+      const lines = exportShimLines(readFileSync(file.source, 'utf8'), readFileSync(join(corpus, unit.tree, corpusSource.path), 'utf8'))
+      if (lines == null || lines.length === 0) return file
+      exportShims.set(corpusSource.path, lines)
+      return {...file, sourceSha1: corpusSource.sha1}
+    })
+    shimmed.set(copy.copy, {copy: {...copy, files}, exportShims})
+  }
   return kills.map(kill => {
     const mutant = plan.mutants.find(candidate => candidate.key === kill.mutant)
-    const copy = plan.copies.find(candidate => candidate.copy === kill.copy)
+    const copy = shimmed.get(kill.copy)
     if (mutant == null || copy == null) throw new Error(`${run}: kills.tsv row ${kill.mutant} has no plan mutant or copy`)
-    return {run, kill, mutant, copy, unit: unitOfCopy.get(copy.copy)!}
+    return {run, kill, mutant, copy: copy.copy, unit: unitOfCopy.get(kill.copy)!, exportShims: copy.exportShims}
   })
 }
 
@@ -199,7 +217,7 @@ async function runM2(options: Options): Promise<void> {
   const {units} = loadManifest(options.corpus)
   const nodeModules = readJsonFile<Record<string, string>>(join(options.corpus, 'node-modules.json'))
   mkdirSync(options.out, {recursive: true})
-  const tasks = options.runs.flatMap(run => loadRun(options.scratch, run, units))
+  const tasks = options.runs.flatMap(run => loadRun(options.scratch, options.corpus, run, units))
   const mutantsPath = join(options.out, 'mutants.jsonl')
   const originalsPath = join(options.out, 'originals.jsonl')
   const done = new Set(existsSync(mutantsPath) ? readFileSync(mutantsPath, 'utf8').split('\n').filter(line => line.length > 0).map(line => (JSON.parse(line) as {run: string; key: string})).map(row => `${row.run}|${row.key}`) : [])
@@ -210,7 +228,7 @@ async function runM2(options: Options): Promise<void> {
     const treeDirectory = join(options.out, 'work', task.run, safeName(task.mutant.key))
     const rawDirectory = join(options.out, 'raw', task.run, safeName(task.mutant.key))
     const plan = planMutantTree(task.copy.files, task.mutant.files, task.mutant.changedFiles, task.unit.provenance.sources, copyPaths(task.copy.files, task.unit.provenance.sources)!)
-    const base = {run: task.run, key: task.mutant.key, unit: task.unit.id, behaviorDiffs: task.kill.behavior_diffs === '' ? 0 : Number(task.kill.behavior_diffs), recordedKill: task.kill['kill_noise@abs1e-9'] === 'true', planted: task.kill.planted === 'true', killingLines: task.kill.killing_lines}
+    const base = {run: task.run, key: task.mutant.key, unit: task.unit.id, exportShims: Object.fromEntries(task.exportShims), behaviorDiffs: task.kill.behavior_diffs === '' ? 0 : Number(task.kill.behavior_diffs), recordedKill: task.kill['kill_noise@abs1e-9'] === 'true', planted: task.kill.planted === 'true', killingLines: task.kill.killing_lines}
     let refused: string | null = plan.kind === 'refused' ? plan.reason : null
     let files: FileResult[] = []
     if (plan.kind === 'tree') {
@@ -220,7 +238,13 @@ async function runM2(options: Options): Promise<void> {
           refused = `the mutant source ${basename(replacement.from)} differs from the plan's sha1`
           break
         }
-        writeFileSync(join(treeDirectory, replacement.path), readFileSync(replacement.from))
+        const exportShim = task.exportShims.get(replacement.path)
+        const text = exportShim == null ? readFileSync(replacement.from, 'utf8') : removeExportShim(readFileSync(replacement.from, 'utf8'), exportShim)
+        if (text == null) {
+          refused = `the mutant source ${basename(replacement.from)} lacks the copy's export shim`
+          break
+        }
+        writeFileSync(join(treeDirectory, replacement.path), text)
       }
       if (refused == null) files = await runTree(options.freerange, treeDirectory, task.unit.analyze, rawDirectory, {off: true})
       rmSync(treeDirectory, {recursive: true, force: true})
