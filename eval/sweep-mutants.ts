@@ -175,7 +175,11 @@ function loadRun(scratchRoot: string, run: string, units: CorpusUnit[]): MutantT
   const slice = run === 'm7' ? 'mj-gallery' : 'families'
   const unitOfCopy = new Map<string, CorpusUnit>()
   for (const copy of plan.copies) {
-    const matches = units.filter(unit => unit.slice === slice && copyPaths(copy.files, unit.provenance.sources) != null)
+    // A copy's files can sit in several units' import closures, e.g. MidUI.ts; the copy's unit is the one that analyzes one of them.
+    const matches = units.filter(unit => {
+      const paths = unit.slice === slice ? copyPaths(copy.files, unit.provenance.sources) : null
+      return paths != null && [...paths.values()].some(path => unit.analyze.includes(path))
+    })
     if (matches.length !== 1) throw new Error(`${run}: copy ${copy.copy} matches ${matches.length} corpus units`)
     unitOfCopy.set(copy.copy, matches[0]!)
   }
