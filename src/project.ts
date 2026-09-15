@@ -10,9 +10,11 @@ import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
 import {createFileAudit, formatFileAuditUnit} from './audit.ts'
+import {createProjectAnalysis, type ImportedCallMode} from './engine/analyze.ts'
 import type {AssertionVerdict, FunctionAnalysis, RequirementFailure} from './engine/outcome.ts'
-import type {SiteID} from './ir/ids.ts'
-import {reportPath, siteLocation} from './ir/program.ts'
+import type {ModuleID, SiteID} from './ir/ids.ts'
+import {createProjectIR, functionRefName, reportPath, siteLocation, siteProgram} from './ir/program.ts'
+import {lowerSource} from './lower/program.ts'
 import {formatUnsupportedReason} from './report/index.ts'
 import {checkFile} from './typescript/check.ts'
 import {formatDiagnosticLocation, formatDiagnosticPrefix, formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
@@ -39,7 +41,7 @@ type ErrorLintFinding = {
   column: number
   rule: 'console-assert' | 'declared-requirement' | 'inferred-requirement'
   message: string
-  related?: {label: string; line: number; column: number}
+  related?: {label: string; file: string; line: number; column: number}
 }
 
 type LintFinding =
@@ -120,8 +122,10 @@ function analyzeProject(searchFrom: string): ProjectScan {
   let partial = 0
   let unsupported = 0
 
-  for (const source of sources) {
-    const detailed = analyzeProjectSource(source, process.cwd())
+  // Every source passed the diagnostics gate above.
+  const analyzeModule = createProjectRun(sources, importedCallMode(), () => false)
+  for (let module = 0; module < sources.length; module++) {
+    const detailed = analyzeModule(module)
     files.push(detailed)
     const perFile = fileCoverage(detailed)
     analyzed += perFile.analyzed
@@ -153,6 +157,10 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
     const location = siteLocation(program, site)
     findings.push({kind: 'error', file, ...location, rule, message, ...(related == null ? {} : {related})})
   }
+  // A related location can sit in another module: the origin of a requirement adopted
+  // through an imported call.
+  const relatedLocation = (site: SiteID): {file: string; line: number; column: number} =>
+    ({file: reportPath(siteProgram(program, site)), ...siteLocation(program, site)})
 
   const addRequirementFailure = (
     failure: RequirementFailure,
@@ -165,7 +173,7 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
         const location = siteLocation(program, stopSite)
         findings.push({kind: 'simple', file, ...location, functionName, stop: 'outOfBoundsRead'})
       } else {
-        const origin = siteLocation(program, failure.site)
+        const origin = relatedLocation(failure.site)
         addError(
           stopSite,
           'inferred-requirement',
@@ -184,7 +192,7 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
           `${failure.operation} has a divisor that is definitely zero in ${functionName}`,
         )
       } else {
-        const origin = siteLocation(program, failure.site)
+        const origin = relatedLocation(failure.site)
         addError(
           stopSite,
           'inferred-requirement',
@@ -196,7 +204,7 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
     }
 
     if (failure.kind === 'finiteInput') {
-      const origin = siteLocation(program, failure.site)
+      const origin = relatedLocation(failure.site)
       addError(
         stopSite,
         'inferred-requirement',
@@ -221,7 +229,7 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
           : `could not express or prove the declared console.assert requirement in ${functionName}`,
       )
     } else {
-      const origin = siteLocation(program, failure.site)
+      const origin = relatedLocation(failure.site)
       addError(
         stopSite,
         'declared-requirement',
@@ -251,13 +259,16 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
           break
         }
         case 'requirementFailure': {
-          const callee = reason.callee == null ? null : program.functions[reason.callee]
-          if (reason.callee != null && callee == null) throw new Error(`Unknown function ${reason.callee}`)
-          addRequirementFailure(reason.failure, stop.site, fn.lowering.name, callee?.name ?? null)
+          const calleeName = reason.callee == null ? null : functionRefName(program, reason.callee)
+          addRequirementFailure(reason.failure, stop.site, fn.lowering.name, calleeName)
           break
         }
         case 'recursion':
         case 'calleeStopped':
+        case 'importCycle':
+        case 'importedModuleState':
+        case 'contractInput':
+        case 'importUnavailable':
         case 'loopLimit':
         case 'unsupportedCode':
         case 'moduleRead':
@@ -388,7 +399,7 @@ function formatLintFinding(finding: LintFinding, pretty: boolean): string {
       const related = finding.related == null
         ? ''
         : ` (${finding.related.label} ${formatDiagnosticLocation({
-          file: finding.file,
+          file: finding.related.file,
           line: finding.related.line,
           column: finding.related.column,
         }, pretty)})`
@@ -429,15 +440,22 @@ function analyzeTargetFile(file: string): TargetFile {
   const projects = loadTypeScriptProjectGraph(configPath)
   const rootProject = projects.at(-1)!
   const targetPath = canonicalFilePath(absoluteFile)
-  const source = projectSources(projects).find(candidate =>
+  const sources = projectSources(projects)
+  const targetModule = sources.findIndex(candidate =>
     canonicalFilePath(candidate.sourceFile.fileName) === targetPath)
+  const source = sources[targetModule]
   if (source == null) {
     throw new Error(`File is not part of the project resolved from ${configPath}: ${absoluteFile}`)
   }
   const diagnostics = ts.getPreEmitDiagnostics(source.project.program, source.sourceFile)
   requireNoTypeScriptErrors(diagnostics, rootProject.parsed.options)
+  // An imported call lowers its callee's module too, and the analysis trusts that module's
+  // declared types, so a module with TypeScript errors is never lowered for an imported call.
+  // The call stops instead of failing the whole run: the target file itself is error-free.
+  const analyzeModule = createProjectRun(sources, importedCallMode(), imported =>
+    hasErrorDiagnostics(ts.getPreEmitDiagnostics(imported.project.program, imported.sourceFile)))
   return {
-    detailed: analyzeProjectSource(source, process.cwd()),
+    detailed: analyzeModule(targetModule),
     pretty: usePrettyOutput(rootProject.parsed.options['pretty']),
   }
 }
@@ -455,14 +473,35 @@ function analyzeFileAlone(absoluteFile: string): TargetFile {
   }
 }
 
-function analyzeProjectSource(
-  source: ProjectSource,
-  reportBaseDirectory: string,
-): DetailedAnalysis {
-  return analyzeCheckedSource({
-    sourceFile: source.sourceFile,
-    program: source.project.program,
-  }, reportBaseDirectory)
+// A project's modules, lowered and analyzed on first use. With imported calls off, a module
+// lowers only when its own report needs it, matching independent per-file analysis.
+function createProjectRun(
+  sources: ProjectSource[],
+  mode: ImportedCallMode,
+  hasTypeScriptErrors: (imported: ProjectSource) => boolean,
+): (module: ModuleID) => DetailedAnalysis {
+  const project = createProjectIR(process.cwd())
+  const moduleByFile = mode === 'off'
+    ? null
+    : new Map(sources.map((source, module) => [resolve(source.sourceFile.fileName), module] as const))
+  const analysis = createProjectAnalysis(project, (module, purpose) => {
+    const source = sources[module]!
+    if (purpose === 'import' && hasTypeScriptErrors(source)) return 'typeScriptErrors'
+    return lowerSource({sourceFile: source.sourceFile, program: source.project.program}, project, module, moduleByFile)
+  }, mode)
+  return module => ({program: analysis.program(module), analysis: analysis.module(module)})
+}
+
+// The imported-call prototype, selected in one place. Design A (evaluating an imported callee's
+// body at every call) stays on the mvp-imported-functions branch.
+function importedCallMode(): ImportedCallMode {
+  const setting = process.env['FREERANGE_IMPORTED_CALLS']
+  switch (setting) {
+    case undefined:
+    case 'off': return 'off'
+    case 'contract': return 'contract'
+    default: throw new Error(`FREERANGE_IMPORTED_CALLS must be off or contract, not ${setting}`)
+  }
 }
 
 function uniqueDiagnostics(diagnostics: readonly ts.Diagnostic[]): ts.Diagnostic[] {
