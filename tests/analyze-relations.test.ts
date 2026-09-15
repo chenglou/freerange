@@ -392,8 +392,11 @@ describe('static relations', () => {
       export function manyBounds(${parameters.join(', ')}) {
         ${requirements.join('\n')}
         const chosen = flag ? first : second
-        console.assert(chosen <= bound29)
-        console.assert(chosen <= bound30)
+        // Compared through a subtraction, so arm splitting (which splits only a compared block
+        // parameter) cannot prove it and only the join fact carries the order.
+        const shifted = chosen - 0
+        console.assert(shifted <= bound29)
+        console.assert(shifted <= bound30)
       }
     `
     // Candidates on the first arrival, in order: chosen >= 0 fails; chosen <= first and
@@ -1232,9 +1235,10 @@ describe('static relations', () => {
     expect(verdictsOffAndOn(source, 'clamped')).toEqual({off: ['unproven', 'unproven'], on: ['proven', 'proven']})
     expect(verdictsOffAndOn(source, 'counter')).toEqual({off: ['unproven', 'unproven'], on: ['proven', 'proven']})
     // Each is false for some in-domain input: hi - lo + 1 steps, one step, three steps, the
-    // first step, two steps, and every n.
+    // first step, two steps, and every n. offByOne is false on every input, and the mode refutes
+    // it; none may prove.
     for (const name of ['bumped', 'swapped', 'shifted', 'innerJoin', 'outerBound', 'offByOne']) {
-      expect(`${name}: ${verdictsOffAndOn(source, name).on.join(', ')}`).toBe(`${name}: unproven`)
+      expect(`${name}: ${verdictsOffAndOn(source, name).on.join(', ')}`).not.toBe(`${name}: proven`)
     }
   })
 

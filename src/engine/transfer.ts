@@ -2348,7 +2348,7 @@ function createComparisonProof(
         if (producer?.kind === 'minimum' || producer?.kind === 'maximum') {
           const operands = producer.values.map(operand => linearForm(operand))
           if (operands.every(operand => operand != null)) {
-            const forms = operands.map(operand => replaced(operand!))
+            const forms = operands.map(operand => replaced(operand))
             const everyOperand = (producer.kind === 'minimum') === (term.coefficient > 0n)
             const proved = everyOperand
               ? forms.every(next => next != null && nonnegativeForm(next, depth + 1, tried))
