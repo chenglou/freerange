@@ -1,0 +1,41 @@
+Static relations, second exploration: registered expectation
+
+Written before any code on explore/static-relations-2, from proto/static-relations 2d2c15d.
+
+Mode: unchanged. Every new rule runs only with FREERANGE_STATIC_RELATIONS=1, and only inside the proofs of interior console.assert conditions and join-fact verification. Leading requirements, requirement inference and ordinary analysis keep origin/main's rules.
+
+Targets, in build order:
+1. Exact integer linear forms (for picker :70). Under the integer-safe gate every + - and * by an integer constant is exact, so a comparison reduces to the sign of an integer linear form over leaf values. The proof splits Math.min and Math.max leaves into their operands, substitutes bounds from order and join facts, and ends at interval lower bounds. It never invents a computed value.
+2. Arm splitting at the assertion (for sref :58). A compared value that is a parameter of a block outside every cycle is proved on each incoming edge argument separately.
+3. Return relations (the cut RET step). A completed same-file call publishes, as assertion-only facts, the order between its numeric return value and each numeric argument that holds on every return path of the callee's evaluation.
+4. Join facts at loop headers (the cut loop-header step). Loop headers propose and re-verify join facts like other joins, with bounds produced outside every cycle. A change that only drops join facts does not count toward the 16-update backstop.
+
+Counting rules are the corpus scorer's (eval/score.ts at 316f891), joined to baseline-main-1dfafc5/verdicts.jsonl by (unit, file, line, column):
+- newly proved: baseline verdict not proved, new verdict proved
+- catching: the baseline's `catching` field
+- lost proof: baseline proved, new verdict not proved
+
+Upper bounds:
+
+| slice | proved | catching proved | newly analyzed | can be false | soundness violations | lost proofs |
+|---|---|---|---|---|---|---|
+| mj-gallery | 48 -> at most 49 (as 2d2c15d) | 40 -> at most 41 | 0 | 0 | 0 | 0 |
+| families | 286 -> at most 308 (2d2c15d's 304 plus 4) | 99 -> at most 113 (2d2c15d's 110 plus 3) | 0 | 0 | 0 | 0 |
+| replay | 0 -> 0 | 0 -> 0 | 0 | 0 | 0 | 0 |
+
+Predicted new family sites:
+- integer linear forms: picker base_picker :70 (catching)
+- arm splitting: sref base_sref :58 (catching)
+- return relations: popovers reshaped tooltipPosition :66 and :67 (:67 catching)
+- join facts at loop headers: no predicted site
+
+Gates:
+- scorer soundness violations 0 in every slice; none of the 53 families sites whose stored example fires in domain moves to proved
+- lost proofs 0 against the baseline, and none of 2d2c15d's 19 newly proved sites is lost
+- any newly proved site outside the predicted list is listed with its mechanism and stored-example outcome
+- fr --audit requires, ensures and assumes lines identical to origin/main on every corpus file
+- per file: wall time at most 2x baseline, max RSS at most baseline + 100 MB
+- the recorded probe batches A-H and fuzz 101-120 report 0 UNSOUND rows; the mutants that detected holes before still detect them
+- writers slice: every change is could not prove -> proved and is checked by hand
+
+Caps, each failing closed with a test that hits it: linear form leaves and coefficient size, linear substitution depth, arm split depth and edges per split, return relation parameters and return blocks, join-fact-only loop header updates.
