@@ -14,6 +14,8 @@ import {instrumentSource} from './instrument.ts'
 import type {ChildLine, DiscardCause, EntryLine, Site, SweepEntry, SweepJob, VerifiedLine, VerifyItem} from './types.ts'
 
 const CHILD = new URL('./child.ts', import.meta.url).pathname
+// The longest protocol line the parent keeps; a longer line, e.g. project output with no newline, is dropped until its end.
+const MAX_LINE_CHARACTERS = 8 * 1024 * 1024
 
 export type SweepLimits = {
   inputsPerEntry: number
@@ -60,7 +62,9 @@ export function runChild(jobPath: string, cwd: string, limits: {loadMs: number; 
   const run: ChildRun = {killed: null, exitCode: null, loaded: false, loadError: null, stderrTail: '', peakRssKb: 0, doneMaxRssKb: null, ms: 0}
   let lastLine = started
   let outputBytes = 0
-  let pending = ''
+  let lineParts: string[] = []
+  let lineCharacters = 0
+  let skippingLine = false
   const kill = (reason: KillReason) => {
     if (run.killed != null) return
     run.killed = reason
@@ -77,18 +81,12 @@ export function runChild(jobPath: string, cwd: string, limits: {loadMs: number; 
   }
   child.stdout.setEncoding('utf8')
   child.stderr.setEncoding('utf8')
-  child.stdout.on('data', (text: string) => {
-    if (!countOutput(text)) return
-    lastLine = performance.now()
-    pending += text
-    for (let newline = pending.indexOf('\n'); newline >= 0; newline = pending.indexOf('\n')) {
-      const raw = pending.slice(0, newline)
-      pending = pending.slice(newline + 1)
+  const handleLine = (raw: string) => {
       let line: ChildLine
       try {
         line = JSON.parse(raw) as ChildLine
       } catch {
-        continue // a line project code wrote; it counts toward the output cap only
+        return // a line project code wrote; it counts toward the output cap only
       }
       switch (line.type) {
         case 'loaded': run.loaded = true; break
@@ -97,7 +95,29 @@ export function runChild(jobPath: string, cwd: string, limits: {loadMs: number; 
         case 'heartbeat': case 'entry': case 'verified': break
       }
       onLine(line)
+  }
+  child.stdout.on('data', (text: string) => {
+    if (!countOutput(text)) return
+    lastLine = performance.now()
+    let start = 0
+    for (let newline = text.indexOf('\n'); newline >= 0; newline = text.indexOf('\n', start)) {
+      if (!skippingLine) {
+        lineParts.push(text.slice(start, newline))
+        handleLine(lineParts.join(''))
+      }
+      lineParts = []
+      lineCharacters = 0
+      skippingLine = false
+      start = newline + 1
     }
+    if (skippingLine || start === text.length) return
+    lineCharacters += text.length - start
+    if (lineCharacters > MAX_LINE_CHARACTERS) {
+      lineParts = []
+      skippingLine = true
+      return
+    }
+    lineParts.push(text.slice(start))
   })
   child.stderr.on('data', (text: string) => {
     if (!countOutput(text)) return

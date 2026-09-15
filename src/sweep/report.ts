@@ -185,10 +185,13 @@ export function sweepReport(options: {run: SweepRun; verdictOf: (site: Site) => 
   // Freerange's claims inside a function assume its leading asserts, finite number inputs and every inferred precondition,
   // e.g. `requires: (width - 5) >= 0` propagated from a callee's leading assert. The sweep draws inputs only against leading
   // asserts, so a firing contradicts a static claim only in a fully analyzed function whose inferred preconditions all come
-  // from its own leading asserts or finite inputs. Otherwise this says why the claim is conditional.
+  // from its own leading asserts or finite inputs, and that takes nothing on an assumption (an `assumes:` line, e.g. a divisor
+  // assumed nonzero). Otherwise this says why the claim is conditional.
   const conditionalClaim = (name: string): string | null => {
     const fn = byName.get(name)
     if (fn == null || fn.kind !== 'analyzed') return `${name} was not fully analyzed`
+    const assumption = fn.boundsAssumptions[0]
+    if (assumption != null) return `${name} assumes ${assumption.kind === 'nonzeroDivisor' ? 'a nonzero divisor' : 'an in-bounds element read'} at line ${siteLocation(detailed.program, assumption.site).line}`
     const own = leadingLines(name)
     const extra = fn.preconditions.find((precondition) => !(precondition.kind === 'declaredNumberCheck' && precondition.purpose === 'finiteInput') && !own.has(siteLocation(detailed.program, precondition.site).line))
     return extra == null ? null : `${name} has an inferred precondition from line ${siteLocation(detailed.program, extra.site).line} that generated inputs are not checked against`
@@ -242,7 +245,7 @@ export function sweepReport(options: {run: SweepRun; verdictOf: (site: Site) => 
       report.callLine = callLine
       if (verifiedLevel < 3) return report
       const caller = callLine == null ? null : functionAt(callLine)
-      const staticCall = callLine != null && staticFindings.some((finding) => finding.line === callLine && finding.message.startsWith(`call to ${callee}`))
+      const staticCall = callLine != null && staticFindings.some((finding) => finding.line === callLine && finding.message.includes(callee))
       const conditional = !inEntry(caller) ? 'the call is not directly in the entry'
         : byName.get(callee)?.kind === 'notLowered' ? `${callee} was not lowered`
         : staticCall ? 'Freerange reports a finding at this call'

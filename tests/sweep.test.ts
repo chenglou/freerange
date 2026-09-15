@@ -174,6 +174,45 @@ export function slot(k: Slot): number {
   expect(site.outcome).toBe('starved')
 }, 30_000)
 
+test('child hard limit: an entry sleeping 1 s per call is stopped at a 3 s limit', async () => {
+  const {report, json} = await sweepInProcess({
+    'sleep.ts': 'export function sleepOneSecond(): void {\n  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000)\n}\n',
+    'slow.ts': `import {sleepOneSecond} from './sleep'
+export function slow(value: number): number {
+  sleepOneSecond()
+  const result = value
+  console.assert(result >= 0)
+  return result
+}
+`,
+  }, 'slow.ts', {limits: {hardMs: 3000, inputsPerEntry: 100}})
+  expect(json.status.killed).toBe('hard limit')
+  expect(sweepWarnings(report.findings).map((finding) => finding.message)).toEqual(['sweep of slow.ts stopped: hard limit'])
+  expect(json.timing.run!.ms).toBeLessThan(4000)
+}, 30_000)
+
+test('verification: an input whose imported callee loops forever without ticks in the verification child times out, and nothing prints', async () => {
+  const {report, json} = await sweepInProcess({
+    // The loop runs only in the verification child, whose job file is verify.json, so the run child records a firing first.
+    'spin.ts': `declare const process: {argv: string[]}
+export function spinInVerification(): void {
+  if (process.argv.some((argument) => argument.endsWith('verify.json'))) while (true) {}
+}
+`,
+    'target.ts': `import {spinInVerification} from './spin'
+export function target(value: number): number {
+  const result = value
+  console.assert(result >= 0)
+  spinInVerification()
+  return result
+}
+`,
+  }, 'target.ts', {limits: {verifyMs: 2000, inputsPerEntry: 200}})
+  expect(siteAt(json, 4)).toMatchObject({outcome: 'unverified', why: 'timed out', action: null})
+  expect(sweepWarnings(report.findings)).toEqual([])
+  expect(json.caps['verificationTimedOut']).toBe(1)
+}, 30_000)
+
 // -- Domain rules ------------------------------------------------------------------------
 
 const shrinkRow = `export function shrink(minimums: number[], naturals: number[]): number {
@@ -349,6 +388,20 @@ test('precedence rows: a discharged requirement of a lowered callee is an intern
     },
   })
   expect(discharged.report.findings.filter((finding) => finding.rule === 'internal').map((finding) => [finding.line, finding.message])).toEqual([[21, 'soundness violation: requirement of needs proved at this call can fail']])
+  // The same planted claim resting on an assumption, e.g. a divisor assumed nonzero, is conditional: a call-site warning.
+  const assumed = await sweepInProcess({'precedence.ts': onlyPropagated}, 'precedence.ts', {
+    limits: {inputsPerEntry: 200},
+    mutate: (detailed) => {
+      for (const fn of detailed.analysis.functions) {
+        if (fn.kind !== 'analyzed' || fn.lowering.name !== 'propagated') continue
+        fn.preconditions = fn.preconditions.filter((precondition) => precondition.kind === 'declaredNumberCheck')
+        fn.boundsAssumptions = [{site: 0, kind: 'nonzeroDivisor'}]
+      }
+    },
+  })
+  expect(assumed.report.internalError).toBe(false)
+  expect(siteAt(assumed.json, 2).action).toBe('call-site warning')
+  expect(siteAt(assumed.json, 2).why).toStartWith('propagated assumes a nonzero divisor at line')
   const dead = await sweepInProcess({'precedence.ts': onlyPropagated}, 'precedence.ts', {limits: {inputsPerEntry: 50}, verdict: (site, real) => site.line === 9 ? 'dead' : real})
   expect(dead.report.findings.filter((finding) => finding.rule === 'internal').map((finding) => [finding.line, finding.message])).toEqual([[9, 'unreachable assert was reached']])
 }, 30_000)
