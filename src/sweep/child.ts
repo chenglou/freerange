@@ -4,6 +4,8 @@
 //   run:    every entry of the job over the lattice, through the instrumented copy
 //   verify: each listed input through the instrumented copy, then the uninstrumented copy with console.assert recording
 //           the failing lines of the analyzed file
+// The child exits right after its `done` line, so a timer that project code started at module level, e.g. `setInterval`,
+// doesn't keep it running until the parent's heartbeat limit.
 // Structure from mutation-instrument-spike at bccf0dd: worker.ts runBaseline and runVerify, child-calls.ts causeOf and
 // callEntry. The console replacements, R1 recorder, load step and heartbeat cadence are new.
 import {readFileSync} from 'node:fs'
@@ -14,9 +16,11 @@ import {writeAll} from './pipe.ts'
 import {BUDGET, createRecorder, DISCARD, resetRecorder} from './recorder.ts'
 import {CAUSES, DISCARD_CAUSES, type CauseClass, type ChildLine, type DiscardCause, type FirstInput, type SiteCounts, type SweepEntry, type SweepJob} from './types.ts'
 
-// Protocol writes go through a reference taken before any project code loads, so a module that replaces
-// process.stdout.write can't break the protocol. writeAll writes the whole line before returning, waiting while the pipe is full.
+// Protocol writes go through references taken before any project code loads, so a module that replaces
+// process.stdout.write or JSON.stringify can't break the protocol line that reports a crash. writeAll writes the whole line
+// before returning, waiting while the pipe is full.
 const writeLine = writeAll
+const stringify = JSON.stringify
 function emit(line: ChildLine) {
   writeLine(1, `${encodeJson(line)}\n`)
 }
@@ -74,6 +78,21 @@ function takeImportedFailure(): boolean {
   return failed
 }
 
+// The child reads its own RSS after a call, at most once per millisecond, and exits above the job's limit. So a call that
+// retains memory, e.g. 64 MB per call, stops the child about one call past the limit instead of up to one ps poll interval
+// past it. A call that never returns, or module initialization, is covered only by the parent's ps poller.
+const RSS_CHECK_MS = 1
+let lastRssCheck = 0
+function checkRss() {
+  const now = performance.now()
+  if (now - lastRssCheck < RSS_CHECK_MS) return
+  lastRssCheck = now
+  const rssKb = Math.floor(process.memoryUsage.rss() / 1024)
+  if (rssKb <= job.rssKb) return
+  emit({type: 'rss', rssKb})
+  process.exit(0)
+}
+
 const recorder = createRecorder(job.sites, job.stepBudget)
 ;(globalThis as Record<string, unknown>)['__fr'] = recorder
 
@@ -91,8 +110,13 @@ try {
 clearInterval(keepAlive)
 emit({type: 'loaded'})
 
+/** A thrown value as text. Project code can throw a value String() can't convert, e.g. `Object.create(null)`. */
 function describeError(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : `threw ${String(error)}`
+  try {
+    return error instanceof Error ? `${error.name}: ${error.message}` : `threw ${String(error)}`
+  } catch {
+    return 'a value that String() cannot convert'
+  }
 }
 
 function hasSubnormal(value: Value): boolean {
@@ -143,6 +167,8 @@ function call(fn: EntryFunction, args: Value[]): CallOutcome {
     if (error === DISCARD) return {kind: 'discarded'}
     if (error === BUDGET) return {kind: 'over budget'}
     return {kind: 'threw', error: describeError(error)}
+  } finally {
+    checkRss()
   }
 }
 
@@ -282,12 +308,18 @@ function runVerify() {
   }
 }
 
-switch (job.mode) {
-  case 'run':
-    for (const entry of job.entries) runEntry(entry)
-    break
-  case 'verify':
-    runVerify()
-    break
+try {
+  switch (job.mode) {
+    case 'run':
+      for (const entry of job.entries) runEntry(entry)
+      break
+    case 'verify':
+      runVerify()
+      break
+  }
+  emit({type: 'done', maxRssKb: process.resourceUsage().maxRSS})
+} catch (error) {
+  writeLine(1, `${stringify({type: 'crashed', error: describeError(error)})}\n`)
+  process.exit(1)
 }
-emit({type: 'done', maxRssKb: process.resourceUsage().maxRSS})
+process.exit(0)

@@ -16,12 +16,13 @@ import type {FunctionAnalysis} from '../engine/outcome.ts'
 import {siteLocation} from '../ir/program.ts'
 import {maxMagnitude, type Value} from './domain.ts'
 import {decodeJson, formatCall} from './encode.ts'
-import type {EntryResult, Requirement, SweepRun, SweepSettings, Verification} from './run.ts'
+import {DRAIN_MS, type EntryResult, type Requirement, type SweepRun, type SweepSettings, type Verification} from './run.ts'
 import type {CauseClass, FirstInput, Site, SiteCounts} from './types.ts'
 
 export type StaticVerdict = 'proven' | 'refuted' | 'unproven' | 'blocked' | 'dead' | 'not lowered' | 'requirement' | 'requirements not checked' | 'outside'
 export type SiteOutcome = 'counterexample' | 'fails-1e-9' | 'held' | 'starved' | 'not-reached' | 'precondition' | 'unverified' | 'not-run'
-export type StaticFinding = {line: number; message: string}
+// A static finding of the file: its line, its message when error-level, and for a finding at a call the callee it is about.
+export type StaticFinding = {line: number; message: string; callee: string | null}
 export type SweepFinding = {line: number; column: number; level: 'warning' | 'error'; rule: 'console-assert-sweep' | 'internal'; message: string; details: string[]}
 export type SweepReport = {findings: SweepFinding[]; summaryLine: string; internalError: boolean; json: unknown}
 
@@ -243,9 +244,8 @@ export function sweepReport(options: {run: SweepRun; verdictOf: (site: Site) => 
       const callee = site.functionName
       const callLine = fired?.callerLine ?? firstCallLine(sourceFile, callee, ranges.find((range) => range.name === entryName))
       report.callLine = callLine
-      if (verifiedLevel < 3) return report
       const caller = callLine == null ? null : functionAt(callLine)
-      const staticCall = callLine != null && staticFindings.some((finding) => finding.line === callLine && finding.message.includes(callee))
+      const staticCall = callLine != null && staticFindings.some((finding) => finding.line === callLine && finding.callee === callee)
       const conditional = !inEntry(caller) ? 'the call is not directly in the entry'
         : byName.get(callee)?.kind === 'notLowered' ? `${callee} was not lowered`
         : staticCall ? 'Freerange reports a finding at this call'
@@ -335,9 +335,11 @@ export function sweepReport(options: {run: SweepRun; verdictOf: (site: Site) => 
     }
   }
 
-  if (run.loadError != null) fileWarning(`could not load ${reportFile} for a sweep: ${firstLine(run.loadError)}`)
+  if (run.run?.killed === 'RSS poller') fileWarning(`sweep of ${reportFile} stopped: RSS poller: ${run.run.pollerError ?? ''}`)
+  else if (run.loadError != null) fileWarning(`could not load ${reportFile} for a sweep: ${firstLine(run.loadError)}`)
   else if (run.run != null && run.run.killed != null) fileWarning(`sweep of ${reportFile} stopped: ${run.run.killed}`)
-  else if (run.run != null && run.run.doneMaxRssKb == null) fileWarning(`sweep of ${reportFile} stopped: the child exited with code ${run.run.exitCode ?? 'none'} before it finished`)
+  else if (run.run != null && run.run.doneMaxRssKb == null) fileWarning(`sweep of ${reportFile} stopped: the child exited with code ${run.run.exitCode ?? 'none'} before it finished${run.run.crash == null ? '' : `: ${firstLine(run.run.crash)}`}`)
+  if (run.run?.heldOpen === true || run.verify?.heldOpen === true) fileWarning(`sweep of ${reportFile}: a process started by project code kept the child's output open after the child exited; fr stopped waiting for it after ${DRAIN_MS / 1000} s`)
   for (const result of run.entries) {
     const counts = result.counts
     if (counts != null && counts.threw > 0 && counts.inDomain === 0) fileWarning(`sweep of ${reportFile}: every generated call of ${result.entry.name} that was not discarded threw: ${firstLine(counts.firstThrow ?? '')}`, result.entry.line)
@@ -377,6 +379,7 @@ export function sweepReport(options: {run: SweepRun; verdictOf: (site: Site) => 
       stepBudget: run.entries.reduce((total, result) => total + (result.counts?.overBudget ?? 0), 0),
       heartbeat: killedBy('heartbeat'), hardLimit: killedBy('hard limit') + (run.verify?.killed === 'hard limit' ? 1 : 0), rss: killedBy('RSS') + (run.verify?.killed === 'RSS' ? 1 : 0),
       outputCap: killedBy('output cap') + (run.verify?.killed === 'output cap' ? 1 : 0), loadStep: killedBy('load step'),
+      rssPoller: killedBy('RSS poller') + (run.verify?.killed === 'RSS poller' ? 1 : 0), outputHeldOpen: (run.run?.heldOpen === true ? 1 : 0) + (run.verify?.heldOpen === true ? 1 : 0),
       verificationCap: Math.max(0, run.verifications.length - limits.verifyItems), verificationTimedOut: run.verifications.filter((verification) => verification.line == null && verification.item.item < limits.verifyItems).length,
       printedCounterexamples: Math.max(0, counterexamples - printedCounterexamples), inputTruncated: truncatedInputs,
     },

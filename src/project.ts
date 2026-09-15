@@ -15,7 +15,7 @@ import type {SiteID} from './ir/ids.ts'
 import {reportPath, siteLocation} from './ir/program.ts'
 import {formatUnsupportedReason} from './report/index.ts'
 import {NUMBER_CAP} from './sweep/domain.ts'
-import {requirementFor, staticVerdictLookup, sweepReport, type SweepFinding} from './sweep/report.ts'
+import {requirementFor, staticVerdictLookup, sweepReport, type StaticFinding, type SweepFinding} from './sweep/report.ts'
 import {DEFAULT_LIMITS, sweepFile, type SweepLimits, type SweepSettings} from './sweep/run.ts'
 import {checkFile, type CheckedSource} from './typescript/check.ts'
 import {formatDiagnosticLocation, formatDiagnosticPrefix, formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
@@ -43,6 +43,7 @@ type ErrorLintFinding = {
   rule: 'console-assert' | 'declared-requirement' | 'inferred-requirement'
   message: string
   related?: {label: string; line: number; column: number}
+  callee?: string // the callee a finding at a call is about; FREERANGE_SWEEP matches call findings by it
 }
 
 // A FREERANGE_SWEEP result: a counterexample, an internal soundness error, or a note that the sweep didn't run fully.
@@ -89,14 +90,14 @@ export function runFileFindings(file: string): boolean {
 
 export type SweepMode = {level: 'warning' | 'error'; jsonPath: string | null; settings: SweepSettings}
 
-// FREERANGE_SWEEP unset or empty: null, and `fr` runs origin/main's code path. `1` prints counterexamples at warning level,
-// `error` at error level. FREERANGE_SWEEP_JSON names the sidecar file; FREERANGE_SWEEP_FILTERS (base | default) and
-// FREERANGE_SWEEP_CAP (the number cap for sides no assert bounds) are test knobs, and so is FREERANGE_SWEEP_LIMITS, a JSON
-// object that replaces some of DEFAULT_LIMITS, e.g. {"heartbeatMs": 1000} so a survival fixture finishes quickly.
+// FREERANGE_SWEEP `1` prints counterexamples at warning level, `error` at error level. Any other value, e.g. unset, empty or
+// `0`, returns null, and `fr` runs origin/main's code path, which ignores the variable. FREERANGE_SWEEP_JSON names the sidecar
+// file; FREERANGE_SWEEP_FILTERS (base | default) and FREERANGE_SWEEP_CAP (the number cap for sides no assert bounds) are
+// test knobs, and so is FREERANGE_SWEEP_LIMITS, a JSON object that replaces some of DEFAULT_LIMITS, e.g. {"heartbeatMs": 1000}
+// so a survival fixture finishes quickly.
 export function sweepModeFromEnvironment(): SweepMode | null {
   const flag = process.env['FREERANGE_SWEEP']
-  if (flag == null || flag === '') return null
-  if (flag !== '1' && flag !== 'error') throw new Error(`FREERANGE_SWEEP must be 1 or error, not ${flag}`)
+  if (flag !== '1' && flag !== 'error') return null
   const filters = process.env['FREERANGE_SWEEP_FILTERS'] ?? 'default'
   if (filters !== 'base' && filters !== 'default') throw new Error(`FREERANGE_SWEEP_FILTERS must be base or default, not ${filters}`)
   const capText = process.env['FREERANGE_SWEEP_CAP'] ?? ''
@@ -109,13 +110,21 @@ export function sweepModeFromEnvironment(): SweepMode | null {
   return {level: flag === '1' ? 'warning' : 'error', jsonPath: jsonPath === '' ? null : resolve(jsonPath), settings: {filters, cap, limits: {...DEFAULT_LIMITS, ...overrides}}}
 }
 
+// The file's findings as the sweep report reads them: each line, error message and, for a finding at a call, the callee
+// the finding is about.
+export function sweepStaticFindings(detailed: DetailedAnalysis): StaticFinding[] {
+  return collectLintFindings(detailed).map(finding => finding.kind === 'error'
+    ? {line: finding.line, message: finding.message, callee: finding.callee ?? null}
+    : {line: finding.line, message: '', callee: null})
+}
+
 // `FREERANGE_SWEEP=1 fr <file>`: the file's findings, then the sweep's findings, merged in line order. The sweep runs after
 // the static findings are computed and changes none of them. Exit code 2 on an internal soundness error.
 export async function runFileFindingsWithSweep(file: string, mode: SweepMode): Promise<number> {
   const target = analyzeTargetFile(file)
   const findings = collectLintFindings(target.detailed)
   const reportFile = reportPath(target.detailed.program)
-  const staticFindings = findings.map(finding => ({line: finding.line, message: finding.kind === 'error' ? finding.message : ''}))
+  const staticFindings = sweepStaticFindings(target.detailed)
   const verdictOf = staticVerdictLookup(target.detailed, staticFindings)
   const run = await sweepFile(target.detailed.program.file, reportFile, target.checked.sourceFile, target.checked.program, mode.settings, site => requirementFor(verdictOf(site)))
   const report = sweepReport({run, verdictOf, detailed: target.detailed, staticFindings, sourceFile: target.checked.sourceFile, settings: mode.settings, level: mode.level, reportFile})
@@ -196,9 +205,10 @@ export function collectLintFindings({program, analysis}: DetailedAnalysis): Lint
     rule: ErrorLintFinding['rule'],
     message: string,
     related?: ErrorLintFinding['related'],
+    callee?: string,
   ): void => {
     const location = siteLocation(program, site)
-    findings.push({kind: 'error', file, ...location, rule, message, ...(related == null ? {} : {related})})
+    findings.push({kind: 'error', file, ...location, rule, message, ...(related == null ? {} : {related}), ...(callee == null ? {} : {callee})})
   }
 
   const addRequirementFailure = (
@@ -218,6 +228,7 @@ export function collectLintFindings({program, analysis}: DetailedAnalysis): Lint
           'inferred-requirement',
           `call to ${calleeName} makes an asserted element read definitely out of bounds`,
           {label: 'element read at', ...origin},
+          calleeName,
         )
       }
       return
@@ -237,6 +248,7 @@ export function collectLintFindings({program, analysis}: DetailedAnalysis): Lint
           'inferred-requirement',
           `call to ${calleeName} violates its nonzero divisor requirement`,
           {label: `${failure.operation} at`, ...origin},
+          calleeName,
         )
       }
       return
@@ -255,6 +267,7 @@ export function collectLintFindings({program, analysis}: DetailedAnalysis): Lint
             ? `call to ${calleeName} passes a number that is definitely not finite`
             : `could not verify ${calleeName}'s number input at this call`,
         {label: 'input declared at', ...origin},
+        calleeName ?? undefined,
       )
       return
     }
@@ -276,6 +289,7 @@ export function collectLintFindings({program, analysis}: DetailedAnalysis): Lint
           ? `call to ${calleeName} makes its declared requirement definitely false`
           : `could not express or prove ${calleeName}'s declared requirement at this call`,
         {label: 'declared at', ...origin},
+        calleeName,
       )
     }
   }

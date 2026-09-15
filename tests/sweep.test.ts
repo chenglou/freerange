@@ -4,12 +4,12 @@
 // project-report.test.ts.
 import {expect, test} from 'bun:test'
 import {spawn} from 'node:child_process'
-import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs'
+import {chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {dirname, join} from 'node:path'
 import {analyzeCheckedSource, type DetailedAnalysis} from '../src/analyze.ts'
-import {collectLintFindings} from '../src/project.ts'
-import {requirementFor, staticVerdictLookup, sweepReport, type StaticVerdict, type SweepFinding} from '../src/sweep/report.ts'
+import {sweepStaticFindings} from '../src/project.ts'
+import {requirementFor, staticVerdictLookup, sweepReport, type StaticFinding, type StaticVerdict, type SweepFinding} from '../src/sweep/report.ts'
 import {DEFAULT_LIMITS, sweepFile, type SweepLimits} from '../src/sweep/run.ts'
 import type {Site} from '../src/sweep/types.ts'
 import {checkFile} from '../src/typescript/check.ts'
@@ -26,7 +26,13 @@ function writeFiles(directory: string, files: Record<string, string>) {
   }
 }
 
-type InProcessOptions = {limits?: Partial<SweepLimits>; filters?: 'base' | 'default'; verdict?: (site: Site, real: StaticVerdict) => StaticVerdict; mutate?: (detailed: DetailedAnalysis) => void}
+type InProcessOptions = {
+  limits?: Partial<SweepLimits>
+  filters?: 'base' | 'default'
+  verdict?: (site: Site, real: StaticVerdict) => StaticVerdict
+  mutate?: (detailed: DetailedAnalysis) => void
+  staticFindings?: (real: StaticFinding[]) => StaticFinding[]
+}
 
 async function sweepInProcess(files: Record<string, string>, target: string, options: InProcessOptions = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'freerange-sweep-test-'))
@@ -35,7 +41,8 @@ async function sweepInProcess(files: Record<string, string>, target: string, opt
     const path = join(directory, target)
     const checked = checkFile(path)
     const detailed = analyzeCheckedSource(checked, directory)
-    const staticFindings = collectLintFindings(detailed).map((finding) => ({line: finding.line, message: finding.kind === 'error' ? finding.message : ''}))
+    const realFindings = sweepStaticFindings(detailed)
+    const staticFindings = options.staticFindings == null ? realFindings : options.staticFindings(realFindings)
     options.mutate?.(detailed)
     const real = staticVerdictLookup(detailed, staticFindings)
     const verdictOf = (site: Site) => options.verdict == null ? real(site) : options.verdict(site, real(site))
@@ -189,6 +196,18 @@ export function slow(value: number): number {
   expect(json.status.killed).toBe('hard limit')
   expect(sweepWarnings(report.findings).map((finding) => finding.message)).toEqual(['sweep of slow.ts stopped: hard limit'])
   expect(json.timing.run!.ms).toBeLessThan(4000)
+}, 30_000)
+
+test('child RSS: 64 MB retained per call is stopped within one call of a 300 MB limit', async () => {
+  const {report, json} = await sweepInProcess({
+    'retain.ts': 'const kept: Uint8Array[] = []\nexport function retain(): void {\n  kept.push(new Uint8Array(64 * 1024 * 1024).fill(1))\n}\n',
+    'target.ts': 'import {retain} from \'./retain\'\nexport function target(value: number): number {\n  retain()\n  const result = value\n  console.assert(result >= 0)\n  return result\n}\n',
+  }, 'target.ts', {limits: {rssKb: 300 * 1024}})
+  expect(json.status.killed).toBe('RSS')
+  expect(sweepWarnings(report.findings).map((finding) => finding.message)).toEqual(['sweep of target.ts stopped: RSS'])
+  // The child checks its own RSS after each call, so it stops at most one call's 64 MB past the limit.
+  expect(json.timing.run!.peakRssKb).toBeGreaterThan(300 * 1024)
+  expect(json.timing.run!.peakRssKb).toBeLessThanOrEqual((300 + 64 + 16) * 1024)
 }, 30_000)
 
 test('verification: an input whose imported callee loops forever without ticks in the verification child times out, and nothing prints', async () => {
@@ -406,6 +425,20 @@ test('precedence rows: a discharged requirement of a lowered callee is an intern
   expect(dead.report.findings.filter((finding) => finding.rule === 'internal').map((finding) => [finding.line, finding.message])).toEqual([[9, 'unreachable assert was reached']])
 }, 30_000)
 
+test('precedence rows: a static finding at a call counts only for the callee it names, not for a callee whose name is a prefix of it', async () => {
+  const onlyPropagated = precedenceSource.replace(/export function badCall[\s\S]*$/, '')
+  const {report, json} = await sweepInProcess({'precedence.ts': onlyPropagated}, 'precedence.ts', {
+    limits: {inputsPerEntry: 200},
+    mutate: (detailed) => {
+      for (const fn of detailed.analysis.functions) if (fn.kind === 'analyzed' && fn.lowering.name === 'propagated') fn.preconditions = fn.preconditions.filter((precondition) => precondition.kind === 'declaredNumberCheck')
+    },
+    // Planted: a finding at the call line of needs about another callee, needsMore, whose message contains `needs`.
+    staticFindings: (real) => [...real, {line: 21, message: 'call to needsMore makes its declared requirement definitely false', callee: 'needsMore'}],
+  })
+  expect(siteAt(json, 2)).toMatchObject({action: 'internal', why: null})
+  expect(report.findings.filter((finding) => finding.rule === 'internal').map((finding) => [finding.line, finding.message])).toEqual([[21, 'soundness violation: requirement of needs proved at this call can fail']])
+}, 30_000)
+
 // -- CLI -----------------------------------------------------------------------------------------
 
 const freerangeCli = new URL('../fr.ts', import.meta.url).pathname
@@ -482,9 +515,31 @@ Run \`fr --audit [file]\` for every function's contracts and refactoring suggest
     const errorLevel = runCli(directory, {FREERANGE_SWEEP: 'error'}, 'smoke.ts')
     expect(errorLevel.exitCode).toBe(1)
     expect(errorLevel.stdout).toContain('smoke.ts(3,3): error [console-assert-sweep]: console.assert condition failed')
-    const bad = runCli(directory, {FREERANGE_SWEEP: 'yes'}, 'smoke.ts')
-    expect(bad.exitCode).toBe(1)
-    expect(bad.stderr).toContain('FREERANGE_SWEEP must be 1 or error, not yes')
+    // Only 1 and error turn the sweep on. Any other value, e.g. 0 set to turn it off, runs origin/main's code path.
+    for (const value of ['0', 'true', 'eror']) {
+      const other = runCli(directory, {FREERANGE_SWEEP: value}, 'smoke.ts')
+      expect({value, exitCode: other.exitCode, stdout: other.stdout, stderr: other.stderr}).toEqual({value, exitCode: off.exitCode, stdout: off.stdout, stderr: off.stderr})
+    }
+  })
+}, 60_000)
+
+test('a bundled fr has no child.ts beside it: the sweep is not run and says why, and static findings print', () => {
+  withProject({'smoke.ts': smokeSource}, (directory) => {
+    const build = mkdtempSync(join(tmpdir(), 'freerange-sweep-build-'))
+    try {
+      const bundle = join(build, 'fr.js')
+      const built = Bun.spawnSync({cmd: [process.execPath, 'build', freerangeCli, '--target=node', '--packages=external', `--outfile=${bundle}`], stdout: 'pipe', stderr: 'pipe'})
+      expect(built.exitCode).toBe(0)
+      symlinkSync(new URL('../node_modules', import.meta.url).pathname, join(build, 'node_modules'))
+      const off = Bun.spawnSync({cmd: [process.execPath, bundle, 'smoke.ts'], cwd: directory, env: {...process.env, FREERANGE_SWEEP: ''}, stdout: 'pipe', stderr: 'pipe'})
+      const on = Bun.spawnSync({cmd: [process.execPath, bundle, 'smoke.ts'], cwd: directory, env: {...process.env, FREERANGE_SWEEP: '1'}, stdout: 'pipe', stderr: 'pipe'})
+      expect(on.exitCode).toBe(off.exitCode)
+      const lines = on.stdout.toString().split('\n')
+      expect(lines.filter((line) => line.includes('[console-assert-sweep]'))).toEqual(['smoke.ts(1,1): warning [console-assert-sweep]: sweep of smoke.ts not run: FREERANGE_SWEEP runs only from fr\'s TypeScript source under Bun, e.g. `bun fr.ts <file>`'])
+      expect(lines.filter((line) => line.includes('[console-assert]'))).toEqual(off.stdout.toString().split('\n').filter((line) => line.includes('[console-assert]')))
+    } finally {
+      rmSync(build, {recursive: true, force: true})
+    }
   })
 }, 60_000)
 
@@ -560,3 +615,123 @@ for (const fixture of SURVIVAL_FIXTURES) {
     })
   }, 60_000)
 }
+
+// -- Child termination and stop reporting --------------------------------------------------------------------------------
+
+// `fr target.ts` flag off, then flag on with `limits`; the sweep lines, the sidecar and both runs. `env` applies to both runs.
+function sweepCli(directory: string, limits: Partial<SweepLimits>, env: Record<string, string> = {}) {
+  const off = runCli(directory, env, 'target.ts')
+  const jsonPath = join(directory, 'target.json')
+  const on = runCli(directory, {...env, FREERANGE_SWEEP: '1', FREERANGE_SWEEP_JSON: jsonPath, FREERANGE_SWEEP_LIMITS: JSON.stringify(limits)}, 'target.ts')
+  const staticLines = (stdout: string) => stdout.split('\n').filter((line) => /: (error|warning) \[/.test(line) && !line.includes('[console-assert-sweep]'))
+  expect(on.exitCode).toBe(off.exitCode)
+  expect(on.stderr).toBe('')
+  expect(staticLines(on.stdout)).toEqual(staticLines(off.stdout))
+  const sweepLines = on.stdout.split('\n').filter((line) => line.includes('[console-assert-sweep]')).map((line) => line.slice(line.indexOf(']: ') + 3))
+  return {on, sweepLines, json: JSON.parse(readFileSync(jsonPath, 'utf8')) as SweepJson}
+}
+
+const callingEntry = (call: string, module = './helper') => `import {${call}} from '${module}'
+export function sweepTarget(value: number): number {
+  const result = value + ${call}()
+  console.assert(Number.isFinite(result))
+  return result
+}
+`
+
+test('a detached grandchild holding the child\'s stdout: fr stops waiting shortly after the child exits', () => {
+  withProject({
+    // helper.js is untyped runtime code, typed by helper.d.ts, so it can start a process freely.
+    'helper.js': `import {spawn} from 'node:child_process'
+import {writeFileSync} from 'node:fs'
+import {join} from 'node:path'
+const grandchild = spawn('sleep', ['30'], {detached: true, stdio: ['ignore', 'inherit', 'inherit']})
+writeFileSync(join(import.meta.dir, 'grandchild.pid'), String(grandchild.pid))
+grandchild.unref()
+export function noop() { return 0 }
+`,
+    'helper.d.ts': 'export declare function noop(): number\n',
+    'target.ts': callingEntry('noop', './helper.js'),
+  }, (directory) => {
+    const pidPath = join(directory, 'grandchild.pid')
+    try {
+      const {on, sweepLines, json} = sweepCli(directory, {hardMs: 5000})
+      expect(json.status.killed).toBeNull()
+      expect(json.entries.map((entry) => entry.status)).toEqual(['run'])
+      expect(sweepLines).toEqual(['sweep of target.ts: a process started by project code kept the child\'s output open after the child exited; fr stopped waiting for it after 0.5 s'])
+      expect(on.ms).toBeLessThan(4000)
+    } finally {
+      try {
+        process.kill(Number(readFileSync(pidPath, 'utf8')), 'SIGKILL')
+      } catch {
+        // The grandchild never started or already exited.
+      }
+    }
+  })
+}, 60_000)
+
+test('a module-level setInterval: the child exits after its last entry, and nothing is reported', () => {
+  withProject({'helper.ts': 'setInterval(() => {}, 1000)\nexport function noop(): number {\n  return 0\n}\n', 'target.ts': callingEntry('noop')}, (directory) => {
+    const {sweepLines, json} = sweepCli(directory, {heartbeatMs: 3000})
+    expect(sweepLines).toEqual([])
+    expect(json.status.killed).toBeNull()
+    expect(json.timing.run!.ms).toBeLessThan(3000)
+  })
+}, 60_000)
+
+test('without ps on PATH the sweep stops with one warning, and the static findings print', () => {
+  withProject({'helper.ts': 'export function noop(): number {\n  return 0\n}\n', 'target.ts': callingEntry('noop')}, (directory) => {
+    mkdirSync(join(directory, 'bin'))
+    symlinkSync(process.execPath, join(directory, 'bin', 'bun'))
+    const {sweepLines, json} = sweepCli(directory, {}, {PATH: join(directory, 'bin')})
+    expect(json.status.killed).toBe('RSS poller')
+    expect(sweepLines).toHaveLength(1)
+    expect(sweepLines[0]).toStartWith('sweep of target.ts stopped: RSS poller: ps could not run: ')
+  })
+}, 60_000)
+
+test('a ps that never answers: the sweep stops at the ps wait limit, and the ps process is killed', () => {
+  // Module initialization waits 3 s, so the child is still running when the 1 s ps wait limit passes.
+  withProject({'helper.ts': 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000)\nexport function noop(): number {\n  return 0\n}\n', 'target.ts': callingEntry('noop')}, (directory) => {
+    mkdirSync(join(directory, 'bin'))
+    writeFileSync(join(directory, 'bin', 'ps'), '#!/bin/sh\nexec /bin/sleep 61.25\n')
+    chmodSync(join(directory, 'bin', 'ps'), 0o755)
+    const {on, sweepLines, json} = sweepCli(directory, {psMs: 1000}, {PATH: `${join(directory, 'bin')}:/usr/bin:/bin`})
+    expect(json.status.killed).toBe('RSS poller')
+    expect(sweepLines).toEqual(['sweep of target.ts stopped: RSS poller: ps did not report within 1 s'])
+    expect(on.ms).toBeLessThan(6000)
+    expect(Bun.spawnSync({cmd: ['pgrep', '-f', 'sleep 61.25'], stdout: 'pipe'}).stdout.toString().trim()).toBe('')
+  })
+}, 60_000)
+
+test('the RSS limit during module loading: the load warning names the stop', () => {
+  withProject({
+    'helper.ts': 'const kept: Uint8Array[] = []\nfor (let index = 0; index < 8; index++) kept.push(new Uint8Array(64 * 1024 * 1024).fill(1))\nAtomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000)\nexport function noop(): number {\n  return kept.length * 0\n}\n',
+    'target.ts': callingEntry('noop'),
+  }, (directory) => {
+    const {sweepLines, json} = sweepCli(directory, {rssKb: 300 * 1024})
+    expect(json.status.killed).toBe('RSS')
+    expect(json.entries.map((entry) => entry.status)).toEqual(['load-failed'])
+    expect(sweepLines).toEqual(['could not load target.ts for a sweep: the child was stopped while loading: RSS'])
+    expect(json.timing.run!.ms).toBeLessThan(10_000)
+  })
+}, 60_000)
+
+test('a thrown value that String() cannot convert: the child keeps running and the warning says what was thrown', () => {
+  withProject({'helper.ts': 'export function fail(): number {\n  throw Object.create(null)\n}\n', 'target.ts': callingEntry('fail')}, (directory) => {
+    const {sweepLines, json} = sweepCli(directory, {inputsPerEntry: 1000})
+    expect(json.entries.map((entry) => [entry.status, entry.threw])).toEqual([['run', 1000]])
+    expect(sweepLines).toEqual(['sweep of target.ts: every generated call of sweepTarget that was not discarded threw: a value that String() cannot convert'])
+  })
+}, 60_000)
+
+test('the child\'s own code fails after project code replaces a global it uses: the stop warning carries the error', () => {
+  withProject({
+    'helper.ts': 'export function replaceImul(): number {\n  Math.imul = () => {\n    throw new Error(\'Math.imul replaced\')\n  }\n  return 0\n}\n',
+    'target.ts': callingEntry('replaceImul'),
+  }, (directory) => {
+    const {sweepLines, json} = sweepCli(directory, {inputsPerEntry: 1000})
+    expect(json.status).toMatchObject({killed: null, exitCode: 1})
+    expect(sweepLines).toEqual(['sweep of target.ts stopped: the child exited with code 1 before it finished: Error: Math.imul replaced'])
+  })
+}, 60_000)

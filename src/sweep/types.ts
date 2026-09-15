@@ -97,7 +97,11 @@ export type HeartbeatLine = {type: 'heartbeat'}
 export type LoadedLine = {type: 'loaded'}
 export type LoadFailedLine = {type: 'load-failed'; error: string}
 export type DoneLine = {type: 'done'; maxRssKb: number}
-export type ChildLine = HeartbeatLine | LoadedLine | LoadFailedLine | EntryLine | VerifiedLine | DoneLine
+// The child's own RSS passed the job's limit after a call, e.g. project code retaining 64 MB per call; the child exits after it.
+export type RssLine = {type: 'rss'; rssKb: number}
+// The child's own code threw outside a project call, e.g. after project code replaced a global the child uses; the child exits after it.
+export type CrashedLine = {type: 'crashed'; error: string}
+export type ChildLine = HeartbeatLine | LoadedLine | LoadFailedLine | EntryLine | VerifiedLine | DoneLine | RssLine | CrashedLine
 
 export type SweepJob = {
   mode: 'run' | 'verify'
@@ -108,5 +112,6 @@ export type SweepJob = {
   settings: LatticeSettings
   stepBudget: number
   heartbeatEvery: number
+  rssKb: number // the RSS limit the child checks after its calls; the parent's ps poller enforces the same limit from outside
   items: VerifyItem[] // verify mode only
 }
