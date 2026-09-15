@@ -1570,15 +1570,23 @@ function comparisonLocalProof(
   // would have proved.
   const answer = comparisonProofAnswer(createComparisonProof(state, context.expressionContext, null, []), instruction)
   if (answer != null || !relational || context.staticRelations == null) return answer
+  // The relational rules only add proofs, never refutations. An assertion's observations are
+  // aggregated over every visit of its block, and a definitely false observation is kept for good.
+  // Join facts are not monotone: a loop header's first arrival proposes facts that only the entry
+  // edge satisfies, and a block visited before the back edge drops them sees an optimistic, possibly
+  // infeasible state. A proof must hold on the final visit too, which sees the fixed point; a
+  // refutation from an early visit would stay. Fuzz-105 f57 was refuted this way while every
+  // in-domain run reaching it passed. Refutations therefore come only from origin/main's rules.
   const relationalAnswer = comparisonProofAnswer(
     createComparisonProof(state, context.expressionContext, context.staticRelations, [instruction.left, instruction.right]),
     instruction,
   )
-  if (relationalAnswer != null) return relationalAnswer
-  return comparisonProofAnswer(
+  if (relationalAnswer != null && !relationalAnswer.canBeFalse) return relationalAnswer
+  const splitAnswer = comparisonProofAnswer(
     createArmSplitProof(state, context.expressionContext, extensionRelations(context.staticRelations), 0),
     instruction,
   )
+  return splitAnswer != null && !splitAnswer.canBeFalse ? splitAnswer : null
 }
 
 // Arm splitting depth: nested splits allowed below the assertion's own compared values.

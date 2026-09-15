@@ -970,6 +970,62 @@ describe('static relations', () => {
     expect(counters.evaluationWork).toBe(0)
   })
 
+  test('relational rules never refute: an optimistic early visit after a loop header does not leave a false refutation', () => {
+    // Generated function f57 of the verifier's fuzz-105 battery. v9 < v0 holds on every execution
+    // (v9 starts at v0 - 1 and stays at most v0 - 1), and 2,240 of the battery's in-domain runs reach
+    // it. Before this rule the block's first visit, with the loop headers' entry-only facts and an
+    // infeasible guard, refuted it, and the refutation stayed.
+    const source = `
+      export function f57(a: number, b: number, c: number, flag: boolean, n: number): void {
+        console.assert(Number.isInteger(a))
+        console.assert(a >= -8)
+        console.assert(a <= 8)
+        console.assert(Number.isInteger(b))
+        console.assert(b >= -8)
+        console.assert(b <= 8)
+        console.assert(Number.isInteger(c))
+        console.assert(c >= -8)
+        console.assert(c <= 8)
+        console.assert(Number.isInteger(n))
+        console.assert(n >= 0)
+        console.assert(n <= 3)
+        console.assert(a <= b)
+        let v0 = b
+        for (let i = 0; i < n; i++) {
+          v0 = flag ? v0 + 1 : c
+        }
+        const v1 = v0 - 1
+        let v2 = v1
+        for (let i = 0; i < n; i++) {
+          v2 = flag ? v2 + 1 : c
+        }
+        if (v0 <= v2) {
+          console.assert(a > c)
+          console.assert(b <= v2)
+          const v6 = b % v2
+          const v7 = a * 1e300
+          const v8 = c + a
+          let v9 = v1
+          for (let i = 0; i < n; i++) {
+            v9 = Math.min(v9 + 1, v0 - 1)
+          }
+          console.assert(v9 < v0)
+          console.assert(v7 > v2)
+          console.assert(v6 === v8)
+          console.assert(a === b)
+          console.assert(v9 >= 0)
+        }
+      }
+    `
+    const off = assertionVerdicts(analyze(source, false), 'f57')
+    const on = assertionVerdicts(analyze(source, true), 'f57')
+    expect(on[2]).not.toBe('refuted')
+    // Every refutation with the mode on is one origin/main's rules make.
+    on.forEach((verdict, index) => {
+      if (verdict === 'refuted') expect(off[index]).toBe('refuted')
+    })
+  })
+
   test('arm splitting proves every incoming argument against a bound computed after the join, and stops at the depth cap', () => {
     const source = `
       export function srefHeight(count: number, cellSize: number, expanded: boolean) {
