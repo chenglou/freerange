@@ -5,7 +5,7 @@
 // version narrowed to that file: same configuration, same content kinds, same line
 // formats, one file's slice.
 
-import {existsSync, realpathSync} from 'node:fs'
+import {existsSync, realpathSync, writeFileSync} from 'node:fs'
 import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
@@ -14,7 +14,10 @@ import type {AssertionVerdict, FunctionAnalysis, RequirementFailure} from './eng
 import type {SiteID} from './ir/ids.ts'
 import {reportPath, siteLocation} from './ir/program.ts'
 import {formatUnsupportedReason} from './report/index.ts'
-import {checkFile} from './typescript/check.ts'
+import {NUMBER_CAP} from './sweep/domain.ts'
+import {requirementFor, staticVerdictLookup, sweepReport, type SweepFinding} from './sweep/report.ts'
+import {DEFAULT_LIMITS, sweepFile, type SweepLimits, type SweepSettings} from './sweep/run.ts'
+import {checkFile, type CheckedSource} from './typescript/check.ts'
 import {formatDiagnosticLocation, formatDiagnosticPrefix, formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
 import {
   findTypeScriptConfig,
@@ -42,9 +45,13 @@ type ErrorLintFinding = {
   related?: {label: string; line: number; column: number}
 }
 
+// A FREERANGE_SWEEP result: a counterexample, an internal soundness error, or a note that the sweep didn't run fully.
+type SweepLintFinding = {kind: 'sweep'; file: string} & SweepFinding
+
 type LintFinding =
   | SimpleLintFinding
   | ErrorLintFinding
+  | SweepLintFinding
 
 export type ProjectCoverage = {
   functions: number
@@ -78,6 +85,46 @@ export function runFileFindings(file: string): boolean {
     .sort((left, right) => left.line - right.line || left.column - right.column)
   console.log(formatFindings(findings, fileCoverage(target.detailed), target.pretty))
   return findings.some(finding => lintLevel(finding) === 'error')
+}
+
+export type SweepMode = {level: 'warning' | 'error'; jsonPath: string | null; settings: SweepSettings}
+
+// FREERANGE_SWEEP unset or empty: null, and `fr` runs origin/main's code path. `1` prints counterexamples at warning level,
+// `error` at error level. FREERANGE_SWEEP_JSON names the sidecar file; FREERANGE_SWEEP_FILTERS (base | default) and
+// FREERANGE_SWEEP_CAP (the number cap for sides no assert bounds) are test knobs, and so is FREERANGE_SWEEP_LIMITS, a JSON
+// object that replaces some of DEFAULT_LIMITS, e.g. {"heartbeatMs": 1000} so a survival fixture finishes quickly.
+export function sweepModeFromEnvironment(): SweepMode | null {
+  const flag = process.env['FREERANGE_SWEEP']
+  if (flag == null || flag === '') return null
+  if (flag !== '1' && flag !== 'error') throw new Error(`FREERANGE_SWEEP must be 1 or error, not ${flag}`)
+  const filters = process.env['FREERANGE_SWEEP_FILTERS'] ?? 'default'
+  if (filters !== 'base' && filters !== 'default') throw new Error(`FREERANGE_SWEEP_FILTERS must be base or default, not ${filters}`)
+  const capText = process.env['FREERANGE_SWEEP_CAP'] ?? ''
+  const cap = capText === '' ? NUMBER_CAP : Number(capText)
+  if (!(cap > 0) || !Number.isFinite(cap)) throw new Error(`FREERANGE_SWEEP_CAP must be a positive number, not ${capText}`)
+  const jsonPath = process.env['FREERANGE_SWEEP_JSON'] ?? ''
+  const limitsText = process.env['FREERANGE_SWEEP_LIMITS'] ?? ''
+  const overrides = limitsText === '' ? {} : JSON.parse(limitsText) as Partial<SweepLimits>
+  for (const name of Object.keys(overrides)) if (!(name in DEFAULT_LIMITS)) throw new Error(`FREERANGE_SWEEP_LIMITS has an unknown limit ${name}`)
+  return {level: flag === '1' ? 'warning' : 'error', jsonPath: jsonPath === '' ? null : resolve(jsonPath), settings: {filters, cap, limits: {...DEFAULT_LIMITS, ...overrides}}}
+}
+
+// `FREERANGE_SWEEP=1 fr <file>`: the file's findings, then the sweep's findings, merged in line order. The sweep runs after
+// the static findings are computed and changes none of them. Exit code 2 on an internal soundness error.
+export async function runFileFindingsWithSweep(file: string, mode: SweepMode): Promise<number> {
+  const target = analyzeTargetFile(file)
+  const findings = collectLintFindings(target.detailed)
+  const reportFile = reportPath(target.detailed.program)
+  const staticFindings = findings.map(finding => ({line: finding.line, message: finding.kind === 'error' ? finding.message : ''}))
+  const verdictOf = staticVerdictLookup(target.detailed, staticFindings)
+  const run = await sweepFile(target.detailed.program.file, reportFile, target.checked.sourceFile, target.checked.program, mode.settings, site => requirementFor(verdictOf(site)))
+  const report = sweepReport({run, verdictOf, detailed: target.detailed, staticFindings, sourceFile: target.checked.sourceFile, settings: mode.settings, level: mode.level, reportFile})
+  const all: LintFinding[] = [...findings, ...report.findings.map((finding): LintFinding => ({kind: 'sweep', file: reportFile, ...finding}))]
+    .sort((left, right) => left.line - right.line || left.column - right.column)
+  console.log(formatFindings(all, fileCoverage(target.detailed), target.pretty, report.summaryLine))
+  if (mode.jsonPath != null) writeFileSync(mode.jsonPath, `${JSON.stringify(report.json, null, 1)}\n`)
+  if (report.internalError) return 2
+  return all.some(finding => lintLevel(finding) === 'error') ? 1 : 0
 }
 
 // `fr --audit`: the deep layer at project scope. One unit per file — contracts, then
@@ -141,7 +188,7 @@ function analyzeProject(searchFrom: string): ProjectScan {
   }
 }
 
-function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding[] {
+export function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding[] {
   const file = reportPath(program)
   const findings: LintFinding[] = []
   const addError = (
@@ -344,7 +391,7 @@ function assertionErrorMessage(functionName: string, assertion: AssertionVerdict
 
 // Project and file findings share this format: with a file argument, the output is the
 // project output narrowed to the file, so only the coverage counts differ.
-function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pretty: boolean): string {
+function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pretty: boolean, sweepSummary: string | null = null): string {
   const lines: string[] = []
   for (const finding of findings) lines.push(formatLintFinding(finding, pretty))
 
@@ -355,6 +402,7 @@ function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pret
     '',
     `${findings.length} finding${findings.length === 1 ? '' : 's'} (${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'}).`,
     formatCoverage(coverage),
+    ...(sweepSummary == null ? [] : [sweepSummary]),
     'Run `fr --audit [file]` for every function\'s contracts and refactoring suggestions.',
   )
   return lines.join('\n')
@@ -394,6 +442,7 @@ function formatLintFinding(finding: LintFinding, pretty: boolean): string {
         }, pretty)})`
       return `${formatLintPrefix(finding, finding.rule, pretty)}${finding.message}${related}`
     }
+    case 'sweep': return [`${formatLintPrefix(finding, finding.rule, pretty)}${finding.message}`, ...finding.details].join('\n')
   }
 }
 
@@ -401,6 +450,7 @@ function lintLevel(finding: LintFinding): 'error' | 'warning' {
   switch (finding.kind) {
     case 'simple': return finding.stop === 'outOfBoundsRead' ? 'error' : 'warning'
     case 'error': return 'error'
+    case 'sweep': return finding.level
   }
 }
 
@@ -413,7 +463,7 @@ function formatCoverage(coverage: ProjectCoverage): string {
 }
 
 // A target file analyzed on its own, with the output styling its project configures.
-type TargetFile = {detailed: DetailedAnalysis; pretty: boolean}
+type TargetFile = {detailed: DetailedAnalysis; pretty: boolean; checked: CheckedSource}
 
 // The configuration rule: like a bare `fr`, the tsconfig is resolved from the current
 // directory, never from the file's own directory. The file argument narrows the output,
@@ -439,6 +489,7 @@ function analyzeTargetFile(file: string): TargetFile {
   return {
     detailed: analyzeProjectSource(source, process.cwd()),
     pretty: usePrettyOutput(rootProject.parsed.options['pretty']),
+    checked: {sourceFile: source.sourceFile, program: source.project.program},
   }
 }
 
@@ -449,9 +500,11 @@ function canonicalFilePath(file: string): string {
 
 // A single-file program when no tsconfig resolves from the current directory.
 function analyzeFileAlone(absoluteFile: string): TargetFile {
+  const checked = checkFile(absoluteFile)
   return {
-    detailed: analyzeCheckedSource(checkFile(absoluteFile), process.cwd()),
+    detailed: analyzeCheckedSource(checked, process.cwd()),
     pretty: usePrettyOutput(undefined),
+    checked,
   }
 }
 
