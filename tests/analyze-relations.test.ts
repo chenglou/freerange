@@ -913,7 +913,8 @@ describe('static relations', () => {
   test('extension budget: an expensive integer search runs out on its own budget, and the first prototype keeps its proofs', () => {
     // Generated function f8 of the verifier's fuzz-106 battery. The linear search over its joins
     // and loop exhausts the extension budget; the first prototype's rules still prove c <= v6 and
-    // v10 < v0 and refute v6 === b, as they did before the second exploration's rules existed.
+    // v10 < v0, as they did before the second exploration's rules existed. (2d2c15d also refuted
+    // v6 === b through a relational rule; relational rules no longer refute, see the next test.)
     const source = `
       export function f8(a: number, b: number, c: number, flag: boolean, n: number): void {
         console.assert(Number.isInteger(a))
@@ -965,7 +966,7 @@ describe('static relations', () => {
       }
     `
     const counters = createStaticRelationCounters()
-    expect(assertionVerdicts(analyze(source, true, counters), 'f8')).toEqual(['proven', 'proven', 'refuted', 'unproven', 'unproven'])
+    expect(assertionVerdicts(analyze(source, true, counters), 'f8')).toEqual(['proven', 'proven', 'unproven', 'unproven', 'unproven'])
     expect(counters.extensionWork).toBeGreaterThan(0)
     expect(counters.evaluationWork).toBe(0)
   })
