@@ -205,7 +205,7 @@ async function runM2(options: Options): Promise<void> {
     const started = performance.now()
     const treeDirectory = join(options.out, 'work', task.run, safeName(task.mutant.key))
     const rawDirectory = join(options.out, 'raw', task.run, safeName(task.mutant.key))
-    const plan = planMutantTree(task.copy.files, task.mutant.files, task.mutant.changedFiles, task.unit.provenance.sources)
+    const plan = planMutantTree(task.copy.files, task.mutant.files, task.mutant.changedFiles, task.unit.provenance.sources, copyPaths(task.copy.files, task.unit.provenance.sources)!)
     const base = {run: task.run, key: task.mutant.key, unit: task.unit.id, behaviorDiffs: task.kill.behavior_diffs === '' ? 0 : Number(task.kill.behavior_diffs), recordedKill: task.kill['kill_noise@abs1e-9'] === 'true', planted: task.kill.planted === 'true', killingLines: task.kill.killing_lines}
     let refused: string | null = plan.kind === 'refused' ? plan.reason : null
     let files: FileResult[] = []

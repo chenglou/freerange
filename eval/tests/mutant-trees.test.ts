@@ -7,9 +7,11 @@ const unitSources = [
   {path: 'types.ts', sha1: 'ccc'},
 ]
 const copyFiles = [{file: 'geometry', sourceSha1: 'aaa'}, {file: 'masonry', sourceSha1: 'bbb'}]
+const paths = new Map([['geometry', 'geometry.ts'], ['masonry', 'masonry.ts']])
 
-test('a copy maps to corpus paths by sha1, and a copy with a foreign file maps to nothing', () => {
-  expect(copyPaths(copyFiles, unitSources)).toEqual(new Map([['geometry', 'geometry.ts'], ['masonry', 'masonry.ts']]))
+test('a copy maps to corpus paths by path, else by sha1, and a copy with a foreign file maps to nothing', () => {
+  expect(copyPaths(copyFiles, unitSources)).toEqual(paths)
+  expect(copyPaths([{file: 'tooltipLayout', sourceSha1: 'shimmed', path: 'src/tooltipLayout.ts'}], [{path: 'src/tooltipLayout.ts', sha1: 'original'}])).toEqual(new Map([['tooltipLayout', 'src/tooltipLayout.ts']]))
   expect(copyPaths([{file: 'geometry', sourceSha1: 'zzz'}], unitSources)).toBeNull()
 })
 
@@ -17,20 +19,21 @@ test('a mutant tree replaces its changed files from the mutant sources', () => {
   const plan = planMutantTree(copyFiles, [
     {file: 'geometry', source: '/runs/m4/mutants/m01/geometry.ts', sourceSha1: 'mmm'},
     {file: 'masonry', source: '/experiments/packing/contracts/masonry.ts', sourceSha1: 'bbb'},
-  ], ['geometry'], unitSources)
+  ], ['geometry'], unitSources, paths)
   expect(plan).toEqual({kind: 'tree', replacements: [{path: 'geometry.ts', from: '/runs/m4/mutants/m01/geometry.ts', sha1: 'mmm'}]})
 })
 
 test('check 1 refuses a changed file whose original is not the corpus file', () => {
-  const plan = planMutantTree([{file: 'geometry', sourceSha1: 'old'}], [{file: 'geometry', source: '/m/geometry.ts', sourceSha1: 'mmm'}], ['geometry'], unitSources)
-  expect(plan).toEqual({kind: 'refused', reason: 'check 1: the original of geometry (sha1 old) is not a corpus file of the unit'})
+  const plan = planMutantTree([{file: 'tooltipLayout', sourceSha1: 'shimmed', path: 'src/tooltipLayout.ts'}], [{file: 'tooltipLayout', source: '/m/tooltipLayout.ts', sourceSha1: 'mmm'}], ['tooltipLayout'],
+    [{path: 'src/tooltipLayout.ts', sha1: 'original'}], new Map([['tooltipLayout', 'src/tooltipLayout.ts']]))
+  expect(plan).toEqual({kind: 'refused', reason: 'check 1: the original of tooltipLayout has sha1 shimmed, the corpus file src/tooltipLayout.ts original'})
 })
 
 test('check 2 refuses a tree whose unchanged file differs from the corpus tree', () => {
   const plan = planMutantTree(copyFiles, [
     {file: 'geometry', source: '/m/geometry.ts', sourceSha1: 'mmm'},
     {file: 'masonry', source: '/m/masonry.ts', sourceSha1: 'edited'},
-  ], ['geometry'], unitSources)
+  ], ['geometry'], unitSources, paths)
   expect(plan).toEqual({kind: 'refused', reason: 'check 2: the unchanged file masonry (sha1 edited) differs from the corpus tree'})
 })
 
