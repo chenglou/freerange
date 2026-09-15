@@ -743,4 +743,523 @@ describe('static relations', () => {
     expect(failingAsserts).toBeGreaterThan(100)
     expect(provenOn).toBeGreaterThan(provenOff)
   })
+
+  test('integer linear forms prove offsets over uncomputed differences, and never for floats, past 2^53, or with one operand of a selection', () => {
+    const source = `
+      export function pickerWindow(count: number, endColumn: number) {
+        console.assert(Number.isInteger(count))
+        console.assert(count >= 1)
+        console.assert(count <= 10000)
+        console.assert(Number.isInteger(endColumn))
+        console.assert(endColumn >= 0)
+        console.assert(endColumn <= 10000)
+        const end = Math.min(count, (endColumn + 2) * 2)
+        const visibleEnd = Math.min(count - 1, endColumn * 2 - 1)
+        const lastMounted = end - 1
+        console.assert(visibleEnd <= lastMounted)
+        console.assert(visibleEnd < end)
+      }
+      export function guards(i: number, n: number) {
+        console.assert(Number.isInteger(i))
+        console.assert(i >= 0)
+        console.assert(i <= 1000)
+        console.assert(Number.isInteger(n))
+        console.assert(n >= 0)
+        console.assert(n <= 1000)
+        const next = i + 1
+        if (i < n) {
+          console.assert(next <= n)
+        }
+        if (i <= n) {
+          console.assert(next <= n)
+        }
+      }
+      export function fractional(x: number) {
+        console.assert(x >= 0)
+        console.assert(x <= 10)
+        const low = Math.min(x - 1, 5)
+        const back = low + 1
+        console.assert(back <= x)
+      }
+      export function pastSafeRange(x: number) {
+        console.assert(Number.isInteger(x))
+        console.assert(x >= 0)
+        console.assert(x <= 1152921504606846976)
+        const y = x + 1
+        const back = y - x
+        console.assert(back >= 1)
+        console.assert(x < y)
+      }
+      export function pickerOffByOne(count: number, endColumn: number) {
+        console.assert(Number.isInteger(count))
+        console.assert(count >= 1)
+        console.assert(count <= 10000)
+        console.assert(Number.isInteger(endColumn))
+        console.assert(endColumn >= 0)
+        console.assert(endColumn <= 10000)
+        const end = Math.min(count, 2 * endColumn + 1)
+        const visibleEnd = Math.min(count - 1, 2 * endColumn + 1)
+        const lastMounted = end - 1
+        console.assert(visibleEnd <= lastMounted)
+      }
+      export function selections(a: number, b: number) {
+        console.assert(Number.isInteger(a))
+        console.assert(a >= 0)
+        console.assert(a <= 100)
+        console.assert(Number.isInteger(b))
+        console.assert(b >= 0)
+        console.assert(b <= 100)
+        const high = Math.max(a, b)
+        const limit = a + 1
+        console.assert(high <= limit)
+        const low = Math.min(a, b)
+        const floor = a - 1
+        console.assert(floor <= low)
+      }
+    `
+    expect(verdictsOffAndOn(source, 'pickerWindow')).toEqual({off: ['unproven', 'unproven'], on: ['proven', 'proven']})
+    expect(verdictsOffAndOn(source, 'guards')).toEqual({off: ['unproven', 'unproven'], on: ['proven', 'unproven']})
+    // x = 0.3: fl(fl(0.3 - 1) + 1) = 0.30000000000000004.
+    expect(verdictsOffAndOn(source, 'fractional').on).toEqual(['unproven'])
+    // x = 2^60: x + 1 rounds to x.
+    expect(verdictsOffAndOn(source, 'pastSafeRange').on).toEqual(['unproven', 'unproven'])
+    // endColumn = 0, count = 2: visibleEnd = 1 and lastMounted = 0.
+    expect(verdictsOffAndOn(source, 'pickerOffByOne').on).toEqual(['unproven'])
+    // b = a + 5 breaks the first, b = a - 3 the second.
+    expect(verdictsOffAndOn(source, 'selections').on).toEqual(['unproven', 'unproven'])
+  })
+
+  test('linear form caps: a ninth leaf keeps the sum as one leaf, and the substitution search stops at its depth', () => {
+    const sumSource = (name: string, leaves: number): string => {
+      const names = range(leaves).map(index => `x${index}`)
+      return `
+        export function ${name}(${names.map(leaf => `${leaf}: number`).join(', ')}) {
+          ${names.map(leaf => `console.assert(Number.isInteger(${leaf}))\nconsole.assert(${leaf} >= 0)\nconsole.assert(${leaf} <= 100)`).join('\n')}
+          const total = ${names.join(' + ')}
+          const rest = ${names.slice(1).join(' + ')}
+          const withoutFirst = total - x0
+          console.assert(withoutFirst <= rest)
+        }
+      `
+    }
+    const eightCounters = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(sumSource('eightLeaves', 8), false), 'eightLeaves')).toEqual(['unproven'])
+    expect(assertionVerdicts(analyze(sumSource('eightLeaves', 8), true, eightCounters), 'eightLeaves')).toEqual(['proven'])
+    expect(eightCounters.linearForm).toBe(0)
+    const nineCounters = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(sumSource('nineLeaves', 9), true, nineCounters), 'nineLeaves')).toEqual(['unproven'])
+    expect(nineCounters.linearForm).toBeGreaterThan(0)
+
+    // Proving chain <= (k + 2) * 2 - 1 walks down every Math.min to 2 * k + 3, one substitution
+    // per level plus one for the last operand.
+    const chainSource = (name: string, levels: number): string => {
+      const others = range(levels).map(index => `other${index}`)
+      return `
+        export function ${name}(k: number, ${others.map(other => `${other}: number`).join(', ')}) {
+          console.assert(Number.isInteger(k))
+          console.assert(k >= 0)
+          console.assert(k <= 100)
+          ${others.map(other => `console.assert(Number.isInteger(${other}))\nconsole.assert(${other} >= 0)\nconsole.assert(${other} <= 1000)`).join('\n')}
+          const m0 = Math.min(2 * k + 3, other0)
+          ${range(levels - 1).map(index => `const m${index + 1} = Math.min(m${index}, other${index + 1})`).join('\n')}
+          const limit = (k + 2) * 2 - 1
+          console.assert(m${levels - 1} <= limit)
+        }
+      `
+    }
+    // The shallow search also reaches the depth cap on branches that do not close, so only the
+    // deep chain's verdict shows the cap costing a proof.
+    expect(assertionVerdicts(analyze(chainSource('shallowChain', 5), false), 'shallowChain')).toEqual(['unproven'])
+    expect(assertionVerdicts(analyze(chainSource('shallowChain', 5), true), 'shallowChain')).toEqual(['proven'])
+    const deepCounters = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(chainSource('deepChain', 7), true, deepCounters), 'deepChain')).toEqual(['unproven'])
+    expect(deepCounters.linearDepth).toBeGreaterThan(0)
+  })
+
+  test('linear visit budget: a wide tree of Math.min values stops the search, and a bound its first branch reaches still proves', () => {
+    // Three levels of four Math.min values, each over the previous level plus 1 to 4. Against an
+    // unrelated limit every branch fails, and the tree has more branches than the budget allows.
+    const treeSource = (name: string, bound: string): string => {
+      const lines: string[] = []
+      let previous = ['p0', 'p1', 'p2', 'p3']
+      for (let level = 1; level <= 3; level++) {
+        const current = range(4).map(index => `l${level}v${index}`)
+        current.forEach((value, index) => lines.push(`const ${value} = Math.min(${previous.map(operand => `${operand} + ${index + 1}`).join(', ')})`))
+        previous = current
+      }
+      return `
+        export function ${name}(p0: number, p1: number, p2: number, p3: number, limit: number) {
+          ${['p0', 'p1', 'p2', 'p3', 'limit'].map(parameter => `console.assert(Number.isInteger(${parameter}))\nconsole.assert(${parameter} >= 0)\nconsole.assert(${parameter} <= 1000)`).join('\n')}
+          ${lines.join('\n')}
+          const s = Math.min(${previous.join(', ')})
+          const bound = ${bound}
+          console.assert(s <= bound)
+        }
+      `
+    }
+    const unrelated = createStaticRelationCounters()
+    // limit = 0 with every p at 1000 makes it false.
+    expect(assertionVerdicts(analyze(treeSource('unrelatedLimit', 'limit + 1'), true, unrelated), 'unrelatedLimit')).toEqual(['unproven'])
+    expect(unrelated.linearBudget).toBeGreaterThan(0)
+    const reached = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(treeSource('reachedLimit', 'p0 + 6'), false), 'reachedLimit')).toEqual(['unproven'])
+    expect(assertionVerdicts(analyze(treeSource('reachedLimit', 'p0 + 6'), true, reached), 'reachedLimit')).toEqual(['proven'])
+    expect(reached.linearBudget).toBe(0)
+  })
+
+  test('arm splitting proves every incoming argument against a bound computed after the join, and stops at the depth cap', () => {
+    const source = `
+      export function srefHeight(count: number, cellSize: number, expanded: boolean) {
+        console.assert(Number.isInteger(count))
+        console.assert(count >= 0)
+        console.assert(count <= 10000)
+        console.assert(cellSize >= 1)
+        console.assert(cellSize <= 500)
+        const rowCount = Math.ceil(count / 6)
+        const visibleRows = Math.min(rowCount, expanded ? 4 : 1)
+        const height = visibleRows === 0 ? 0 : visibleRows * cellSize + (visibleRows - 1) * 8
+        const fourRows = 4 * cellSize + 3 * 8
+        const fourRowLimit = fourRows + 0.001
+        console.assert(height <= fourRowLimit)
+      }
+      export function falseArm(flag: boolean, a: number, b: number) {
+        console.assert(a >= 0)
+        console.assert(a <= 100)
+        console.assert(b >= 0)
+        console.assert(b <= 100)
+        const chosen = flag ? a : b
+        const limit = a + 0
+        console.assert(chosen <= limit)
+      }
+      export function refinedArm(x: number) {
+        console.assert(x >= 0)
+        console.assert(x <= 100)
+        let v = 0
+        if (x > 50) {
+          v = x
+        } else {
+          v = 10
+        }
+        const limit = 60
+        console.assert(v <= limit)
+      }
+      export function armInLoop(lo: number, hi: number, steps: number, flag: boolean) {
+        console.assert(lo >= 0)
+        console.assert(lo < hi)
+        console.assert(hi <= 100)
+        console.assert(Number.isInteger(steps))
+        console.assert(steps >= 0)
+        console.assert(steps <= 4)
+        let previous = lo
+        for (let i = 0; i < steps; i++) {
+          const chosen = flag ? previous : lo
+          const limit = lo + 0
+          console.assert(chosen <= limit)
+          previous = hi
+        }
+      }
+      export function twoLevels(a: boolean, b: boolean, s: number) {
+        console.assert(s >= 1)
+        console.assert(s <= 100)
+        const inner = a ? 2 * s : 3 * s
+        const middle = b ? inner : s
+        const limit = 4 * s
+        console.assert(middle <= limit)
+      }
+    `
+    expect(verdictsOffAndOn(source, 'srefHeight')).toEqual({off: ['unproven'], on: ['proven']})
+    expect(verdictsOffAndOn(source, 'twoLevels')).toEqual({off: ['unproven'], on: ['proven']})
+    // b > a; x = 100; previous = hi on the second iteration.
+    expect(verdictsOffAndOn(source, 'falseArm').on).toEqual(['unproven'])
+    expect(verdictsOffAndOn(source, 'refinedArm').on).toEqual(['unproven'])
+    expect(verdictsOffAndOn(source, 'armInLoop').on).toEqual(['unproven'])
+
+    const threeLevels = `
+      export function threeLevels(a: boolean, b: boolean, c: boolean, s: number) {
+        console.assert(s >= 1)
+        console.assert(s <= 100)
+        const inner = a ? 2 * s : 3 * s
+        const middle = b ? inner : s
+        const outer = c ? middle : 0
+        const limit = 4 * s
+        console.assert(outer <= limit)
+      }
+    `
+    const counters = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(threeLevels, true, counters), 'threeLevels')).toEqual(['unproven'])
+    expect(counters.armSplit).toBeGreaterThan(0)
+  })
+
+  test('return relations publish the order between a call result and its arguments that holds on every return path', () => {
+    const source = `
+      function clampOrigin(origin: number, size: number, nearEdge: number, farEdge: number): number {
+        return Math.max(nearEdge, Math.min(origin, Math.max(nearEdge, farEdge - size)))
+      }
+      export function placed(origin: number, size: number, anchored: boolean, farEdge: number) {
+        console.assert(origin >= -1000)
+        console.assert(origin <= 1000)
+        console.assert(size >= 0)
+        console.assert(size <= 1000)
+        console.assert(farEdge >= 0)
+        console.assert(farEdge <= 1000)
+        const margin = anchored ? 16 : 8
+        const left = clampOrigin(origin, size, margin, farEdge)
+        console.assert(left >= margin)
+      }
+      function bump(x: number): number {
+        return x + 1
+      }
+      export function bumped(a: number) {
+        console.assert(a >= 0)
+        console.assert(a <= 100)
+        const result = bump(a)
+        console.assert(result <= a)
+        console.assert(result >= a)
+      }
+      function pick(x: number, y: number, flag: boolean): number {
+        return flag ? x : y
+      }
+      export function picked(a: number, b: number, flag: boolean) {
+        console.assert(a >= 0)
+        console.assert(a <= 100)
+        console.assert(b >= 0)
+        console.assert(b <= 100)
+        const result = pick(a, b, flag)
+        console.assert(result >= a)
+      }
+      function keepAbove(v: number, low: number): number {
+        return Math.max(low, v)
+      }
+      export function twoCalls(a: number, b: number, lo1: number, lo2: number) {
+        console.assert(a >= 0)
+        console.assert(a <= 100)
+        console.assert(b >= 0)
+        console.assert(b <= 100)
+        console.assert(lo1 >= 0)
+        console.assert(lo1 <= 100)
+        console.assert(lo2 >= 0)
+        console.assert(lo2 <= 100)
+        const first = keepAbove(a, lo1)
+        const second = keepAbove(b, lo2)
+        console.assert(first >= lo1)
+        console.assert(second >= lo1)
+      }
+      function halve(x: number): number {
+        return x / 2
+      }
+      export function signed(a: number, positive: boolean) {
+        console.assert(a >= -10)
+        console.assert(a <= 10)
+        const value = positive ? Math.abs(a) : a
+        const half = halve(value)
+        console.assert(half <= value)
+      }
+    `
+    expect(verdictsOffAndOn(source, 'placed')).toEqual({off: ['unproven'], on: ['proven']})
+    expect(verdictsOffAndOn(source, 'bumped')).toEqual({off: ['unproven', 'unproven'], on: ['unproven', 'proven']})
+    // flag false with b < a; lo2 < lo1 with b < lo1; a = -4.
+    expect(verdictsOffAndOn(source, 'picked').on).toEqual(['unproven'])
+    expect(verdictsOffAndOn(source, 'twoCalls').on).toEqual(['proven', 'unproven'])
+    expect(verdictsOffAndOn(source, 'signed').on).toEqual(['unproven'])
+    const off = requirementsBesidesInputFiniteness(analyzedFunction(analyze(source, false), 'placed'))
+    const on = requirementsBesidesInputFiniteness(analyzedFunction(analyze(source, true), 'placed'))
+    expect(on).toEqual(off)
+  })
+
+  test('return relation caps: a callee with more than 8 return blocks or more than 16 parameters publishes nothing past the cap', () => {
+    const returnsSource = (name: string, returns: number): string => `
+      function keepAbove(k: number, v: number, low: number): number {
+        ${range(returns - 1).map(index => `if (k === ${index}) return Math.max(low, v - ${index})`).join('\n')}
+        return Math.max(low, v)
+      }
+      export function ${name}(k: number, v: number, low: number) {
+        console.assert(Number.isInteger(k))
+        console.assert(k >= 0)
+        console.assert(k <= 20)
+        console.assert(v >= 0)
+        console.assert(v <= 100)
+        console.assert(low >= 0)
+        console.assert(low <= 100)
+        const result = keepAbove(k, v, low)
+        console.assert(result >= low)
+      }
+    `
+    const eightReturns = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(returnsSource('eightReturns', 8), false), 'eightReturns')).toEqual(['unproven'])
+    expect(assertionVerdicts(analyze(returnsSource('eightReturns', 8), true, eightReturns), 'eightReturns')).toEqual(['proven'])
+    expect(eightReturns.returnRelations).toBe(0)
+    const nineReturns = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(returnsSource('nineReturns', 9), true, nineReturns), 'nineReturns')).toEqual(['unproven'])
+    expect(nineReturns.returnRelations).toBeGreaterThan(0)
+
+    const padding = range(16).map(index => `pad${index}`)
+    const parametersSource = (name: string, lowFirst: boolean): string => {
+      const parameters = lowFirst ? ['low', ...padding, 'v'] : [...padding, 'low', 'v']
+      return `
+        function keepAbove(${parameters.map(parameter => `${parameter}: number`).join(', ')}): number {
+          return Math.max(low, v)
+        }
+        export function ${name}(v: number, low: number) {
+          console.assert(v >= 0)
+          console.assert(v <= 100)
+          console.assert(low >= 0)
+          console.assert(low <= 100)
+          const result = keepAbove(${parameters.map(parameter => parameter.startsWith('pad') ? '0' : parameter).join(', ')})
+          console.assert(result >= low)
+        }
+      `
+    }
+    expect(assertionVerdicts(analyze(parametersSource('lowFirst', true), true), 'lowFirst')).toEqual(['proven'])
+    const lowLast = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(parametersSource('lowLast', false), true, lowLast), 'lowLast')).toEqual(['unproven'])
+    expect(lowLast.returnRelations).toBeGreaterThan(0)
+  })
+
+  test('join facts at loop headers hold on every arrival, and drop when an iteration breaks them', () => {
+    const source = `
+      export function clamped(lo: number, hi: number, steps: number) {
+        console.assert(lo >= 0)
+        console.assert(lo <= hi)
+        console.assert(hi <= 100)
+        console.assert(Number.isInteger(steps))
+        console.assert(steps >= 0)
+        console.assert(steps <= 8)
+        let x = lo
+        for (let i = 0; i < steps; i++) {
+          x = Math.min(x + 1, hi)
+        }
+        console.assert(x <= hi)
+        console.assert(x >= lo)
+      }
+      export function counter(n: number) {
+        console.assert(Number.isInteger(n))
+        console.assert(n >= 0)
+        console.assert(n <= 20)
+        let i = 0
+        while (i < n) {
+          const next = i + 1
+          console.assert(next <= n)
+          i = next
+        }
+        console.assert(i <= n)
+      }
+      export function bumped(lo: number, hi: number, steps: number) {
+        console.assert(Number.isInteger(lo))
+        console.assert(lo >= 0)
+        console.assert(Number.isInteger(hi))
+        console.assert(lo <= hi)
+        console.assert(hi <= 5)
+        console.assert(Number.isInteger(steps))
+        console.assert(steps >= 0)
+        console.assert(steps <= 8)
+        let x = lo
+        for (let i = 0; i < steps; i++) {
+          x = x + 1
+        }
+        console.assert(x <= hi)
+      }
+      export function swapped(lo: number, hi: number, steps: number) {
+        console.assert(lo >= 0)
+        console.assert(lo < hi)
+        console.assert(hi <= 100)
+        console.assert(Number.isInteger(steps))
+        console.assert(steps >= 0)
+        console.assert(steps <= 5)
+        let a = lo
+        let b = hi
+        for (let i = 0; i < steps; i++) {
+          const t = a
+          a = b
+          b = t
+        }
+        console.assert(a <= b)
+      }
+      export function shifted(lo: number, hi: number, steps: number) {
+        console.assert(lo >= 0)
+        console.assert(lo < hi)
+        console.assert(hi <= 100)
+        console.assert(Number.isInteger(steps))
+        console.assert(steps >= 0)
+        console.assert(steps <= 8)
+        let p0 = lo
+        let p1 = lo
+        let p2 = lo
+        for (let i = 0; i < steps; i++) {
+          p2 = p1
+          p1 = p0
+          p0 = hi
+        }
+        console.assert(p2 <= lo)
+      }
+      export function innerJoin(lo: number, hi: number, steps: number) {
+        console.assert(lo >= 0)
+        console.assert(lo < hi)
+        console.assert(hi <= 100)
+        console.assert(Number.isInteger(steps))
+        console.assert(steps >= 0)
+        console.assert(steps <= 6)
+        let m = lo
+        for (let i = 0; i < steps; i++) {
+          const v = i % 2 === 0 ? hi : lo
+          m = v
+        }
+        console.assert(m <= lo)
+      }
+      export function outerBound(steps: number) {
+        console.assert(Number.isInteger(steps))
+        console.assert(steps >= 0)
+        console.assert(steps <= 4)
+        let x = 0
+        for (let j = 0; j < steps; j++) {
+          const limit = j
+          for (let k = 0; k < 2; k++) {
+            x = limit
+          }
+        }
+        console.assert(x <= 0)
+      }
+      export function offByOne(n: number) {
+        console.assert(Number.isInteger(n))
+        console.assert(n >= 0)
+        console.assert(n <= 20)
+        let i = 0
+        while (i <= n) {
+          i = i + 1
+        }
+        console.assert(i <= n)
+      }
+    `
+    expect(verdictsOffAndOn(source, 'clamped')).toEqual({off: ['unproven', 'unproven'], on: ['proven', 'proven']})
+    expect(verdictsOffAndOn(source, 'counter')).toEqual({off: ['unproven', 'unproven'], on: ['proven', 'proven']})
+    // Each is false for some in-domain input: hi - lo + 1 steps, one step, three steps, the
+    // first step, two steps, and every n.
+    for (const name of ['bumped', 'swapped', 'shifted', 'innerJoin', 'outerBound', 'offByOne']) {
+      expect(`${name}: ${verdictsOffAndOn(source, name).on.join(', ')}`).toBe(`${name}: unproven`)
+    }
+  })
+
+  test('loop header re-runs that only drop join facts stop at their cap and add no loop limit stop', () => {
+    // 20 variables shift one step per iteration. Each keeps `p <= lo` and `lo <= p` at the header
+    // until the value of other reaches it, one variable per re-run, while every interval stays the
+    // same: the drops are the only change, and there are more of them than the cap allows.
+    const variables = range(20)
+    const source = `
+      export function shiftRegister(lo: number, other: number, steps: number) {
+        console.assert(Number.isInteger(steps))
+        console.assert(steps >= 0)
+        console.assert(steps <= 50)
+        ${variables.map(index => `let p${index} = lo`).join('\n')}
+        for (let i = 0; i < steps; i++) {
+          ${variables.slice(1).reverse().map(index => `p${index} = p${index - 1}`).join('\n')}
+          p0 = other
+        }
+        console.assert(p19 <= lo)
+      }
+    `
+    const counters = createStaticRelationCounters()
+    const on = analyze(source, true, counters)
+    expect(counters.loopJoinFacts).toBeGreaterThan(0)
+    expect(analyzedFunction(on, 'shiftRegister').kind).toBe('analyzed')
+    expect(assertionVerdicts(on, 'shiftRegister')).toEqual(assertionVerdicts(analyze(source, false), 'shiftRegister'))
+  })
 })

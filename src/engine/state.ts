@@ -167,7 +167,14 @@ const mergedStateFields: Record<keyof ExecutionState, true> = {values: true, sha
 // Joins one incoming state into the block's previous state and reports whether the block
 // must run again. The comparison happens while each joined value is already in hand, so
 // propagation does not walk the complete historical frame a second time.
-export function mergeStates(previous: ExecutionState, candidate: ExecutionState, widen: boolean): {state: ExecutionState; changed: boolean} {
+// `joinFactsOnly` is true when the change is exactly a drop of join facts: values, module
+// slots and value facts are unchanged. Static-relations mode re-runs a loop header for such a
+// change without counting it toward the header's update backstop (analyze.ts).
+export function mergeStates(
+  previous: ExecutionState,
+  candidate: ExecutionState,
+  widen: boolean,
+): {state: ExecutionState; changed: boolean; joinFactsOnly: boolean} {
   void mergedStateFields
   const values: ExecutionState['values'] = []
   const length = Math.max(previous.values.length, candidate.values.length)
@@ -209,14 +216,14 @@ export function mergeStates(previous: ExecutionState, candidate: ExecutionState,
   // The intersection is a subset of the previous facts, so a shorter list is exactly a drop.
   const joinFacts = previous.joinFacts.filter(fact =>
     candidate.joinFacts.some(candidateFact => sameJoinFact(fact, candidateFact)))
-  if (joinFacts.length !== previous.joinFacts.length) changed = true
+  const joinFactsDropped = joinFacts.length !== previous.joinFacts.length
   const state: ExecutionState = {
     values,
     shared,
     valueFacts,
     joinFacts,
   }
-  return {state, changed}
+  return {state, changed: changed || joinFactsDropped, joinFactsOnly: !changed && joinFactsDropped}
 }
 
 // Uninitialized dominates: a binding is only initialized when every joined path

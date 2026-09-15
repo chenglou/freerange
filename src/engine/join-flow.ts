@@ -10,6 +10,10 @@ export type JoinFlow = {
   blockOfValue: Array<BlockID | undefined>
   // The arguments of every static CFG edge into each block.
   incomingArguments: ValueID[][]
+  // Per block, one argument list per static CFG edge into it, in parameter order.
+  incomingEdges: ValueID[][][]
+  // A block parameter's position in its block's parameter list; undefined for other values.
+  blockParameterIndex: Array<number | undefined>
   // The function's own parameter values.
   functionParameters: ValueID[]
   // Every value the function defines, ascending: function parameters, block parameters and
@@ -23,12 +27,16 @@ export type JoinFlow = {
 export function createJoinFlow(fn: FunctionIR, successors: BlockID[][]): JoinFlow {
   const blockOfValue: Array<BlockID | undefined> = []
   const incomingArguments: ValueID[][] = fn.blocks.map(() => [])
+  const incomingEdges: ValueID[][][] = fn.blocks.map(() => [])
+  const blockParameterIndex: Array<number | undefined> = []
   const functionParameters = fn.parameters.map(parameter => parameter.value)
   const values: ValueID[] = [...functionParameters]
   for (let blockID = 0; blockID < fn.blocks.length; blockID++) {
     const block = fn.blocks[blockID]!
-    for (const parameter of block.parameters) {
+    for (let index = 0; index < block.parameters.length; index++) {
+      const parameter = block.parameters[index]!
       blockOfValue[parameter] = blockID
+      blockParameterIndex[parameter] = index
       values.push(parameter)
     }
     for (const instruction of block.instructions) {
@@ -38,10 +46,13 @@ export function createJoinFlow(fn: FunctionIR, successors: BlockID[][]): JoinFlo
     switch (block.terminator.kind) {
       case 'jump':
         incomingArguments[block.terminator.target.block]!.push(...block.terminator.target.arguments)
+        incomingEdges[block.terminator.target.block]!.push(block.terminator.target.arguments)
         break
       case 'branch':
         incomingArguments[block.terminator.whenTrue.block]!.push(...block.terminator.whenTrue.arguments)
         incomingArguments[block.terminator.whenFalse.block]!.push(...block.terminator.whenFalse.arguments)
+        incomingEdges[block.terminator.whenTrue.block]!.push(block.terminator.whenTrue.arguments)
+        incomingEdges[block.terminator.whenFalse.block]!.push(block.terminator.whenFalse.arguments)
         break
       case 'return':
       case 'stop':
@@ -53,6 +64,8 @@ export function createJoinFlow(fn: FunctionIR, successors: BlockID[][]): JoinFlo
   return {
     blockOfValue,
     incomingArguments,
+    incomingEdges,
+    blockParameterIndex,
     functionParameters,
     values,
     dominance: blockDominance(successors, fn.entry),

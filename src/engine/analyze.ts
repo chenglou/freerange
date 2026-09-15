@@ -20,6 +20,7 @@ import {
   type FunctionEvaluation,
   type LoweredFunctionAnalysis,
   type ProgramAnalysis,
+  type ReturnRelation,
   type Stop,
 } from './outcome.ts'
 import {
@@ -38,6 +39,7 @@ import {createJoinFlow} from './join-flow.ts'
 import {
   asRefinableCheck,
   branchConditionOutcome,
+  cappedJoinFacts,
   chargeRelationalWork,
   createStaticRelationCounters,
   createStaticRelations,
@@ -69,7 +71,7 @@ export function analyzeProgram(
   const analysis = analyzeProgramWith(program, staticRelations)
   if (staticRelations != null && process.env['FREERANGE_STATIC_RELATIONS_DEBUG'] === '1') {
     const counters = staticRelations
-    console.error(`static relations cap hits: closure budget ${counters.closureBudget}, fact cap ${counters.factCap}, join candidates ${counters.joinCandidates}, join facts ${counters.joinFacts}, evaluation work ${counters.evaluationWork}; peak work per instruction ${counters.peakWorkPerInstruction.toFixed(2)}`)
+    console.error(`static relations cap hits: closure budget ${counters.closureBudget}, fact cap ${counters.factCap}, join candidates ${counters.joinCandidates}, join facts ${counters.joinFacts}, evaluation work ${counters.evaluationWork}, linear form ${counters.linearForm}, linear depth ${counters.linearDepth}, linear budget ${counters.linearBudget}, arm split ${counters.armSplit}, return relations ${counters.returnRelations}, loop join facts ${counters.loopJoinFacts}; peak work per instruction ${counters.peakWorkPerInstruction.toFixed(2)}`)
   }
   return analysis
 }
@@ -299,7 +301,17 @@ type BlockRun = {
   // The latest return recorded from the block; overwritten on re-visits (incoming states
   // grow monotonically, so the last visit supersedes earlier ones) and joined only after
   // the worklist drains.
-  pendingReturn: {value: AbstractValue; shared: SharedState; valueFacts: ValueFact[]} | null
+  pendingReturn: {
+    value: AbstractValue
+    shared: SharedState
+    valueFacts: ValueFact[]
+    // Static relations, callee evaluations only: the returned IR value and the state it was
+    // returned from, for return relations.
+    returned: {value: ValueID; state: ExecutionState} | null
+  } | null
+  // Static relations: re-runs of a loop header that only dropped join facts. They do not count
+  // toward maximumLoopHeaderUpdates.
+  joinFactOnlyUpdates: number
 }
 
 type AssertionObservation = {
@@ -326,6 +338,8 @@ type EvaluationSeed = {
   valueFacts?: ValueFact[]
   parameterIdentities?: ValueIdentity[]
   identityOwner?: ValueIdentityOwner
+  // Static relations: whether this is a callee evaluation whose caller reads return relations.
+  returnRelations?: boolean
 }
 
 function runEvaluation(
@@ -363,7 +377,7 @@ function runEvaluation(
   const successors = blockSuccessors(fn)
   const run: EvaluationRun = {
     fn,
-    blocks: fn.blocks.map(() => ({incoming: null, stopped: false, failedHeader: false, pendingReturn: null})),
+    blocks: fn.blocks.map(() => ({incoming: null, stopped: false, failedHeader: false, pendingReturn: null, joinFactOnlyUpdates: 0})),
     queue: [fn.entry],
     stops: [],
     assertionObservations: [],
@@ -405,7 +419,7 @@ function runEvaluation(
         program,
         stack,
         staticRelations,
-        {valueFacts, parameterIdentities, identityOwner},
+        {valueFacts, parameterIdentities, identityOwner, returnRelations: true},
       ).evaluation
     },
   }
@@ -458,6 +472,9 @@ function runEvaluation(
           value,
           shared: cloneSharedState(state.shared),
           valueFacts: state.valueFacts.slice(),
+          returned: transferContext.staticRelations != null && seed.returnRelations === true && block.terminator.value != null
+            ? {value: block.terminator.value, state: cloneState(state)}
+            : null,
         }
         break
       }
@@ -609,6 +626,10 @@ function runEvaluation(
     }
   }
 
+  const returnRelations = relations != null && seed.returnRelations === true && normal != null && run.stops.length === 0
+    ? computeReturnRelations(fn, run, expressionContext, relations)
+    : []
+
   return {
     evaluation: {
       normal,
@@ -616,9 +637,54 @@ function runEvaluation(
       boundsAssumptions,
       assertions: classifyAssertions(run, run.stops.length === 0 && boundsAssumptions.length === 0),
       stops: run.stops,
+      returnRelations,
     },
     run,
   }
+}
+
+// Return blocks one callee evaluation may examine for return relations.
+const maximumReturnBlocks = 8
+// Parameters, in order, examined for return relations.
+const maximumReturnParameters = 16
+
+// Static relations, return relations of a completed callee evaluation (a contradiction of
+// current-decisions.md's "does not publish relationships between a return value and its
+// arguments"). A relation is published when it holds in the final state of every block that
+// returns: the worklist has drained, so each pending return describes every execution that
+// returns from its block, and with no stops every normal return is one of these blocks. The
+// proof is the join verification proof, rooted at the parameter and the returned value, both
+// computed on every execution that returns from that block.
+function computeReturnRelations(
+  fn: FunctionIR,
+  run: EvaluationRun,
+  context: TransferContext['expressionContext'],
+  relations: StaticRelations,
+): ReturnRelation[] {
+  const pending = run.blocks.flatMap(block => block.pendingReturn == null ? [] : [block.pendingReturn])
+  const returns = pending.flatMap(entry => entry.returned == null ? [] : [entry.returned])
+  if (returns.length === 0 || returns.length !== pending.length) return []
+  if (returns.length > maximumReturnBlocks) {
+    relations.counters.returnRelations += 1
+    return []
+  }
+  if (returns.some(entry => entry.state.values[entry.value]?.kind !== 'number')) return []
+  const published: ReturnRelation[] = []
+  if (returns.every(entry => relationalNonnegative(entry.state, context, relations, entry.value))) {
+    published.push({kind: 'nonnegative'})
+  }
+  if (fn.parameters.length > maximumReturnParameters) relations.counters.returnRelations += 1
+  for (let index = 0; index < Math.min(fn.parameters.length, maximumReturnParameters); index++) {
+    const parameter = fn.parameters[index]!.value
+    if (returns.some(entry => entry.state.values[parameter]?.kind !== 'number')) continue
+    if (returns.every(entry => relationalAtMost(entry.state, context, relations, parameter, entry.value))) {
+      published.push({kind: 'atLeast', parameter: index})
+    }
+    if (returns.every(entry => relationalAtMost(entry.state, context, relations, entry.value, parameter))) {
+      published.push({kind: 'atMost', parameter: index})
+    }
+  }
+  return published
 }
 
 function requiredAssertion(run: EvaluationRun, assertionIndex: number): {site: SiteID; text: string} {
@@ -700,10 +766,11 @@ function propagate(
   const argumentValues = edge.arguments.map(argument => requiredValue(state, argument))
   const previous = run.blocks[edge.block]!.incoming
   if (context.staticRelations != null) {
-    // Static relations: loop headers keep no join facts, so loop convergence and the
-    // 16-update backstop see origin/main's states. Verification reads the edge state before
-    // the parameter writes below.
-    if (target.loopHeader != null) {
+    // Static relations: loop headers maintain join facts like other joins when the graph is
+    // reducible (a contradiction of the recorded decision not to translate order onto
+    // loop-replaced values). An irreducible graph clears them at every header. Verification
+    // reads the edge state before the parameter writes below.
+    if (target.loopHeader != null && !context.staticRelations.joinFlow.dominance.reducible) {
       state.joinFacts = []
     } else if (target.parameters.length > 0) {
       state.joinFacts = maintainedJoinFacts(
@@ -726,6 +793,21 @@ function propagate(
     return
   }
   const update = mergeStates(previous.state, candidate, target.loopHeader != null && previous.updateCount >= 1)
+  if (update.changed && update.joinFactsOnly && target.loopHeader != null && context.staticRelations != null) {
+    // Static relations: a loop header re-runs when join facts drop, without counting toward
+    // the update backstop, so a drop can never add a loopLimit stop. Such re-runs are bounded
+    // by maximumJoinFactOnlyUpdates: past it the header's facts are cleared (failing closed),
+    // and with no facts left no later change can be a drop.
+    const blockRun = run.blocks[edge.block]!
+    blockRun.joinFactOnlyUpdates += 1
+    if (blockRun.joinFactOnlyUpdates > maximumJoinFactOnlyUpdates) {
+      update.state.joinFacts = []
+      context.staticRelations.counters.loopJoinFacts += 1
+    }
+    blockRun.incoming = {state: update.state, updateCount: previous.updateCount}
+    run.queue.push(edge.block)
+    return
+  }
   if (update.changed) {
     if (target.loopHeader != null && previous.updateCount >= maximumLoopHeaderUpdates) {
       addStop(
@@ -744,11 +826,8 @@ function propagate(
 
 const maximumJoinCandidates = 32
 
-// Join facts kept per state, carried and new together. Without it, facts about every earlier
-// join ride along through a run of sequential joins, and each proof and merge reads them all.
-// Past the cap the oldest facts are dropped (failing closed) and counted, so the facts the
-// newest join verified stay.
-const maximumJoinFacts = 64
+// Re-runs of one loop header that only dropped join facts, before its facts are cleared.
+const maximumJoinFactOnlyUpdates = 8
 
 // Join facts on a block's parameters (static-relations mode, blocks that are not loop
 // headers). The first arrival proposes candidates and keeps those that hold for the values
@@ -763,9 +842,18 @@ const maximumJoinFacts = 64
 // Candidate order is stable: parameters in order, each with `nonnegative` first, then bounds
 // in ascending IR value order, `atMost` before `atLeast`. At most 32 verified candidates per
 // block; later ones are dropped (failing closed) and counted.
-// Carried facts never name the target's parameters, as parameter or bound: facts about a
-// block's parameters are minted only on arrival at that block, a block on a cycle mints
-// none, and a bound is never produced in the target itself.
+// Carried facts that name the target's parameters, as parameter or bound, are removed first:
+// the edge assigns new values to them. At a non-header join none exist, because facts about a
+// block's parameters are minted only on arrival at that block, a non-header block on a cycle
+// mints none, and a bound is never produced in the target itself. A loop header's own facts do
+// come back along its back edges, naming the previous iteration's values.
+// Loop headers (static relations, reducible graphs only): the first arrival is the entry edge,
+// because the header dominates its loop. Bounds must be function parameters or produced in a
+// block on no cycle, so no bound is recomputed while the loop runs. Every back edge re-verifies
+// the stored facts against its own argument, from a state that assumed them at the header, so
+// a fact that survives the worklist holds on every arrival by induction on arrivals. A carried
+// fact about a value the loop body computes cannot survive the header: the header's previous
+// state never held one, and merges only intersect.
 function maintainedJoinFacts(
   state: ExecutionState,
   edge: EdgeIR,
@@ -775,7 +863,8 @@ function maintainedJoinFacts(
   relations: StaticRelations,
 ): JoinFact[] {
   const parameters = target.parameters
-  const facts = state.joinFacts.slice()
+  const facts = state.joinFacts.filter(fact =>
+    !parameters.includes(fact.parameter) && (fact.kind === 'nonnegative' || !parameters.includes(fact.bound)))
   const holds = (fact: JoinFact): boolean => {
     const argument = edge.arguments[parameters.indexOf(fact.parameter)]!
     switch (fact.kind) {
@@ -790,8 +879,9 @@ function maintainedJoinFacts(
     }
     return cappedJoinFacts(facts, relations)
   }
-  if (relations.joinFlow.cyclic[edge.block] === true) return facts
-  const bounds = joinBounds(state, edge.block, context, relations)
+  const cyclic = relations.joinFlow.cyclic[edge.block] === true
+  if (cyclic && (target.loopHeader == null || !relations.joinFlow.dominance.reducible)) return cappedJoinFacts(facts, relations)
+  const bounds = joinBounds(state, edge.block, context, relations, cyclic)
   let verified = 0
   for (let index = 0; index < parameters.length; index++) {
     if (state.values[edge.arguments[index]!]?.kind !== 'number') continue
@@ -814,23 +904,19 @@ function maintainedJoinFacts(
   return cappedJoinFacts(facts, relations)
 }
 
-function cappedJoinFacts(facts: JoinFact[], relations: StaticRelations): JoinFact[] {
-  if (facts.length <= maximumJoinFacts) return facts
-  relations.counters.joinFacts += 1
-  return facts.slice(facts.length - maximumJoinFacts)
-}
-
 // The values a join fact may name as its bound: numeric, non-NaN values held on the edge
 // that are function parameters or produced in a block dominating the target, and that are a
 // function parameter, an argument of some edge into the target, or named by an order fact on
 // this edge. One value per value number, the lowest IR value first. Only those three sources
 // are enumerated, not every value in the state, and the enumeration charges the evaluation's
 // work budget.
+// `outsideCycles` (loop headers) also requires a bound's block to lie on no cycle.
 function joinBounds(
   state: ExecutionState,
   target: BlockID,
   context: TransferContext['expressionContext'],
   relations: StaticRelations,
+  outsideCycles: boolean,
 ): ValueID[] {
   const flow = relations.joinFlow
   const numbering = relations.numbering
@@ -869,7 +955,8 @@ function joinBounds(
     if (held?.kind !== 'number' || held.mayBeNaN) continue
     const block = flow.blockOfValue[value]
     if (context.parameterIndexByValue[value] == null
-      && (block == null || block === target || !flow.dominance.dominates(block, target))) continue
+      && (block == null || block === target || !flow.dominance.dominates(block, target)
+        || (outsideCycles && flow.cyclic[block] === true))) continue
     const number = numbering.ofValue(value)
     if (boundNumbers.has(number)) continue
     boundNumbers.add(number)
