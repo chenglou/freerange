@@ -3,6 +3,7 @@
 // survival fixtures. Rule and cap tests call the sweep in-process with small limits; CLI tests spawn `fr` like
 // project-report.test.ts.
 import {expect, test} from 'bun:test'
+import {spawn} from 'node:child_process'
 import {mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {dirname, join} from 'node:path'
@@ -433,6 +434,33 @@ Run \`fr --audit [file]\` for every function's contracts and refactoring suggest
     expect(bad.stderr).toContain('FREERANGE_SWEEP must be 1 or error, not yes')
   })
 }, 60_000)
+
+test('pipe waits: a child whose stdout nobody reads gives up after its wait cap instead of waiting forever', async () => {
+  const pipeModule = new URL('../src/sweep/pipe.ts', import.meta.url).pathname
+  // Touching process.stdout makes Bun switch fd 1 to non-blocking, as in the sweep child, so a full pipe throws EAGAIN.
+  const script = `import {writeSync} from 'node:fs'
+import {writeAll} from ${JSON.stringify(pipeModule)}
+void process.stdout.write
+try {
+  writeAll(1, new Uint8Array(8 * 1024 * 1024), 20)
+  writeSync(2, 'wrote all')
+} catch (error) {
+  writeSync(2, 'gave up: ' + error.code)
+  process.exit(7)
+}
+`
+  const child = spawn(process.execPath, ['-e', script], {stdio: ['ignore', 'pipe', 'pipe']})
+  let stderr = ''
+  child.stderr.setEncoding('utf8')
+  child.stderr.on('data', (text: string) => {
+    stderr += text
+  })
+  const exitCode = await new Promise((resolve) => child.on('exit', resolve))
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  child.stdout.destroy()
+  expect(exitCode).toBe(7)
+  expect(stderr).toBe('gave up: EAGAIN')
+}, 30_000)
 
 // -- Survival fixtures: the parent survives the child hanging, throwing and allocating without bound -----------------
 

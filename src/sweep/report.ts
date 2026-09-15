@@ -379,6 +379,8 @@ export function sweepReport(options: {run: SweepRun; verdictOf: (site: Site) => 
     },
     timing: {
       totalMs: run.ms,
+      // The `fr` process's own peak RSS (getrusage self): /usr/bin/time -l also counts a killed child's peak toward its parent.
+      parentMaxRssKb: process.resourceUsage().maxRSS,
       run: run.run == null ? null : {ms: run.run.ms, peakRssKb: run.run.peakRssKb, doneMaxRssKb: run.run.doneMaxRssKb},
       verify: run.verify == null ? null : {ms: run.verify.ms, peakRssKb: run.verify.peakRssKb, doneMaxRssKb: run.verify.doneMaxRssKb},
     },

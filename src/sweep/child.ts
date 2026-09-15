@@ -6,16 +6,17 @@
 //           the failing lines of the analyzed file
 // Structure from mutation-instrument-spike at bccf0dd: worker.ts runBaseline and runVerify, child-calls.ts causeOf and
 // callEntry. The console replacements, R1 recorder, load step and heartbeat cadence are new.
-import {readFileSync, writeSync} from 'node:fs'
+import {readFileSync} from 'node:fs'
 import {maxMagnitude, type Value} from './domain.ts'
 import {encodeJson} from './encode.ts'
 import {compileLattice, DIGEST_START, digestValue, inputAt, type Lattice} from './lattice.ts'
+import {writeAll} from './pipe.ts'
 import {BUDGET, createRecorder, DISCARD, resetRecorder} from './recorder.ts'
 import {CAUSES, DISCARD_CAUSES, type CauseClass, type ChildLine, type DiscardCause, type FirstInput, type SiteCounts, type SweepEntry, type SweepJob} from './types.ts'
 
 // Protocol writes go through a reference taken before any project code loads, so a module that replaces
-// process.stdout.write can't break the protocol. writeSync writes the whole line before returning.
-const writeLine = writeSync
+// process.stdout.write can't break the protocol. writeAll writes the whole line before returning, waiting while the pipe is full.
+const writeLine = writeAll
 function emit(line: ChildLine) {
   writeLine(1, `${encodeJson(line)}\n`)
 }
@@ -27,6 +28,14 @@ const childPath = import.meta.path
 // rewritten to __fr calls in the instrumented copy, so in run mode and during an instrumented call any console.assert that
 // fails comes from an imported module (R1). During an uninstrumented call, the innermost frame outside this file decides.
 const noop = () => {}
+// Project writes to stdout and stderr go straight to the file descriptor, so a flood blocks this process at the pipe instead
+// of queueing in memory, and the parent's output cap stops it.
+const writeDirect = (fd: number) => (chunk: unknown): boolean => {
+  writeLine(fd, typeof chunk === 'string' || chunk instanceof Uint8Array ? chunk : String(chunk))
+  return true
+}
+process.stdout.write = writeDirect(1) as unknown as typeof process.stdout.write
+process.stderr.write = writeDirect(2) as unknown as typeof process.stderr.write
 console.log = noop
 console.info = noop
 console.warn = noop
