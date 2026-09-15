@@ -42,9 +42,9 @@ import {
   type ValueIdentity,
   type ValueIdentityOwner,
 } from '../domain/value-identity.ts'
-import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
+import type {FunctionRef, SiteID, ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
-import {coveringKindValue, declaredKindOf, type DeclaredKind, type ProgramIR} from '../ir/program.ts'
+import {coveringKindValue, declaredKindOf, type DeclaredKind, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
   canonicalValueIdentity,
@@ -57,8 +57,16 @@ import {
   type ExpressionContext,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
+import {assumedModuleBinding, contractStub, publishReturnRelations, withinDeclaredKind, type ImportedCalls} from './imported-calls.ts'
 import type {JoinFlow} from './join-flow.ts'
-import {completedEvaluation, type FunctionEvaluation, type RequirementFailure, type Stop} from './outcome.ts'
+import {
+  completedEvaluation,
+  type CompletedEvaluation,
+  type FunctionEvaluation,
+  type RequirementFailure,
+  type Stop,
+  type StopReason,
+} from './outcome.ts'
 import {
   addValueFact,
   cloneState,
@@ -71,25 +79,32 @@ import {
   type ValueFact,
 } from './state.ts'
 
+// Evaluates a callee on the caller's call stack. A null functionRef evaluates a synthetic
+// function, e.g. a contract stub, without pushing a frame.
 type EvaluateFunction = (
-  functionID: FunctionID,
+  program: ProgramIR,
+  fn: FunctionIR,
+  functionRef: FunctionRef | null,
   arguments_: AbstractValue[],
   argumentExpressions: Array<NumericExpression | null>,
   sharedState: SharedState,
-  callStack: FunctionID[],
   valueFacts: ValueFact[],
   parameterIdentities: ValueIdentity[],
   identityOwner: ValueIdentityOwner,
+  boundsAssumptions: BoundsAssumption[],
 ) => FunctionEvaluation
 
 export type TransferContext = {
   program: ProgramIR
-  callStack: FunctionID[]
+  callStack: FunctionRef[]
   expressionContext: ExpressionContext
   preconditions: InferredPrecondition[]
   // Element reads the engine could not prove in bounds — the peer of preconditions,
   // accumulated per evaluation and adopted from completed callees the same way.
   boundsAssumptions: BoundsAssumption[]
+  // Other project modules, for importedCall instructions. Null when lowering kept calls to
+  // other files rejected.
+  imports: ImportedCalls | null
   evaluateFunction: EvaluateFunction
   // Non-null exactly in static-relations mode (FREERANGE_STATIC_RELATIONS=1).
   staticRelations: StaticRelations | null
@@ -602,71 +617,36 @@ function evaluateInstructionKinded(
           },
         }
       }
+      const calleeRef: FunctionRef = {module: context.program.module, function: instruction.function}
       const callee = context.program.functions[instruction.function]
       if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
       if (callee.kind === 'unsupported') {
-        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: calleeRef}}}
       }
-      if (context.callStack.includes(instruction.function)) {
-        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'recursion', callee: instruction.function}}}
+      if (context.callStack.some(frame =>
+        frame.module === calleeRef.module && frame.function === calleeRef.function)) {
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'recursion', callee: calleeRef}}}
       }
-      const arguments_ = instruction.arguments.map(id => requiredValue(state, id))
-      const argumentExpressions = instruction.arguments.map(id => numericExpression(id, context.expressionContext))
-      // Parameters use their caller arguments' identities. The same small fact list
-      // therefore works inside the callee and comes back after every normal return, so a
-      // requirement established by a completed helper call applies below that call.
-      const argumentIdentities = instruction.arguments.map(id =>
-        canonicalValueIdentity(id, context.expressionContext))
-      const calleeOwner = createValueIdentityOwner(
-        context.expressionContext.identityOwner,
-      )
+      const call = callInputs(instruction.arguments, state, context)
       const evaluation = context.evaluateFunction(
-        instruction.function,
-        arguments_,
-        argumentExpressions,
+        context.program,
+        callee,
+        calleeRef,
+        call.arguments,
+        call.expressions,
         state.shared,
-        context.callStack,
         state.valueFacts,
-        argumentIdentities,
-        calleeOwner,
+        call.identities,
+        call.owner,
+        [],
       )
-      // A partial callee's result is discarded wholesale: the callee ran on a clone, and
-      // state.shared is assigned only on the complete path below, so a partial callee's
-      // module writes cannot become this caller's state.
       const completed = completedEvaluation(evaluation)
-      if (completed == null) {
-        // A callee that throws on every path is fully analyzed; the call just never
-        // returns, so this path ends exactly like an inline throw — silently. A guarded
-        // `if (bad) return fail(x)` then reports the same full contract the throw
-        // spelling gets.
-        if (evaluation.stops.length === 0 && evaluation.normal == null) {
-          for (const precondition of evaluation.preconditions) addPrecondition(context.preconditions, precondition)
-          for (const assumption of evaluation.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
-          return {kind: 'ends'}
-        }
-        const requirementFailure = evaluation.stops.find(stop => stop.reason.kind === 'requirementFailure')
-        if (requirementFailure?.reason.kind === 'requirementFailure') {
-          const reason = requirementFailure.reason
-          return {kind: 'stop', stop: {
-            site: instruction.site,
-            reason: {...reason, callee: instruction.function},
-          }}
-        }
-        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
-      }
+      if (completed == null) return incompleteCall(evaluation, instruction.site, calleeRef, context)
+      // A partial callee's result is discarded wholesale: the callee ran on a clone, and
+      // state.shared is assigned only on this complete path, so a partial callee's module
+      // writes cannot become this caller's state.
       state.shared = completed.sharedState
-      state.valueFacts = completed.valueFacts.filter(fact =>
-        !valueFactUsesOwner(fact, calleeOwner))
-      for (let index = 0; index < callee.parameters.length; index++) {
-        refineFiniteCallArgument(
-          state,
-          instruction.arguments[index]!,
-          callee.parameters[index]!.type,
-          context.expressionContext,
-        )
-      }
-      for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
-      for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
+      adoptCompletedCall(state, instruction.arguments, callee, completed, call.owner, context)
       // Static relations, return relations: the callee's evaluation with these arguments proved
       // each relation on every return path, so it holds between this call's result and the
       // argument on every execution that completes the call. Both values are computed before
@@ -683,6 +663,60 @@ function evaluateInstructionKinded(
         state.joinFacts = cappedJoinFacts(facts, context.staticRelations)
       }
       return passthroughValue(completed.returnValue)
+    }
+    case 'importedCall': {
+      const imports = context.imports
+      if (imports == null) throw new Error('An imported call was evaluated without project modules')
+      const calleeRef: FunctionRef = {module: instruction.module, function: instruction.function}
+      const stop = (reason: StopReason): StepResult => ({kind: 'stop', stop: {site: instruction.site, reason}})
+      const imported = imports.module(instruction.module)
+      if (imported === 'initializing') return stop({kind: 'importCycle', callee: calleeRef})
+      if (typeof imported === 'string') {
+        return stop({kind: 'importUnavailable', calleeName: instruction.name, why: imported})
+      }
+      const callee = imported.program.functions[instruction.function]
+      if (callee == null) throw new Error(`Unknown function ${instruction.function} in module ${instruction.module}`)
+      if (callee.kind === 'unsupported') return stop({kind: 'calleeStopped', callee: calleeRef})
+      const assumedBinding = assumedModuleBinding(imported, calleeRef)
+      if (assumedBinding != null) return stop({kind: 'importedModuleState', callee: calleeRef, binding: assumedBinding})
+      // A summary never adopts module state, and the callee's own analysis ran on a fresh call
+      // stack, so a callee that can call back into this module would hide the re-entered
+      // function's writes, e.g. `counter = 5; bounce(); return counter` where bounce calls a
+      // function of this module that sets counter to 7.
+      const reach = imports.reachesModule(calleeRef, context.program.module)
+      if (reach === 'found') return stop({kind: 'importCycle', callee: calleeRef})
+      if (reach === 'incomplete') return stop({kind: 'importUnavailable', calleeName: instruction.name, why: 'callClosure'})
+      // The callee's own analysis, computed once, applies at the call: a stub made of the
+      // callee's published requirements checks them against the arguments, and the callee's
+      // return summary becomes the call's value.
+      const summary = imports.standalone(calleeRef)
+      if (summary === 'analyzing') return stop({kind: 'importCycle', callee: calleeRef})
+      if (summary.kind !== 'analyzed') return stop({kind: 'calleeStopped', callee: calleeRef})
+      const call = callInputs(instruction.arguments, state, context)
+      for (let index = 0; index < callee.parameters.length; index++) {
+        if (!withinDeclaredKind(call.arguments[index]!, callee.parameters[index]!.type, true)) {
+          return stop({kind: 'contractInput', callee: calleeRef, parameter: index})
+        }
+      }
+      const evaluation = context.evaluateFunction(
+        imported.program,
+        contractStub(callee, summary.preconditions, instruction.site),
+        null,
+        call.arguments,
+        call.expressions,
+        imported.entryState,
+        state.valueFacts,
+        call.identities,
+        call.owner,
+        [],
+      )
+      const completed = completedEvaluation(evaluation)
+      if (completed == null) return incompleteCall(evaluation, instruction.site, calleeRef, context)
+      adoptCompletedCall(state, instruction.arguments, callee, completed, call.owner, context)
+      for (const assumption of summary.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
+      if (!summary.returnsNormally) return {kind: 'ends'}
+      publishReturnRelations(state, instruction, callee, summary.assertions, context.expressionContext)
+      return passthroughValue(summary.returnValue)
     }
     case 'binary': {
       const left = requiredNumberWithFacts(state, instruction.left, context.expressionContext)
@@ -757,6 +791,71 @@ export function addBoundsAssumption(assumptions: BoundsAssumption[], candidate: 
   if (!assumptions.some(assumption => assumption.site === candidate.site && assumption.kind === candidate.kind)) {
     assumptions.push(candidate)
   }
+}
+
+type CallInputs = {
+  arguments: AbstractValue[]
+  expressions: Array<NumericExpression | null>
+  identities: ValueIdentity[]
+  owner: ValueIdentityOwner
+}
+
+function callInputs(argumentIDs: ValueID[], state: ExecutionState, context: TransferContext): CallInputs {
+  return {
+    arguments: argumentIDs.map(id => requiredValue(state, id)),
+    expressions: argumentIDs.map(id => numericExpression(id, context.expressionContext)),
+    // Parameters use their caller arguments' identities. The same small fact list
+    // therefore works inside the callee and comes back after every normal return, so a
+    // requirement established by a completed helper call applies below that call.
+    identities: argumentIDs.map(id => canonicalValueIdentity(id, context.expressionContext)),
+    owner: createValueIdentityOwner(context.expressionContext.identityOwner),
+  }
+}
+
+// A callee evaluation with a stop or without a normal return. A callee that throws on every
+// path is fully analyzed; the call just never returns, so this path ends exactly like an
+// inline throw — silently. A guarded `if (bad) return fail(x)` then reports the same full
+// contract the throw spelling gets.
+function incompleteCall(
+  evaluation: FunctionEvaluation,
+  site: SiteID,
+  callee: FunctionRef,
+  context: TransferContext,
+): StepResult {
+  if (evaluation.stops.length === 0 && evaluation.normal == null) {
+    for (const precondition of evaluation.preconditions) addPrecondition(context.preconditions, precondition)
+    for (const assumption of evaluation.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
+    return {kind: 'ends'}
+  }
+  const requirementFailure = evaluation.stops.find(stop => stop.reason.kind === 'requirementFailure')
+  if (requirementFailure?.reason.kind === 'requirementFailure') {
+    return {kind: 'stop', stop: {site, reason: {...requirementFailure.reason, callee}}}
+  }
+  return {kind: 'stop', stop: {site, reason: {kind: 'calleeStopped', callee}}}
+}
+
+// What a completed call hands back besides its value: facts about the caller's own values,
+// finiteness the callee's input requirements proved about the arguments, and the
+// requirements and assumptions the callee could not discharge.
+function adoptCompletedCall(
+  state: ExecutionState,
+  argumentIDs: ValueID[],
+  callee: FunctionIR,
+  completed: CompletedEvaluation,
+  owner: ValueIdentityOwner,
+  context: TransferContext,
+): void {
+  state.valueFacts = completed.valueFacts.filter(fact => !valueFactUsesOwner(fact, owner))
+  for (let index = 0; index < callee.parameters.length; index++) {
+    refineFiniteCallArgument(
+      state,
+      argumentIDs[index]!,
+      callee.parameters[index]!.type,
+      context.expressionContext,
+    )
+  }
+  for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
+  for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
 }
 
 function valueFactUsesOwner(

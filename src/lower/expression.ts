@@ -1,5 +1,6 @@
+import {resolve} from 'node:path'
 import * as ts from 'typescript'
-import type {SiteID, ValueID} from '../ir/ids.ts'
+import type {FunctionID, ModuleID, SiteID, ValueID} from '../ir/ids.ts'
 import type {BranchDecision, ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import type {StaticAssertionProblem} from '../ir/program.ts'
 import {numberConstituent} from './numeric-intersection.ts'
@@ -23,6 +24,7 @@ import {
   type PredicateHelper,
 } from './context.ts'
 import type {StaticAnnotation} from './static-intrinsics.ts'
+import {callableSignature, topLevelFunctionUnits, type TopLevelFunctionNode} from './function-unit.ts'
 import {isUndefinedGlobal, numericLiteralValue, parameterDefaultLiteral, type ParameterDefaultLiteral} from './literals.ts'
 
 // The only entry point through which assignments lower. Statement positions (expression
@@ -416,63 +418,24 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       }
       const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current.expression), context.checker)
       const callee = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
-      if (callee == null) throw unsupported(current, {kind: 'call', callee: current.expression.text})
-      if (current.arguments.length > callee.declaration.parameters.length) {
-        throw unsupported(current, {kind: 'callWithMoreArguments', callee: current.expression.text})
-      }
-      const arguments_: ValueID[] = []
-      for (let index = 0; index < callee.declaration.parameters.length; index++) {
-        const parameter = callee.declaration.parameters[index]!
-        const argument = current.arguments[index]
-        if (argument == null) {
-          if (parameter.initializer != null) {
-            const default_ = parameterDefaultLiteral(parameter.initializer, context.checker)
-            if (default_ == null) {
-              throw unsupported(current, {kind: 'callWithFewerArguments', callee: current.expression.text})
-            }
-            arguments_.push(lowerParameterDefault(default_, parameter.initializer, context))
-            continue
-          }
-          const callableParameter = callee.signature?.declaration?.parameters[index]
-          if (callableParameter != null
-            && ts.isParameter(callableParameter)
-            && callableParameter.questionToken != null) {
-            arguments_.push(addInstruction(context, parameter, {kind: 'nullishConstant', sentinel: 'undefined'}))
-            continue
-          }
-          throw unsupported(current, {kind: 'callWithFewerArguments', callee: current.expression.text})
-        }
-        const value = lowerExpression(argument, context)
-        const default_ = parameter.initializer == null
-          ? null
-          : parameterDefaultLiteral(parameter.initializer, context.checker)
-        if (default_ == null
-          || !typeCanIncludeUndefined(context.checker.getTypeAtLocation(argument))) {
-          arguments_.push(value)
-          continue
-        }
-        // JavaScript applies a parameter default when the supplied value is undefined,
-        // not only when the argument is omitted. The normal value-producing branch keeps
-        // that rule exact for `number | undefined` arguments without a new IR operation.
-        const supplied = addInstruction(context, argument, {
-          kind: 'nullishCheck',
-          value,
-          sentinel: 'undefined',
-          negated: true,
+      if (callee != null) {
+        const arguments_ = lowerCallArguments(current, current.expression, callee, context)
+        return addInstruction(context, current, {
+          kind: 'call',
+          function: callee.id,
+          arguments: arguments_,
+          binding: callee.binding,
         })
-        arguments_.push(lowerValueBranch(
-          argument,
-          supplied,
-          () => value,
-          () => lowerParameterDefault(default_, parameter.initializer!, context),
-          context,
-        ))
       }
+      const imported = symbol == null ? null : importedFunction(symbol, context)
+      if (imported == null) throw unsupported(current, {kind: 'call', callee: current.expression.text})
+      const arguments_ = lowerCallArguments(current, current.expression, imported, context)
       return addInstruction(context, current, {
-        kind: 'call',
-        function: callee.id,
+        kind: 'importedCall',
+        module: imported.module,
+        function: imported.function,
+        name: imported.name,
         arguments: arguments_,
-        binding: callee.binding,
       })
     }
     if (ts.isPropertyAccessExpression(current.expression)) {
@@ -1634,9 +1597,105 @@ function typeCanIncludeUndefined(type: ts.Type): boolean {
   return type.isUnion() && type.types.some(typeCanIncludeUndefined)
 }
 
+type CallTarget = {declaration: TopLevelFunctionNode; signature: ts.Signature | null}
+
+type ImportedFunction = CallTarget & {module: ModuleID; function: FunctionID; name: string}
+
+// A named top-level function declared in another project module. Its FunctionID is its index
+// among that file's top-level function units, the numbering the file's own lowering assigns,
+// so the call lowers without lowering the callee's module. Anything else a symbol can resolve
+// to (a declaration file, a node_modules package, a method, a nested closure) keeps the
+// ordinary call rejection.
+function importedFunction(symbol: ts.Symbol, context: FunctionContext): ImportedFunction | null {
+  if (context.moduleByFile == null) return null
+  const declaration = symbol.valueDeclaration
+  if (declaration == null) return null
+  const sourceFile = declaration.getSourceFile()
+  const module = context.moduleByFile.get(resolve(sourceFile.fileName))
+  if (module == null || module === context.module) return null
+  const units = topLevelFunctionUnits(sourceFile)
+  const index = units.findIndex(unit => unit.declaration === declaration || unit.initializer === declaration)
+  const unit = units[index]
+  if (unit == null) return null
+  return {
+    module,
+    function: index,
+    name: unit.name.text,
+    declaration: unit.declaration,
+    signature: callableSignature(unit, context.checker),
+  }
+}
+
+// The fixed-arity argument list a call instruction carries: supplied arguments, then
+// omitted optional parameters as undefined and omitted literal defaults as their literal.
+function lowerCallArguments(
+  call: ts.CallExpression,
+  calleeName: ts.Identifier,
+  callee: CallTarget,
+  context: FunctionContext,
+): ValueID[] {
+  if (call.arguments.length > callee.declaration.parameters.length) {
+    throw unsupported(call, {kind: 'callWithMoreArguments', callee: calleeName.text})
+  }
+  // An omitted argument is lowered at the callee's parameter node when the callee lives in
+  // this file. An imported callee's nodes belong to another source file, whose offsets this
+  // module's spans cannot hold, so its fills take the call's span.
+  const fillNode = (node: ts.Node): ts.Node => node.getSourceFile() === context.sourceFile ? node : call
+  const arguments_: ValueID[] = []
+  for (let index = 0; index < callee.declaration.parameters.length; index++) {
+    const parameter = callee.declaration.parameters[index]!
+    const argument = call.arguments[index]
+    if (argument == null) {
+      if (parameter.initializer != null) {
+        const default_ = parameterDefaultLiteral(parameter.initializer, context.checker)
+        if (default_ == null) {
+          throw unsupported(call, {kind: 'callWithFewerArguments', callee: calleeName.text})
+        }
+        arguments_.push(lowerParameterDefault(default_, fillNode(parameter.initializer), context))
+        continue
+      }
+      const callableParameter = callee.signature?.declaration?.parameters[index]
+      if (callableParameter != null
+        && ts.isParameter(callableParameter)
+        && callableParameter.questionToken != null) {
+        arguments_.push(addInstruction(context, fillNode(parameter), {kind: 'nullishConstant', sentinel: 'undefined'}))
+        continue
+      }
+      throw unsupported(call, {kind: 'callWithFewerArguments', callee: calleeName.text})
+    }
+    const value = lowerExpression(argument, context)
+    const initializer = parameter.initializer
+    const default_ = initializer == null
+      ? null
+      : parameterDefaultLiteral(initializer, context.checker)
+    if (default_ == null || initializer == null
+      || !typeCanIncludeUndefined(context.checker.getTypeAtLocation(argument))) {
+      arguments_.push(value)
+      continue
+    }
+    // JavaScript applies a parameter default when the supplied value is undefined,
+    // not only when the argument is omitted. The normal value-producing branch keeps
+    // that rule exact for `number | undefined` arguments without a new IR operation.
+    const supplied = addInstruction(context, argument, {
+      kind: 'nullishCheck',
+      value,
+      sentinel: 'undefined',
+      negated: true,
+    })
+    arguments_.push(lowerValueBranch(
+      argument,
+      supplied,
+      () => value,
+      () => lowerParameterDefault(default_, fillNode(initializer), context),
+      context,
+    ))
+  }
+  return arguments_
+}
+
 function lowerParameterDefault(
   default_: ParameterDefaultLiteral,
-  node: ts.Expression,
+  node: ts.Node,
   context: FunctionContext,
 ): ValueID {
   switch (default_.kind) {

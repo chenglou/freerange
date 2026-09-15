@@ -4,6 +4,7 @@ import {blockDominance, cyclicBlocks} from '../src/engine/join-flow.ts'
 import {createStaticRelationCounters, createValueNumbering} from '../src/engine/transfer.ts'
 import {analyzeSource} from '../src/index.ts'
 import type {InstructionIR} from '../src/ir/instructions.ts'
+import {createProjectIR} from '../src/ir/program.ts'
 import {lowerSource} from '../src/lower/program.ts'
 import {createReport, type AnalysisReport} from '../src/report/index.ts'
 import {createExpressionContext} from '../src/requirements/infer.ts'
@@ -14,7 +15,7 @@ import {analyzedFunction, requirementsBesidesInputFiniteness} from './analyze-he
 // FREERANGE_STATIC_RELATIONS, so tests in the same process cannot leak the mode. Passing a
 // counters object turns the mode on and collects that analysis's cap hits.
 function analyze(source: string, staticRelations: boolean, counters = createStaticRelationCounters()): AnalysisReport {
-  const program = lowerSource(checkSource('relations.ts', source))
+  const program = lowerSource(checkSource('relations.ts', source), createProjectIR(process.cwd()), 0, null)
   return createReport(program, analyzeProgram(program, staticRelations ? counters : null))
 }
 
@@ -77,7 +78,7 @@ describe('static relations', () => {
         const plusAgain = x + 0
         return plus + minus + plusAgain
       }
-    `))
+    `), createProjectIR(process.cwd()), 0, null)
     const fn = program.functions.find(candidate => candidate.name === 'zeros')
     if (fn?.kind !== 'lowered') throw new Error('Expected zeros to lower')
     const numbering = createValueNumbering(createExpressionContext(fn, fn.parameters.map((_, index) => ({kind: 'parameter', index}))))

@@ -122,6 +122,7 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       case 'not':
       case 'absolute':
       case 'call':
+      case 'importedCall':
       case 'compare':
       case 'maximum':
       case 'minimum':

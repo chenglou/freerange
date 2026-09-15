@@ -1,9 +1,10 @@
 import * as ts from 'typescript'
 import {finiteInputPaths} from '../ir/finite-inputs.ts'
-import {moduleInitializerName, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type ProgramIR, type SourceSpan, type UnsupportedReason} from '../ir/program.ts'
+import type {ModuleID, SiteID} from '../ir/ids.ts'
+import {moduleInitializerName, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type ProgramIR, type ProjectIR, type UnsupportedReason} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
-import {addInstructionAtSite, addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type MutableBlock, type TopLevelFunction} from './context.ts'
+import {addInstructionAtSite, addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type FileLowering, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {lowerExpression, valueKind} from './expression.ts'
 import {scanAccessedProperties} from './record-properties.ts'
 import {callableSignature, topLevelFunctionUnits} from './function-unit.ts'
@@ -12,36 +13,52 @@ import {createDeclaredKindContext, declaredKind, lowerModuleInitializer, scanMod
 import {scanStaticAnnotations, type StaticAnnotation} from './static-intrinsics.ts'
 import {lowerStatements} from './statements.ts'
 
-export function lowerSource(checked: CheckedSource, baseDirectory: string = process.cwd()): ProgramIR {
+// Lowers one module into the project's shared site table and records the result in
+// project.modules. moduleByFile resolves calls to functions declared in other project
+// files; null keeps those calls rejected.
+export function lowerSource(
+  checked: CheckedSource,
+  project: ProjectIR,
+  module: ModuleID,
+  moduleByFile: ReadonlyMap<string, ModuleID> | null,
+): ProgramIR {
   const {sourceFile, program} = checked
   const checker = program.getTypeChecker()
   const declarations = topLevelFunctionUnits(sourceFile)
   const staticScan = scanStaticAnnotations(sourceFile, declarations, checker)
-  const recordStaticAnnotationIssues = (sites: SourceSpan[]): ProgramIR['staticAnnotationIssues'] =>
-    staticScan.outsideTopLevelFunctions.map(call => {
-      sites.push(nodeSpan(sourceFile, call))
-      return {kind: 'outsideTopLevelFunction', site: sites.length - 1}
-    })
+  const sites = project.sites
+  const addSpan = (span: {start: number; end: number}): SiteID => {
+    sites.push({module, start: span.start, end: span.end})
+    return sites.length - 1
+  }
+  const staticAnnotationIssues: ProgramIR['staticAnnotationIssues'] = staticScan.outsideTopLevelFunctions.map(call =>
+    ({kind: 'outsideTopLevelFunction', site: addSpan(nodeSpan(sourceFile, call, module))}))
+  const finish = (lowered: Omit<ProgramIR, 'module' | 'project' | 'file' | 'lineStarts' | 'staticAnnotationIssues'>): ProgramIR => {
+    const result: ProgramIR = {
+      module,
+      project,
+      file: sourceFile.fileName,
+      lineStarts: [...sourceFile.getLineStarts()],
+      staticAnnotationIssues,
+      ...lowered,
+    }
+    project.modules[module] = result
+    return result
+  }
   // The two file-wide rejections. An eval string can rewrite bindings that every
   // function's report depends on, and a type-check suppression comment voids the checker's
   // word that every guarantee is built on — in both cases, no function in the file is
   // analyzed.
-  const rejectFile = (span: SourceSpan, reason: UnsupportedReason): ProgramIR => {
-    const sites = [span]
-    const staticAnnotationIssues = recordStaticAnnotationIssues(sites)
-    return {
-      file: sourceFile.fileName,
-      baseDirectory,
-      lineStarts: [...sourceFile.getLineStarts()],
-      sites,
+  const rejectFile = (span: {start: number; end: number}, reason: UnsupportedReason): ProgramIR => {
+    const site = addSpan(span)
+    return finish({
       functions: declarations.map((unit, index) => ({
         kind: 'unsupported',
         name: unit.name.text,
         hasStaticAnnotations: staticScan.functions[index]!.length > 0,
-        site: 0,
+        site,
         reason,
       })),
-      staticAnnotationIssues,
       moduleBindings: [],
       initializer: {
         kind: 'lowered',
@@ -50,16 +67,16 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
         parameters: [],
         returnPropertyNames: null,
         entry: 0,
-        blocks: [{loopHeader: null, parameters: [], instructions: [], terminator: {kind: 'stop', site: 0, reason}}],
+        blocks: [{loopHeader: null, parameters: [], instructions: [], terminator: {kind: 'stop', site, reason}}],
       },
       initializerSkips: [],
-    }
+    })
   }
   const suppression = typeCheckSuppressionMention(sourceFile)
   if (suppression != null) return rejectFile(suppression, {kind: 'typeCheckSuppressed'})
   const evalNode = evalMention(sourceFile)
   if (evalNode != null) {
-    return rejectFile(nodeSpan(sourceFile, evalNode), {kind: 'evalInFile'})
+    return rejectFile(nodeSpan(sourceFile, evalNode, module), {kind: 'evalInFile'})
   }
   const functionsBySymbol = new Map<ts.Symbol, TopLevelFunction>()
   const declaredKinds = createDeclaredKindContext(checker, scanAccessedProperties(sourceFile, checker))
@@ -85,8 +102,16 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
     topLevelFunctions.push(fn)
     functionsBySymbol.set(symbol, fn)
   }
-  const sites: SourceSpan[] = []
-  const staticAnnotationIssues = recordStaticAnnotationIssues(sites)
+  const file: FileLowering = {
+    sourceFile,
+    checker,
+    program,
+    module,
+    functionsBySymbol,
+    moduleBindingsBySymbol: scan.bindingsBySymbol,
+    sites,
+    moduleByFile,
+  }
   const functions: FunctionLowering[] = []
   for (let index = 0; index < topLevelFunctions.length; index++) {
     const declaration = topLevelFunctions[index]!
@@ -94,44 +119,35 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
     // A failed function lowering discards the half-built FunctionContext wholesale; only
     // the name, annotation presence, offending node's site, and tagged reason survive.
     try {
-      functions.push(lowerFunction(declaration, staticAnnotations, sourceFile, checker, program, functionsBySymbol, scan, sites))
+      functions.push(lowerFunction(declaration, staticAnnotations, file, scan))
     } catch (error) {
       if (!(error instanceof LoweringStop)) throw error
-      sites.push(nodeSpan(sourceFile, error.node))
       functions.push({
         kind: 'unsupported',
         name: declaration.name.text,
         hasStaticAnnotations: staticAnnotations.length > 0,
-        site: sites.length - 1,
+        site: addSpan(nodeSpan(sourceFile, error.node, module)),
         reason: error.reason,
       })
     }
   }
-  const {initializer, skips} = lowerModuleInitializer(sourceFile, checker, program, functionsBySymbol, scan, sites)
-  return {
-    file: sourceFile.fileName,
-    baseDirectory,
-    lineStarts: [...sourceFile.getLineStarts()],
-    sites,
+  const {initializer, skips} = lowerModuleInitializer(file, scan)
+  return finish({
     functions,
-    staticAnnotationIssues,
     moduleBindings: scan.bindings,
     initializer,
     initializerSkips: skips,
-  }
+  })
 }
 
 function lowerFunction(
   unit: TopLevelFunction,
   staticAnnotations: StaticAnnotation[],
-  sourceFile: ts.SourceFile,
-  checker: ts.TypeChecker,
-  program: ts.Program,
-  functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
+  file: FileLowering,
   scan: ModuleScan,
-  sites: SourceSpan[],
 ): FunctionIR {
   const {declaration} = unit
+  const {sourceFile, checker} = file
   for (const annotation of staticAnnotations) {
     if (annotation.kind === 'invalid') {
       throw unsupported(annotation.node, {kind: 'staticAssertionForm', problem: annotation.problem})
@@ -162,16 +178,7 @@ function lowerFunction(
   if (!returnsVoid && valueKind(returnType, checker) == null) {
     throw unsupported(declaration.type ?? declaration, {kind: 'valueType', typeText: checker.typeToString(returnType)})
   }
-  const context = createFunctionContext(
-    sourceFile,
-    checker,
-    program,
-    functionsBySymbol,
-    scan.bindingsBySymbol,
-    sites,
-    staticAnnotations,
-    returnsVoid,
-  )
+  const context = createFunctionContext(file, staticAnnotations, returnsVoid)
   const entry = context.currentBlock
   for (let parameterIndex = 0; parameterIndex < declaration.parameters.length; parameterIndex++) {
     const parameter = declaration.parameters[parameterIndex]!
