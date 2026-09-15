@@ -1,7 +1,7 @@
 import {describe, expect, test} from 'bun:test'
 import * as ts from 'typescript'
 import {analyzeCheckedSource} from '../src/analyze.ts'
-import {analyzeFile, analyzeSource} from '../src/index.ts'
+import {analyzeFile, analyzeSource, formatReport, type AnalysisReport} from '../src/index.ts'
 import {createReport} from '../src/report/index.ts'
 import {analyzedFunction, requirementsBesidesInputFiniteness} from './analyze-helpers.ts'
 
@@ -1046,7 +1046,27 @@ describe('static console.assert contracts', () => {
   })
 })
 
-function analyzeWithAssertForms(file: string, source: string): ReturnType<typeof analyzeSource> {
+// Every fixture of the switch also checks that an interior console.assert narrows nothing that
+// later code sees: with every assertion the analysis reads erased, the `fr --audit` contracts
+// are the same apart from the assertion lines. E.g. after `if (a > b) return 0` and
+// `const d = b - a`, the assertion proofs settle the left side of `d >= 0 || b < a`, but d's
+// range in the ensures must not become 0..Infinity because of that.
+// One difference is allowed: a value that only an assertion reads adds its own assumption, e.g.
+// `assumes: flag is a boolean` for `console.assert(flag)`, so erasing may drop assumption lines.
+// It may not add or change any line.
+function analyzeWithAssertForms(file: string, source: string): AnalysisReport {
+  const report = analyzeUnderSwitch(file, source)
+  const erased = analyzeUnderSwitch(file, eraseReportedAssertions(file, source, report))
+  const withAssertionsKeptAssumptions: AnalysisReport = {functions: report.functions.map((fn, index) => {
+    const other = erased.functions[index]
+    if (fn.kind === 'unsupported' || other == null || other.kind === 'unsupported') return fn
+    return {...fn, assumptions: fn.assumptions.filter(line => other.assumptions.includes(line))}
+  })}
+  expect(contractsWithoutAssertions(erased)).toEqual(contractsWithoutAssertions(withAssertionsKeptAssumptions))
+  return report
+}
+
+function analyzeUnderSwitch(file: string, source: string): AnalysisReport {
   const previous = process.env['FREERANGE_ASSERT_FORMS']
   process.env['FREERANGE_ASSERT_FORMS'] = '1'
   try {
@@ -1055,6 +1075,48 @@ function analyzeWithAssertForms(file: string, source: string): ReturnType<typeof
     if (previous === undefined) delete process.env['FREERANGE_ASSERT_FORMS']
     else process.env['FREERANGE_ASSERT_FORMS'] = previous
   }
+}
+
+// The contracts section of `fr --audit` without its assertion lines.
+function contractsWithoutAssertions(report: AnalysisReport): string {
+  return formatReport({functions: report.functions.map(fn => fn.kind === 'unsupported' ? fn : {...fn, assertions: []})})
+}
+
+// Replaces every console.assert statement the report lists as an assertion with spaces, or with
+// an empty block where the statement is a branch body, e.g. `if (width < 0) console.assert(height > 0)`.
+// Newlines and every other offset stay, so the lines and columns that contracts name still match.
+function eraseReportedAssertions(file: string, source: string, report: AnalysisReport): string {
+  const locations = new Set<string>()
+  for (const fn of report.functions) {
+    if (fn.kind === 'unsupported') continue
+    for (const assertion of fn.assertions ?? []) {
+      const location = /:(\d+):(\d+)$/.exec(assertion.location)
+      if (location == null) throw new Error(`Expected a line and column in ${assertion.location}`)
+      locations.add(`${location[1]}:${location[2]}`)
+    }
+  }
+  if (locations.size === 0) return source
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS)
+  const statements: ts.ExpressionStatement[] = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isExpressionStatement(node)) {
+      const {line, character} = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
+      if (locations.has(`${line + 1}:${character + 1}`)) statements.push(node)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  expect(statements).toHaveLength(locations.size)
+  let erased = ''
+  let copiedUpTo = 0
+  for (const statement of statements) {
+    const start = statement.getStart(sourceFile)
+    const blank = source.slice(start, statement.getEnd()).replaceAll(/[^\n]/g, ' ')
+    const listed = ts.isBlock(statement.parent) || ts.isCaseOrDefaultClause(statement.parent)
+    erased += source.slice(copiedUpTo, start) + (listed ? blank : `{}${blank.slice(2)}`)
+    copiedUpTo = statement.getEnd()
+  }
+  return erased + source.slice(copiedUpTo)
 }
 
 function verdictsOf(report: ReturnType<typeof analyzeSource>, name: string): string[] | undefined {
