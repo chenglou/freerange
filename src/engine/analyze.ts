@@ -42,6 +42,7 @@ import {
   cappedJoinFacts,
   chargeRelationalWork,
   createStaticRelationCounters,
+  extensionRelations,
   createStaticRelations,
   evaluateInstruction,
   refineCheck,
@@ -71,7 +72,7 @@ export function analyzeProgram(
   const analysis = analyzeProgramWith(program, staticRelations)
   if (staticRelations != null && process.env['FREERANGE_STATIC_RELATIONS_DEBUG'] === '1') {
     const counters = staticRelations
-    console.error(`static relations cap hits: closure budget ${counters.closureBudget}, fact cap ${counters.factCap}, join candidates ${counters.joinCandidates}, join facts ${counters.joinFacts}, evaluation work ${counters.evaluationWork}, linear form ${counters.linearForm}, linear depth ${counters.linearDepth}, linear budget ${counters.linearBudget}, arm split ${counters.armSplit}, return relations ${counters.returnRelations}, loop join facts ${counters.loopJoinFacts}; peak work per instruction ${counters.peakWorkPerInstruction.toFixed(2)}`)
+    console.error(`static relations cap hits: closure budget ${counters.closureBudget}, fact cap ${counters.factCap}, join candidates ${counters.joinCandidates}, join facts ${counters.joinFacts}, evaluation work ${counters.evaluationWork}, linear form ${counters.linearForm}, linear depth ${counters.linearDepth}, linear budget ${counters.linearBudget}, arm split ${counters.armSplit}, return relations ${counters.returnRelations}, loop join facts ${counters.loopJoinFacts}, extension work ${counters.extensionWork}; peak work per instruction ${counters.peakWorkPerInstruction.toFixed(2)}, peak extension work per instruction ${counters.peakExtensionWorkPerInstruction.toFixed(2)}`)
   }
   return analysis
 }
@@ -540,6 +541,9 @@ function runEvaluation(
   if (relations != null) {
     const workPerInstruction = (relations.budget - relations.remainingWork) / Math.max(1, expressionContext.instructionCount)
     relations.counters.peakWorkPerInstruction = Math.max(relations.counters.peakWorkPerInstruction, workPerInstruction)
+    const extension = extensionRelations(relations)
+    const extensionPerInstruction = (extension.budget - extension.remainingWork) / Math.max(1, expressionContext.instructionCount)
+    relations.counters.peakExtensionWorkPerInstruction = Math.max(relations.counters.peakExtensionWorkPerInstruction, extensionPerInstruction)
   }
 
   // A stop inside a loop cuts the back edge, freezing the header short of its fixed point —
@@ -773,13 +777,15 @@ function propagate(
     if (target.loopHeader != null && !context.staticRelations.joinFlow.dominance.reducible) {
       state.joinFacts = []
     } else if (target.parameters.length > 0) {
+      // Loop header maintenance is the second exploration's rule, so it charges the extension
+      // budget; joins elsewhere keep the first prototype's budget.
       state.joinFacts = maintainedJoinFacts(
         state,
         edge,
         target,
         previous?.state.joinFacts ?? null,
         context.expressionContext,
-        context.staticRelations,
+        target.loopHeader == null ? context.staticRelations : extensionRelations(context.staticRelations),
       )
     }
   }

@@ -1575,7 +1575,10 @@ function comparisonLocalProof(
     instruction,
   )
   if (relationalAnswer != null) return relationalAnswer
-  return comparisonProofAnswer(createArmSplitProof(state, context.expressionContext, context.staticRelations, 0), instruction)
+  return comparisonProofAnswer(
+    createArmSplitProof(state, context.expressionContext, extensionRelations(context.staticRelations), 0),
+    instruction,
+  )
 }
 
 // Arm splitting depth: nested splits allowed below the assertion's own compared values.
@@ -1594,6 +1597,7 @@ const maximumArmSplitDepth = 2
 //   facts in the state, as every relational proof does. All of them were computed on this
 //   execution, and a value's interval in the joined state covers every execution that computed
 //   it. Nothing from another arm is read.
+// The caller passes the extension budget, so every split proof and its rules charge it.
 // A split argument may itself be such a block parameter; the nesting stops at
 // maximumArmSplitDepth, failing closed, and is counted. The edges one split enumerates are the
 // block's static incoming edges, and each charges the evaluation's work budget. Lowered code
@@ -1706,6 +1710,10 @@ export type StaticRelations = {
   workExhausted: boolean
   // The function's values by value number, ascending, built on the first join proposal.
   functionValuesByNumber: Map<number, ValueID[]> | null
+  // The second exploration's rules (integer linear forms, arm splitting, loop header join
+  // facts) draw from a separate budget of the same size, so they can never exhaust the budget
+  // the first prototype's rules use. Null on the extension object itself.
+  extension: StaticRelations | null
 }
 
 // Cap-hit counters for one analysis, across all its evaluations, printed under
@@ -1732,8 +1740,12 @@ export type StaticRelationCounters = {
   // A loop header whose join facts were cleared after maximumJoinFactOnlyUpdates re-runs that
   // only dropped join facts.
   loopJoinFacts: number
+  // An evaluation whose extension budget ran out.
+  extensionWork: number
   // Not a cap: the most relational work one evaluation used, per instruction of its function.
   peakWorkPerInstruction: number
+  // Not a cap: the same for the extension budget.
+  peakExtensionWorkPerInstruction: number
 }
 
 export function createStaticRelationCounters(): StaticRelationCounters {
@@ -1749,7 +1761,9 @@ export function createStaticRelationCounters(): StaticRelationCounters {
     armSplit: 0,
     returnRelations: 0,
     loopJoinFacts: 0,
+    extensionWork: 0,
     peakWorkPerInstruction: 0,
+    peakExtensionWorkPerInstruction: 0,
   }
 }
 
@@ -1776,15 +1790,33 @@ export function createStaticRelations(
   counters: StaticRelationCounters,
 ): StaticRelations {
   const budget = maximumRelationalWorkPerInstruction * Math.max(1, context.instructionCount)
-  return {
-    numbering: createValueNumbering(context),
+  const numbering = createValueNumbering(context)
+  const extension: StaticRelations = {
+    numbering,
     joinFlow,
     counters,
     budget,
     remainingWork: budget,
     workExhausted: false,
     functionValuesByNumber: null,
+    extension: null,
   }
+  return {
+    numbering,
+    joinFlow,
+    counters,
+    budget,
+    remainingWork: budget,
+    workExhausted: false,
+    functionValuesByNumber: null,
+    extension,
+  }
+}
+
+// The budget the second exploration's rules charge: the extension object, or the object itself
+// when it is the extension.
+export function extensionRelations(relations: StaticRelations): StaticRelations {
+  return relations.extension ?? relations
 }
 
 export function chargeRelationalWork(relations: StaticRelations, cost: number): boolean {
@@ -1794,7 +1826,8 @@ export function chargeRelationalWork(relations: StaticRelations, cost: number): 
   }
   if (!relations.workExhausted) {
     relations.workExhausted = true
-    relations.counters.evaluationWork += 1
+    if (relations.extension == null) relations.counters.extensionWork += 1
+    else relations.counters.evaluationWork += 1
   }
   return false
 }
@@ -2223,8 +2256,9 @@ function createComparisonProof(
     // is exact. A form past maximumLinearLeaves or maximumLinearMagnitude keeps the value as a
     // leaf (counted), which is always exact.
     // The linear rules have their own visit budget, 4x the function's instruction count per proof
-    // and drawn from the evaluation's work budget, so the structural rules that run first cannot
-    // starve them, and they cannot starve anything else. Exhaustion answers false and is counted.
+    // and drawn from the evaluation's extension budget, so the structural rules that run first
+    // cannot starve them, and they cannot starve anything else. Exhaustion answers false and is
+    // counted.
     let remainingLinearVisits = 4 * context.instructionCount
     let linearBudgetExhausted = false
     const chargeLinear = (cost: number): boolean => {
@@ -2235,7 +2269,7 @@ function createComparisonProof(
         }
         return false
       }
-      if (!chargeRelationalWork(relationState, cost)) return false
+      if (!chargeRelationalWork(extensionRelations(relationState), cost)) return false
       remainingLinearVisits -= cost
       return true
     }
@@ -2280,7 +2314,7 @@ function createComparisonProof(
       const offset = (form: LinearForm, strict: boolean): LinearForm =>
         strict ? {terms: form.terms, constant: form.constant + (lower ? 1n : -1n)} : form
       const factLimit = Math.max(64, 2 * context.instructionCount)
-      if (!chargeWork(Math.min(factLimit, state.valueFacts.length + state.joinFacts.length))) return bounds
+      if (!chargeRelationalWork(extensionRelations(relationState), Math.min(factLimit, state.valueFacts.length + state.joinFacts.length))) return bounds
       let read = 0
       for (const fact of state.valueFacts) {
         if (fact.kind !== 'order') continue

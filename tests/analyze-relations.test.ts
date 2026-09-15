@@ -910,6 +910,66 @@ describe('static relations', () => {
     expect(reached.linearBudget).toBe(0)
   })
 
+  test('extension budget: an expensive integer search runs out on its own budget, and the first prototype keeps its proofs', () => {
+    // Generated function f8 of the verifier's fuzz-106 battery. The linear search over its joins
+    // and loop exhausts the extension budget; the first prototype's rules still prove c <= v6 and
+    // v10 < v0 and refute v6 === b, as they did before the second exploration's rules existed.
+    const source = `
+      export function f8(a: number, b: number, c: number, flag: boolean, n: number): void {
+        console.assert(Number.isInteger(a))
+        console.assert(a >= -8)
+        console.assert(a <= 8)
+        console.assert(Number.isInteger(b))
+        console.assert(b >= -8)
+        console.assert(b <= 8)
+        console.assert(Number.isInteger(c))
+        console.assert(c >= -8)
+        console.assert(c <= 8)
+        console.assert(Number.isInteger(n))
+        console.assert(n >= 0)
+        console.assert(n <= 3)
+        console.assert(a <= b)
+        console.assert(b < c)
+        const v0 = c + 1
+        const v1 = Math.max(v0, a)
+        let v2 = c
+        for (let i = 0; i < n; i++) {
+          v2 = (v2 + 1 - b) / 2
+        }
+        let v3 = v2
+        if (a < b) {
+          v3 = (v2 - v1) / 2
+        }
+        if (c > v2) return
+        if (v2 <= v0) {
+          let v6 = v1
+          if (v1 < c) {
+            v6 = Math.max(v1, a, 0)
+          }
+          let v7 = v1
+          if (v1 < b) {
+            v7 = Math.max(v1, c, 0)
+          }
+          const v8 = Math.min(v6, Math.max(v3, 0))
+          const v9 = Math.min(v2, c - 1)
+          let v10 = v0
+          if (a <= a) {
+            v10 = Math.min(v0, b)
+          }
+          console.assert(c <= v6)
+          console.assert(v10 < v0)
+          console.assert(v6 === b)
+          console.assert(c > v8)
+          console.assert(v10 >= 0)
+        }
+      }
+    `
+    const counters = createStaticRelationCounters()
+    expect(assertionVerdicts(analyze(source, true, counters), 'f8')).toEqual(['proven', 'proven', 'refuted', 'unproven', 'unproven'])
+    expect(counters.extensionWork).toBeGreaterThan(0)
+    expect(counters.evaluationWork).toBe(0)
+  })
+
   test('arm splitting proves every incoming argument against a bound computed after the join, and stops at the depth cap', () => {
     const source = `
       export function srefHeight(count: number, cellSize: number, expanded: boolean) {
