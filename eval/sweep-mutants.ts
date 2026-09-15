@@ -175,11 +175,15 @@ function loadRun(scratchRoot: string, run: string, units: CorpusUnit[]): MutantT
   const slice = run === 'm7' ? 'mj-gallery' : 'families'
   const unitOfCopy = new Map<string, CorpusUnit>()
   for (const copy of plan.copies) {
-    // A copy's files can sit in several units' import closures, e.g. MidUI.ts; the copy's unit is the one that analyzes one of them.
-    const matches = units.filter(unit => {
-      const paths = unit.slice === slice ? copyPaths(copy.files, unit.provenance.sources) : null
+    // A copy's files can sit in several units' import closures, e.g. MidUI.ts; the copy's unit analyzes one of them. Units are
+    // matched by sha1 first. m7's c13-tooltip copy holds an export-shimmed file no unit has, so it falls back to paths, and
+    // check 1 refuses its mutants.
+    const analyzesACopyFile = (unit: CorpusUnit) => {
+      const paths = copyPaths(copy.files, unit.provenance.sources)
       return paths != null && [...paths.values()].some(path => unit.analyze.includes(path))
-    })
+    }
+    const bySha1 = units.filter(unit => unit.slice === slice && copy.files.every(file => unit.provenance.sources.some(source => source.sha1 === file.sourceSha1)) && analyzesACopyFile(unit))
+    const matches = bySha1.length > 0 ? bySha1 : units.filter(unit => unit.slice === slice && analyzesACopyFile(unit))
     if (matches.length !== 1) throw new Error(`${run}: copy ${copy.copy} matches ${matches.length} corpus units`)
     unitOfCopy.set(copy.copy, matches[0]!)
   }
