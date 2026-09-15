@@ -1,6 +1,7 @@
-// The oracle arm on the benchmark dataset's development split: insert each eligible entry's recorded catching check as a
-// console.assert at the same site of its snapshot tree (the fix's first parent) and its fix tree, run Freerange on both
-// files, and score whether the verdict at that assert separates the defect from the fix. See README.md.
+// The oracle arm on the benchmark dataset's development split: insert each eligible entry's check as a console.assert at
+// the same site of its snapshot tree (the fix's first parent) and its fix tree, run Freerange on both files, and score
+// whether the verdict at that assert separates the defect from the fix. Tier 1 takes checks that caught or evaluated the
+// defect, tier 2 curator-written checks; the tiers are counted and scored separately. See README.md.
 //
 //   bun eval/dev-oracle/oracle.ts eligibility --entries <entries.jsonl> --readings <readings.json> --dev-eval <dir> [--repo <name>=<clone>]...
 //   bun eval/dev-oracle/oracle.ts prepare     (the same options) --worktrees <dir> [--entry <id>]...
@@ -13,7 +14,8 @@ import {failedRunReason, joinVerdicts, parseFreerangeOutput, type RunOutcome, ty
 import {findConfigUpward} from '../lib/manifest.ts'
 import {runMeasured} from '../lib/process.ts'
 import {readSweepJson, sweepColumn} from '../lib/sweep.ts'
-import {defaultClones, evaluateEligibility, formatEligibility, type Eligibility, type SelectedCheck, type TreeRole} from './lib/eligibility.ts'
+import {censusGroups, treeStop, type Stop} from './lib/census.ts'
+import {anchorFor, defaultClones, evaluateEligibility, formatEligibility, tiers, tierTitle, type Eligibility, type SelectedCheck, type Tier, type TreeRole} from './lib/eligibility.ts'
 import {readEntries, readReadings, sha1} from './lib/entries.ts'
 import {git, showFile} from './lib/git.ts'
 import {insertAssert} from './lib/placement.ts'
@@ -90,16 +92,23 @@ function writeEligibility(directory: string, eligibility: Eligibility): void {
   writeFileSync(join(directory, 'eligibility.md'), formatEligibility(eligibility))
 }
 
+// Tier 1 keeps the layout of the runs before tiers existed; tier 2 nests under `tier2`.
+function tierDirectory(base: string, id: string, tier: Tier): string {
+  return tier === 1 ? join(base, id) : join(base, id, `tier${tier}`)
+}
+
 type PreparedTree = {role: TreeRole; commit: string; worktree: string; dependencies: string; assertLine: number; firstInsertedLine: number; insertedLineCount: number; pristineSha1: string; insertedSha1: string; diffPath: string; diffSha1: string}
 
-type PreparedEntry = {id: string; reach: string; checkIndex: number; condition: string; bindings: SelectedCheck['bindings']; placement: SelectedCheck['placement']; clone: string; locationSnapshotCommit: string | null; siteFileIdenticalAtLocationSnapshot: boolean | null; trees: Record<TreeRole, PreparedTree>; preparedAt: string; entriesSha1: string; readingsSha1: string}
+type PreparedEntry = {id: string; tier: Tier; reach: string; checkIndex: number; condition: string; bindings: SelectedCheck['bindings']; placement: SelectedCheck['placement']; clone: string; locationSnapshotCommit: string | null; siteFileIdenticalAtLocationSnapshot: boolean | null; trees: Record<TreeRole, PreparedTree>; preparedAt: string; entriesSha1: string; readingsSha1: string}
 
 type InsertionsFile = {rule: string; entries: PreparedEntry[]}
 
+// Entries prepared before tiers existed carry no tier and are tier 1.
 function readInsertions(devEval: string): InsertionsFile {
   const path = join(devEval, 'insertions.json')
-  if (!existsSync(path)) return {rule: 'dev-oracle-insertions@v1', entries: []}
-  return JSON.parse(readFileSync(path, 'utf8')) as InsertionsFile
+  if (!existsSync(path)) return {rule: 'dev-oracle-insertions@v2', entries: []}
+  const file = JSON.parse(readFileSync(path, 'utf8')) as {entries: Array<Omit<PreparedEntry, 'tier'> & {tier?: Tier}>}
+  return {rule: 'dev-oracle-insertions@v2', entries: file.entries.map(entry => ({...entry, tier: entry.tier ?? 1}))}
 }
 
 const treeRoles: TreeRole[] = ['snapshot', 'fix']
@@ -116,15 +125,15 @@ function prepare(options: Options): number {
     const trees: Partial<Record<TreeRole, PreparedTree>> = {}
     for (const role of treeRoles) {
       const tree = selected.trees[role]
-      const worktree = join(options.worktrees, row.id, role)
+      const worktree = join(tierDirectory(options.worktrees, row.id, row.tier), role)
       const step = (what: string, result: {ok: boolean; detail: string}): boolean => {
-        console.log(`${row.id} ${role}: ${what}: ${result.detail}`)
+        console.log(`tier ${row.tier} ${row.id} ${role}: ${what}: ${result.detail}`)
         return result.ok
       }
       mkdirSync(dirname(worktree), {recursive: true})
       if (!step(`worktree at ${tree.commit.slice(0, 10)}`, ensureWorktree(selected.clone, tree.commit, worktree))) break
       const pristine = showFile(selected.clone, tree.commit, selected.placement.path)!
-      const insertion = insertAssert(selected.placement.path, pristine, {function: selected.placement.function, anchor: selected.placement.anchor, position: selected.placement.position, condition: selected.condition, bindings: selected.bindings})
+      const insertion = insertAssert(selected.placement.path, pristine, {function: selected.placement.function, anchor: anchorFor(selected.placement, role), position: selected.placement.position, condition: selected.condition, bindings: selected.bindings})
       if (insertion.kind === 'failed' || sha1(insertion.text) !== tree.insertedSha1) {
         step('insertion', {ok: false, detail: 'the insertion no longer reproduces the eligibility record'})
         break
@@ -134,7 +143,7 @@ function prepare(options: Options): number {
       if (!step('dependencies', dependencies)) break
       const applied = applyInsertion(worktree, selected.placement.path, tree.pristineSha1, insertion.text)
       if (!step('insertion', applied)) break
-      const diffPath = join(options.devEval, 'insertions', row.id, `${role}.diff`)
+      const diffPath = join(tierDirectory(join(options.devEval, 'insertions'), row.id, row.tier), `${role}.diff`)
       mkdirSync(dirname(diffPath), {recursive: true})
       writeFileSync(diffPath, applied.diff)
       trees[role] = {role, commit: tree.commit, worktree, dependencies: dependencies.detail, assertLine: insertion.assertLine, firstInsertedLine: insertion.firstInsertedLine, insertedLineCount: insertion.insertedLineCount, pristineSha1: tree.pristineSha1, insertedSha1: tree.insertedSha1, diffPath, diffSha1: sha1(applied.diff)}
@@ -144,19 +153,20 @@ function prepare(options: Options): number {
       continue
     }
     const prepared: PreparedEntry = {
-      id: row.id, reach: row.reach, checkIndex: selected.checkIndex, condition: selected.condition, bindings: selected.bindings, placement: selected.placement, clone: selected.clone,
+      id: row.id, tier: row.tier, reach: row.reach, checkIndex: selected.checkIndex, condition: selected.condition, bindings: selected.bindings, placement: selected.placement, clone: selected.clone,
       locationSnapshotCommit: selected.locationSnapshotCommit, siteFileIdenticalAtLocationSnapshot: selected.siteFileIdenticalAtLocationSnapshot,
       trees: {snapshot: trees.snapshot, fix: trees.fix}, preparedAt: new Date().toISOString(), entriesSha1: eligibility.entries.sha1, readingsSha1: eligibility.readings.sha1,
     }
-    insertions.entries = [...insertions.entries.filter(entry => entry.id !== row.id), prepared]
+    insertions.entries = [...insertions.entries.filter(entry => !(entry.id === row.id && entry.tier === row.tier)), prepared]
   }
   writeFileSync(join(options.devEval, 'insertions.json'), `${JSON.stringify(insertions, null, 1)}\n`)
-  console.log(`prepared ${insertions.entries.length} entries; ${failed} failed`)
+  console.log(`prepared ${insertions.entries.length} entry-tier pairs; ${failed} failed`)
   return failed === 0 ? 0 : 1
 }
 
 type VerdictRow = {
   entry: string
+  tier: Tier
   reach: string
   tree: TreeRole
   commit: string
@@ -180,6 +190,8 @@ type VerdictRow = {
   findingLines: string[]
 }
 
+type TierLists = Record<`tier${Tier}`, string[]>
+
 type RunInfo = {
   startedAt: string
   freerange: {directory: string; revision: string; dirtyFiles: number}
@@ -189,9 +201,9 @@ type RunInfo = {
   timeoutSeconds: number
   entries: Eligibility['entries']
   readings: Eligibility['readings']
-  eligible: string[]
-  notPrepared: string[]
-  preparedNoLongerEligible: string[]
+  eligible: TierLists
+  notPrepared: TierLists
+  preparedNoLongerEligible: TierLists
 }
 
 function dirtyCount(directory: string, paths: string[]): number {
@@ -201,7 +213,7 @@ function dirtyCount(directory: string, paths: string[]): number {
 async function runTree(options: Options, prepared: PreparedEntry, role: TreeRole): Promise<VerdictRow> {
   const tree = prepared.trees[role]
   const path = prepared.placement.path
-  const base = {entry: prepared.id, reach: prepared.reach, tree: role, commit: tree.commit, worktree: tree.worktree, path, assertLine: tree.assertLine, condition: prepared.condition}
+  const base = {entry: prepared.id, tier: prepared.tier, reach: prepared.reach, tree: role, commit: tree.commit, worktree: tree.worktree, path, assertLine: tree.assertLine, condition: prepared.condition}
   const unanalyzed = (reason: string): VerdictRow => ({...base, verdict: 'not-analyzed', reason, finding: null, counterexample: null, sweep: null, tsconfig: null, exitCode: null, timedOut: false, wallSeconds: null, maxRssBytes: null, findings: 0, coverage: '', failure: reason, findingLines: []})
   const filePath = join(tree.worktree, path)
   const text = existsSync(filePath) ? readFileSync(filePath, 'utf8') : ''
@@ -209,7 +221,7 @@ async function runTree(options: Options, prepared: PreparedEntry, role: TreeRole
   const site = extractAssertSites(path, text).find(candidate => candidate.line === tree.assertLine && candidate.text === normalizeConditionText(prepared.condition))
   if (site == null) return unanalyzed(`the site extractor finds no console.assert(${prepared.condition}) at line ${tree.assertLine}`)
 
-  const rawBase = join(options.run, 'raw', prepared.id, role)
+  const rawBase = join(options.run, 'raw', `tier${prepared.tier}`, prepared.id, role)
   mkdirSync(dirname(rawBase), {recursive: true})
   const sweepOn = (options.env.get('FREERANGE_SWEEP') ?? '') !== ''
   const env: Record<string, string> = Object.fromEntries(options.env)
@@ -254,13 +266,14 @@ async function runArm(options: Options): Promise<number> {
   writeEligibility(options.run, eligibility)
   const insertions = readInsertions(options.devEval)
   const eligibleRows = eligibility.rows.filter(row => row.eligible && row.selected != null)
-  const preparedFor = (id: string): PreparedEntry | null => {
-    const row = eligibleRows.find(candidate => candidate.id === id)
-    const prepared = insertions.entries.find(entry => entry.id === id)
+  const preparedFor = (tier: Tier, id: string): PreparedEntry | null => {
+    const row = eligibleRows.find(candidate => candidate.tier === tier && candidate.id === id)
+    const prepared = insertions.entries.find(entry => entry.tier === tier && entry.id === id)
     if (row?.selected == null || prepared == null) return null
     const same = prepared.condition === row.selected.condition && treeRoles.every(role => prepared.trees[role].insertedSha1 === row.selected!.trees[role].insertedSha1 && prepared.trees[role].commit === row.selected!.trees[role].commit)
     return same ? prepared : null
   }
+  const perTier = (pick: (tier: Tier) => string[]): TierLists => ({tier1: pick(1), tier2: pick(2)})
   const harnessDirectory = new URL('.', import.meta.url).pathname
   const info: RunInfo = {
     startedAt: new Date().toISOString(),
@@ -271,19 +284,19 @@ async function runArm(options: Options): Promise<number> {
     timeoutSeconds: options.timeoutMs / 1000,
     entries: eligibility.entries,
     readings: eligibility.readings,
-    eligible: eligibleRows.map(row => row.id),
-    notPrepared: eligibleRows.filter(row => preparedFor(row.id) == null).map(row => row.id),
-    preparedNoLongerEligible: insertions.entries.filter(entry => !eligibleRows.some(row => row.id === entry.id)).map(entry => entry.id),
+    eligible: perTier(tier => eligibleRows.filter(row => row.tier === tier).map(row => row.id)),
+    notPrepared: perTier(tier => eligibleRows.filter(row => row.tier === tier && preparedFor(tier, row.id) == null).map(row => row.id)),
+    preparedNoLongerEligible: perTier(tier => insertions.entries.filter(entry => entry.tier === tier && !eligibleRows.some(row => row.tier === tier && row.id === entry.id)).map(entry => entry.id)),
   }
   writeFileSync(join(options.run, 'run.json'), `${JSON.stringify(info, null, 1)}\n`)
   writeFileSync(join(options.run, 'verdicts.jsonl'), '')
   for (const row of eligibleRows) {
-    const prepared = preparedFor(row.id)
+    const prepared = preparedFor(row.tier, row.id)
     if (prepared == null) continue
     for (const role of treeRoles) {
       const verdictRow = await runTree(options, prepared, role)
       appendFileSync(join(options.run, 'verdicts.jsonl'), `${JSON.stringify(verdictRow)}\n`)
-      console.log(`${row.id} ${role}: ${verdictRow.verdict} (${verdictRow.reason.slice(0, 160)})`)
+      console.log(`tier ${row.tier} ${row.id} ${role}: ${verdictRow.verdict} (${verdictRow.reason.slice(0, 160)})`)
     }
   }
   writeScore(options.run)
@@ -294,43 +307,120 @@ function treeResult(row: VerdictRow): TreeResult {
   return {verdict: row.verdict, reason: row.reason, finding: row.finding, sweep: row.sweep}
 }
 
+function cell(text: string): string {
+  return text.replaceAll('|', '\\|').replaceAll('\n', ' ')
+}
+
 function describe(row: VerdictRow): string {
   const sweep = row.sweep == null ? '' : `; sweep ${row.sweep.outcome}${row.sweep.outcome === 'held' ? ` on ${row.sweep.n} inputs` : ''}${row.counterexample == null ? '' : ` ${row.counterexample}`}`
-  return `${row.verdict}: ${row.reason}${sweep}`.replaceAll('|', '\\|').replaceAll('\n', ' ')
+  return cell(`${row.verdict}: ${row.reason}${sweep}`)
+}
+
+function describeStop(stop: Stop): string {
+  const at = stop.line == null ? '' : ` at line ${stop.line}`
+  return `${stop.group} (${stop.kind}${stop.subject == null ? '' : ` ${stop.subject}`})${at}`
+}
+
+type CensusRow = {tier: Tier; entry: string; reach: string; snapshot: Stop; fix: Stop}
+
+function formatCensus(info: RunInfo, census: CensusRow[]): string {
+  const lines: string[] = []
+  const flags = Object.entries(info.env).map(([key, value]) => `${key}=${value}`).join(' ')
+  lines.push(`# Where Freerange stops: Freerange ${info.freerange.revision.slice(0, 10)}, ${flags === '' ? 'no flags' : flags}`, '')
+  lines.push('Counting rule (dev-oracle-census@v1): one row per eligible entry per tier run on both trees, grouped by the snapshot tree\'s stop. A stop is the verdict at the inserted assert when Freerange reached one, the run\'s failure, or the finding that left the assert not-analyzed; the group comes from that finding\'s text (lib/census.ts). The tiers are never added.', '')
+  for (const tier of tiers) {
+    const rows = census.filter(row => row.tier === tier)
+    lines.push(`## Tier ${tier}: ${tierTitle(tier)}`, '')
+    if (rows.length === 0) {
+      lines.push('No eligible entry was run on both trees.', '')
+      continue
+    }
+    lines.push('| group | entries | static | sweep | fix tree stops differently | ids |', '|---|---:|---:|---:|---:|---|')
+    for (const group of censusGroups) {
+      const members = rows.filter(row => row.snapshot.group === group)
+      if (members.length === 0) continue
+      const differs = members.filter(row => row.fix.group !== row.snapshot.group || row.fix.message !== row.snapshot.message).length
+      lines.push(`| ${group} | ${members.length} | ${members.filter(row => row.reach === 'static').length} | ${members.filter(row => row.reach === 'sweep').length} | ${differs} | ${members.map(row => row.entry).join(', ')} |`)
+    }
+    lines.push(`| total | ${rows.length} | ${rows.filter(row => row.reach === 'static').length} | ${rows.filter(row => row.reach === 'sweep').length} | | |`, '')
+    lines.push('| entry | reach | snapshot tree stop | construct at that line | Freerange message | fix tree, when it differs |', '|---|---|---|---|---|---|')
+    for (const row of rows) {
+      const differs = row.fix.group !== row.snapshot.group || row.fix.message !== row.snapshot.message
+      lines.push(`| ${row.entry} | ${row.reach} | ${cell(describeStop(row.snapshot))} | ${row.snapshot.construct == null ? '' : `\`${cell(row.snapshot.construct)}\``} | ${cell(row.snapshot.message)} | ${differs ? cell(`${describeStop(row.fix)}: ${row.fix.message}`) : 'same'} |`)
+    }
+    lines.push('')
+  }
+  return `${lines.join('\n')}\n`
+}
+
+// Run directories written before tiers existed have untiered verdict rows and flat id lists: those are tier 1.
+function readRun(runDirectory: string): {info: RunInfo; rows: VerdictRow[]} {
+  const raw = JSON.parse(readFileSync(join(runDirectory, 'run.json'), 'utf8')) as Omit<RunInfo, 'eligible' | 'notPrepared' | 'preparedNoLongerEligible'> & Record<'eligible' | 'notPrepared' | 'preparedNoLongerEligible', TierLists | string[]>
+  const lists = (value: TierLists | string[]): TierLists => Array.isArray(value) ? {tier1: value, tier2: []} : value
+  const info: RunInfo = {...raw, eligible: lists(raw.eligible), notPrepared: lists(raw.notPrepared), preparedNoLongerEligible: lists(raw.preparedNoLongerEligible)}
+  const rows = readFileSync(join(runDirectory, 'verdicts.jsonl'), 'utf8').split('\n').filter(line => line.length > 0).map(line => {
+    const row = JSON.parse(line) as Omit<VerdictRow, 'tier'> & {tier?: Tier}
+    return {...row, tier: row.tier ?? 1}
+  })
+  return {info, rows}
 }
 
 function writeScore(runDirectory: string): void {
-  const info = JSON.parse(readFileSync(join(runDirectory, 'run.json'), 'utf8')) as RunInfo
-  const rows = readFileSync(join(runDirectory, 'verdicts.jsonl'), 'utf8').split('\n').filter(line => line.length > 0).map(line => JSON.parse(line) as VerdictRow)
-  const byReach = new Map<string, ReachTotals>([['static', emptyTotals()], ['sweep', emptyTotals()]])
-  const entries: Array<{id: string; reach: string; snapshot: VerdictRow; fix: VerdictRow; score: ReturnType<typeof scoreEntry>}> = []
+  const {info, rows} = readRun(runDirectory)
+  const totals = new Map<Tier, Map<string, ReachTotals>>(tiers.map(tier => [tier, new Map([['static', emptyTotals()], ['sweep', emptyTotals()]])]))
+  const entries: Array<{tier: Tier; id: string; reach: string; snapshot: VerdictRow; fix: VerdictRow; score: ReturnType<typeof scoreEntry>}> = []
+  const census: CensusRow[] = []
   for (const snapshot of rows.filter(row => row.tree === 'snapshot')) {
-    const fix = rows.find(row => row.tree === 'fix' && row.entry === snapshot.entry)
+    const fix = rows.find(row => row.tree === 'fix' && row.entry === snapshot.entry && row.tier === snapshot.tier)
     if (fix == null) continue
+    const byReach = totals.get(snapshot.tier)!
     addToTotals(byReach.get(snapshot.reach) ?? byReach.set(snapshot.reach, emptyTotals()).get(snapshot.reach)!, treeResult(snapshot), treeResult(fix))
-    entries.push({id: snapshot.entry, reach: snapshot.reach, snapshot, fix, score: scoreEntry(treeResult(snapshot), treeResult(fix))})
+    entries.push({tier: snapshot.tier, id: snapshot.entry, reach: snapshot.reach, snapshot, fix, score: scoreEntry(treeResult(snapshot), treeResult(fix))})
+    census.push({tier: snapshot.tier, entry: snapshot.entry, reach: snapshot.reach, snapshot: treeStop(snapshot), fix: treeStop(fix)})
   }
-  const summary = {run: info, finishedAt: new Date().toISOString(), totals: Object.fromEntries(byReach), entries: entries.map(entry => ({id: entry.id, reach: entry.reach, snapshot: entry.snapshot.verdict, fix: entry.fix.verdict, ...entry.score})), maxRssBytes: rows.reduce((max, row) => Math.max(max, row.maxRssBytes ?? 0), 0), timeouts: rows.filter(row => row.timedOut).length}
+  const summary = {
+    run: info, finishedAt: new Date().toISOString(),
+    totals: Object.fromEntries([...totals].map(([tier, byReach]) => [`tier${tier}`, Object.fromEntries(byReach)])),
+    entries: entries.map(entry => ({tier: entry.tier, id: entry.id, reach: entry.reach, snapshot: entry.snapshot.verdict, fix: entry.fix.verdict, ...entry.score})),
+    maxRssBytes: rows.reduce((max, row) => Math.max(max, row.maxRssBytes ?? 0), 0), timeouts: rows.filter(row => row.timedOut).length,
+  }
   writeFileSync(join(runDirectory, 'score.json'), `${JSON.stringify(summary, null, 1)}\n`)
+  writeFileSync(join(runDirectory, 'census.json'), `${JSON.stringify({rule: 'dev-oracle-census@v1', rows: census}, null, 1)}\n`)
+  const censusText = formatCensus(info, census)
+  writeFileSync(join(runDirectory, 'census.md'), censusText)
 
   const flags = Object.entries(info.env).map(([key, value]) => `${key}=${value}`).join(' ')
+  const ids = (list: string[]): string => list.length === 0 ? 'none' : list.join(', ')
   const lines: string[] = []
   lines.push(`# Oracle arm score: Freerange ${info.freerange.revision.slice(0, 10)}, ${flags === '' ? 'no flags' : flags}`, '')
   lines.push(`- Freerange ${info.freerange.revision} (${info.freerange.dirtyFiles} dirty files under src, fr.ts, package.json, bun.lock); harness ${info.harness.revision} (${info.harness.dirtyFiles} dirty files under eval/dev-oracle and eval/lib); bun ${info.bun}; per-file timeout ${info.timeoutSeconds} s; environment: ${flags === '' ? 'none' : flags}`)
-  lines.push(`- entries.jsonl: ${info.entries.count} lines, sha1 ${info.entries.sha1}; readings sha1 ${info.readings.sha1}`)
-  lines.push(`- Eligible (eligibility.md in this run directory): ${info.eligible.length}. Run on both trees: ${entries.length}. Eligible but not prepared: ${info.notPrepared.length === 0 ? 'none' : info.notPrepared.join(', ')}. Prepared but no longer eligible: ${info.preparedNoLongerEligible.length === 0 ? 'none' : info.preparedNoLongerEligible.join(', ')}.`, '')
-  lines.push('## Score by reach', '', 'Counting rule: one row per eligible entry run on both trees. Refuted on a tree: verdict can-be-false at the inserted assert, or a verified sweep counterexample there. Points at the defect: refuted on the snapshot tree and not on the fix tree. Proved on the fix tree: verdict proved. Not analyzed on either: verdict not-analyzed on the snapshot tree, the fix tree or both.', '')
-  lines.push('| reach | entries | points at defect | refuted on snapshot | refuted on fix | proved on fix | not analyzed on either | not analyzed on snapshot | not analyzed on fix |', '|---|---:|---:|---:|---:|---:|---:|---:|---:|')
-  for (const [reach, totals] of byReach) {
-    lines.push(`| ${reach} | ${totals.entries} | ${totals.pointsAtDefect} | ${totals.refutedOnSnapshot} | ${totals.refutedOnFix} | ${totals.provedOnFix} | ${totals.notAnalyzedOnEither} | ${totals.notAnalyzedOnSnapshot} | ${totals.notAnalyzedOnFix} |`)
+  lines.push(`- entries.jsonl: ${info.entries.count} lines, sha1 ${info.entries.sha1}; readings sha1 ${info.readings.sha1} (${info.readings.rule})`)
+  for (const tier of tiers) {
+    const key = `tier${tier}` as const
+    lines.push(`- Tier ${tier}, ${tierTitle(tier)}: eligible ${info.eligible[key].length} (eligibility.md in this run directory); run on both trees ${entries.filter(entry => entry.tier === tier).length}; eligible but not prepared: ${ids(info.notPrepared[key])}; prepared but no longer eligible: ${ids(info.preparedNoLongerEligible[key])}.`)
   }
-  lines.push('', '## Verdicts at the inserted assert', '', '| entry | reach | snapshot tree | fix tree | points at defect |', '|---|---|---|---|---|')
+  lines.push('', '## Score by tier and reach', '', 'Counting rule: one row per eligible entry per tier run on both trees; the tiers are never added. Refuted on a tree: verdict can-be-false at the inserted assert, or a verified sweep counterexample there. Points at the defect: refuted on the snapshot tree and not on the fix tree. Proved on the fix tree: verdict proved. Not analyzed on either: verdict not-analyzed on the snapshot tree, the fix tree or both.', '')
+  lines.push('| tier | reach | entries | points at defect | refuted on snapshot | refuted on fix | proved on fix | not analyzed on either | not analyzed on snapshot | not analyzed on fix |', '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|')
+  for (const [tier, byReach] of totals) {
+    for (const [reach, reachTotals] of byReach) {
+      lines.push(`| ${tier} | ${reach} | ${reachTotals.entries} | ${reachTotals.pointsAtDefect} | ${reachTotals.refutedOnSnapshot} | ${reachTotals.refutedOnFix} | ${reachTotals.provedOnFix} | ${reachTotals.notAnalyzedOnEither} | ${reachTotals.notAnalyzedOnSnapshot} | ${reachTotals.notAnalyzedOnFix} |`)
+    }
+  }
+  lines.push('', '## Verdicts at the inserted assert', '', '| tier | entry | reach | snapshot tree | fix tree | points at defect |', '|---|---|---|---|---|---|')
   for (const entry of entries) {
-    lines.push(`| ${entry.id} | ${entry.reach} | ${entry.snapshot.commit.slice(0, 10)} ${describe(entry.snapshot)} | ${entry.fix.commit.slice(0, 10)} ${describe(entry.fix)} | ${entry.score.pointsAtDefect ? 'yes' : 'no'} |`)
+    lines.push(`| ${entry.tier} | ${entry.id} | ${entry.reach} | ${entry.snapshot.commit.slice(0, 10)} ${describe(entry.snapshot)} | ${entry.fix.commit.slice(0, 10)} ${describe(entry.fix)} | ${entry.score.pointsAtDefect ? 'yes' : 'no'} |`)
   }
-  lines.push('', '## Runtime and peak RSS per file', '', '| entry | tree | file | exit | wall s | max RSS MB | findings | failure |', '|---|---|---|---:|---:|---:|---:|---|')
+  lines.push('', '## Where Freerange stops', '', 'Summary of census.md in this run directory (dev-oracle-census@v1): entries grouped by the snapshot tree\'s stop.', '')
+  lines.push('| tier | group | entries |', '|---|---|---:|')
+  for (const tier of tiers) {
+    for (const group of censusGroups) {
+      const count = census.filter(row => row.tier === tier && row.snapshot.group === group).length
+      if (count > 0) lines.push(`| ${tier} | ${group} | ${count} |`)
+    }
+  }
+  lines.push('', '## Runtime and peak RSS per file', '', '| tier | entry | tree | file | exit | wall s | max RSS MB | findings | failure |', '|---|---|---|---|---:|---:|---:|---:|---|')
   for (const row of rows) {
-    lines.push(`| ${row.entry} | ${row.tree} | ${row.path}:${row.assertLine} | ${row.exitCode ?? ''} | ${row.wallSeconds?.toFixed(2) ?? ''} | ${row.maxRssBytes == null ? '' : (row.maxRssBytes / 1024 / 1024).toFixed(0)} | ${row.findings} | ${row.failure.replaceAll('|', '\\|')} |`)
+    lines.push(`| ${row.tier} | ${row.entry} | ${row.tree} | ${row.path}:${row.assertLine} | ${row.exitCode ?? ''} | ${row.wallSeconds?.toFixed(2) ?? ''} | ${row.maxRssBytes == null ? '' : (row.maxRssBytes / 1024 / 1024).toFixed(0)} | ${row.findings} | ${cell(row.failure)} |`)
   }
   lines.push('', `Totals: ${rows.length} Freerange runs, max RSS ${(summary.maxRssBytes / 1024 / 1024).toFixed(0)} MB, ${summary.timeouts} timeouts.`, '')
   writeFileSync(join(runDirectory, 'score.md'), `${lines.join('\n')}\n`)

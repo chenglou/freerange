@@ -80,7 +80,7 @@ export type ClassifiedFinding =
   | {scope: 'other'}
 
 const identifier = '([A-Za-z_$][\\w$]*)'
-const staticFormPrefixes = [
+export const staticFormPrefixes = [
   'console.assert must ',
   'calculate or read the value before console.assert',
   'console.assert cannot call a function',

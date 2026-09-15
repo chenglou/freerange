@@ -80,9 +80,10 @@ export function readEntries(path: string): EntriesFile {
 // Freerange reads a console.assert over values calculated before it.
 export type Binding = {name: string; expression: string}
 
-// Where the assert goes, the same on the snapshot tree and on the fix tree: `before` or `after` the one statement inside
-// function `function` of `path` whose source text starts with `anchor`.
-export type Placement = {repo: string; path: string; function: string; anchor: string; position: 'before' | 'after'; note: string}
+// Where the assert goes, the same site on the snapshot tree and on the fix tree: `before` or `after` the one statement
+// inside function `function` of `path` whose source text starts with `anchor`, or on the fix tree with `fixAnchor` when the
+// fix rewrote that statement (null: `anchor` on both trees).
+export type Placement = {repo: string; path: string; function: string; anchor: string; fixAnchor: string | null; position: 'before' | 'after'; note: string}
 
 // A curator's reading of one recorded check: the console.assert condition its statement gives, verbatim, or null with why
 // it gives none; and where that condition goes in the entry's code, or null with why no code site holds its terms.
@@ -106,7 +107,10 @@ export function readReadings(path: string): ReadingsFile {
         const placementRecord = record(placementValue, `${where}[${position}] placement`)
         const positionText = text(placementRecord, 'position', where)
         if (positionText !== 'before' && positionText !== 'after') throw new Error(`${where}[${position}]: position must be before or after`)
-        placement = {repo: text(placementRecord, 'repo', where), path: text(placementRecord, 'path', where), function: text(placementRecord, 'function', where), anchor: text(placementRecord, 'anchor', where), position: positionText, note: text(placementRecord, 'note', where)}
+        placement = {
+          repo: text(placementRecord, 'repo', where), path: text(placementRecord, 'path', where), function: text(placementRecord, 'function', where), anchor: text(placementRecord, 'anchor', where),
+          fixAnchor: placementRecord['fixAnchor'] == null ? null : text(placementRecord, 'fixAnchor', where), position: positionText, note: text(placementRecord, 'note', where),
+        }
       }
       return {
         index,
