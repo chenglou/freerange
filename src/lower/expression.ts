@@ -14,7 +14,10 @@ import {
   addInstructionAtSite,
   addSite,
   createBlock,
+  LoweringStop,
   requiredSymbol,
+  restoreLowering,
+  snapshotLowering,
   terminate,
   unsupported,
   type FunctionContext,
@@ -130,6 +133,13 @@ export function lowerStatementExpression(expression: ts.Expression, context: Fun
         return
       }
     }
+  }
+  // console.assert is recognized only as a standalone statement (see static-intrinsics.ts), so
+  // it is dispatched here rather than from value-position lowering.
+  const annotation = ts.isCallExpression(current) ? context.staticAnnotations.get(current) : undefined
+  if (annotation != null) {
+    lowerStaticAnnotation(annotation, context)
+    return
   }
   lowerExpression(expression, context)
 }
@@ -356,9 +366,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     // unknown and both branches analyze — the function's other paths survive. The
     // A declaration-file constructor is opaque but safe to test; a local constructor is
     // runtime code outside the accepted subset.
-    if (current.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
-      && ts.isIdentifier(current.right)
-      && declaredOnlyInDeclarationFiles(context.checker.getSymbolAtLocation(current.right))) {
+    if (declarationFileInstanceof(current, context)) {
       lowerExpression(current.left, context)
       return addInstruction(context, current, {kind: 'unknownBoolean'})
     }
@@ -399,8 +407,6 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       : addInstruction(context, current, {kind: 'compare', operator: comparison!, left, right})
   }
   if (ts.isCallExpression(current)) {
-    const staticAnnotation = context.staticAnnotations.get(current)
-    if (staticAnnotation != null) return lowerStaticAnnotation(staticAnnotation, context)
     if (ts.isIdentifier(current.expression)) {
       // Global parseFloat / parseInt / Number(x): honest NaN-carrying results, like their
       // Number.* spellings below. Standard-library identity defends against shadows and
@@ -594,10 +600,121 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   throw unsupported(current, {kind: 'expressionForm', syntax: ts.SyntaxKind[current.kind]})
 }
 
-function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionContext): ValueID {
+function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionContext): void {
   if (annotation.kind === 'invalid') {
     throw unsupported(annotation.node, {kind: 'staticAssertionForm', problem: annotation.problem})
   }
+  if (annotation.role === 'requirement') {
+    const value = lowerStaticCondition(annotation, context)
+    addInstructionAtSite(context, addSite(context, annotation.call), {kind: 'staticRequire', value})
+    return
+  }
+  const text = annotation.condition.getText(context.sourceFile)
+  // An interior assertion never narrows later code, so removing one changes nothing the
+  // analysis computes afterward. When its condition cannot be lowered but has no side effects,
+  // the half-lowered instructions are rolled back and only this assertion goes unchecked.
+  const recovery = snapshotLowering(context)
+  let value: ValueID
+  try {
+    value = lowerStaticCondition(annotation, context)
+  } catch (error) {
+    if (!(error instanceof LoweringStop) || !sideEffectFreeCondition(annotation.condition, context)) throw error
+    restoreLowering(context, recovery)
+    context.assertions.push({kind: 'notChecked', site: addSite(context, annotation.call), text, reason: error.reason})
+    return
+  }
+  const site = addSite(context, annotation.call)
+  const assertion = context.assertions.length
+  context.assertions.push({kind: 'lowered', site, text})
+  addInstructionAtSite(context, site, {kind: 'staticAssert', value, assertion})
+}
+
+// `value instanceof Date` against a constructor declared only in declaration files answers
+// without running project code. A project class can define Symbol.hasInstance.
+function declarationFileInstanceof(expression: ts.BinaryExpression, context: FunctionContext): boolean {
+  return expression.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
+    && ts.isIdentifier(expression.right)
+    && declaredOnlyInDeclarationFiles(context.checker.getSymbolAtLocation(expression.right))
+}
+
+// Freerange removes a not-checked condition from the analysis. That matches the program only
+// when evaluating the condition changes nothing later code observes. The allowlist covers
+// reads, literals, type assertions, `typeof`, ternaries, the standard Number checks, and
+// arithmetic, comparison, logical, and bitwise operators. Reads and operators rely on the
+// object boundary assumptions ordinary lowering already makes: property reads are stable and
+// perform no work, and no custom coercion runs, e.g. a `valueOf` that writes state. Calls,
+// assignments, `++`, `--`, `new`, `in`, and `instanceof` against a project constructor keep
+// rejecting the function. A condition that throws at runtime, e.g. a property read on a
+// missing element, remains removable: the analysis then also describes a path the program
+// never finishes.
+function sideEffectFreeCondition(expression: ts.Expression, context: FunctionContext): boolean {
+  if (ts.isIdentifier(expression) || ts.isLiteralExpression(expression)
+    || expression.kind === ts.SyntaxKind.TrueKeyword
+    || expression.kind === ts.SyntaxKind.FalseKeyword
+    || expression.kind === ts.SyntaxKind.NullKeyword) return true
+  if (ts.isParenthesizedExpression(expression) || ts.isNonNullExpression(expression)
+    || ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression)
+    || ts.isTypeAssertionExpression(expression) || ts.isTypeOfExpression(expression)
+    || ts.isPropertyAccessExpression(expression)) {
+    return sideEffectFreeCondition(expression.expression, context)
+  }
+  if (ts.isElementAccessExpression(expression)) {
+    return sideEffectFreeCondition(expression.expression, context)
+      && sideEffectFreeCondition(expression.argumentExpression, context)
+  }
+  if (ts.isPrefixUnaryExpression(expression)) {
+    return expression.operator !== ts.SyntaxKind.PlusPlusToken
+      && expression.operator !== ts.SyntaxKind.MinusMinusToken
+      && sideEffectFreeCondition(expression.operand, context)
+  }
+  if (ts.isBinaryExpression(expression)) {
+    return sideEffectFreeOperator(expression, context)
+      && sideEffectFreeCondition(expression.left, context)
+      && sideEffectFreeCondition(expression.right, context)
+  }
+  if (ts.isConditionalExpression(expression)) {
+    return sideEffectFreeCondition(expression.condition, context)
+      && sideEffectFreeCondition(expression.whenTrue, context)
+      && sideEffectFreeCondition(expression.whenFalse, context)
+  }
+  const numberCheckOperand = staticNumberCheckOperand(expression, context)
+  return numberCheckOperand != null && sideEffectFreeCondition(numberCheckOperand, context)
+}
+
+function sideEffectFreeOperator(expression: ts.BinaryExpression, context: FunctionContext): boolean {
+  switch (expression.operatorToken.kind) {
+    case ts.SyntaxKind.PlusToken:
+    case ts.SyntaxKind.MinusToken:
+    case ts.SyntaxKind.AsteriskToken:
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+    case ts.SyntaxKind.SlashToken:
+    case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.LessThanToken:
+    case ts.SyntaxKind.LessThanEqualsToken:
+    case ts.SyntaxKind.GreaterThanToken:
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+    case ts.SyntaxKind.EqualsEqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+    case ts.SyntaxKind.AmpersandAmpersandToken:
+    case ts.SyntaxKind.BarBarToken:
+    case ts.SyntaxKind.QuestionQuestionToken:
+    case ts.SyntaxKind.AmpersandToken:
+    case ts.SyntaxKind.BarToken:
+    case ts.SyntaxKind.CaretToken:
+    case ts.SyntaxKind.LessThanLessThanToken:
+    case ts.SyntaxKind.GreaterThanGreaterThanToken:
+    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken: return true
+    case ts.SyntaxKind.InstanceOfKeyword: return declarationFileInstanceof(expression, context)
+    default: return false
+  }
+}
+
+function lowerStaticCondition(
+  annotation: Extract<StaticAnnotation, {kind: 'valid'}>,
+  context: FunctionContext,
+): ValueID {
   const condition = annotation.condition
   requireBooleanCondition(condition, context.checker)
   const originalBlock = context.currentBlock
@@ -629,13 +746,7 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
   if (conditionInstructions.some(instruction => !removableStaticConditionInstruction(instruction))) {
     throw unsupported(condition, {kind: 'staticAssertionForm', problem: 'bindValueFirst'})
   }
-  const site = addSite(context, annotation.call)
-  if (annotation.role === 'requirement') {
-    return addInstructionAtSite(context, site, {kind: 'staticRequire', value})
-  }
-  const assertion = context.assertions.length
-  context.assertions.push({site, text: condition.getText(context.sourceFile)})
-  return addInstructionAtSite(context, site, {kind: 'staticAssert', value, assertion})
+  return value
 }
 
 type WrittenRequirementOperand = {kind: 'parameter'; value: ValueID} | {kind: 'constant'; value: number}

@@ -88,11 +88,11 @@ export function createFunctionContext(
   }
 }
 
-// The mutable lowering state a skipped initializer statement must roll back, kept beside
-// the type so a future mutable field on FunctionContext is added to the snapshot in the
-// same file. Two fields are deliberately not rolled back: sites (rolled-back sites would
-// invalidate SiteIDs already recorded elsewhere) and nextValue (leaked ValueIDs are merely
-// sparse).
+// The mutable lowering state a rollback restores: a skipped initializer statement, a skipped
+// argument of a top-level call, or a not-checked assertion condition. Kept beside the type so
+// a future mutable field on FunctionContext is added to the snapshot in the same file. Two
+// fields are deliberately not rolled back: sites (rolled-back sites would invalidate SiteIDs
+// already recorded elsewhere) and nextValue (leaked ValueIDs are merely sparse).
 export type LoweringSnapshot = {
   block: MutableBlock
   instructionCount: number
@@ -233,12 +233,16 @@ export function requiredBranchBinding(symbol: ts.Symbol, bindings: Map<ts.Symbol
   return value
 }
 
-// Thrown when lowering meets a construct outside the accepted subset. Caught at exactly two
+// Thrown when lowering meets a construct outside the accepted subset. Caught at exactly four
 // places: the per-function loop in lowerSource, which discards the whole in-progress
-// FunctionContext and records an UnsupportedFunctionIR, and the module initializer's
-// statement loop in module.ts, which rolls the failed statement back and keeps lowering
-// (a skip). No other try/catch may exist under src/lower (a mid-lowering catch would
-// silently truncate bodies), and nothing outside src/lower may see this class.
+// FunctionContext and records an UnsupportedFunctionIR; the module initializer's statement
+// loop in module.ts, which rolls the failed statement back and keeps lowering (a skip);
+// lowerSupportedArgumentsOfSkippedTopLevelCall in module.ts, which keeps the arguments of a
+// skipped top-level call up to the first unsupported one; and lowerStaticAnnotation in
+// expression.ts, which rolls back an interior console.assert condition that has no side
+// effects and records the assertion as not checked. No other try/catch may exist under
+// src/lower (a mid-lowering catch would silently truncate bodies), and nothing outside
+// src/lower may see this class.
 // Extends Error only so an accidentally escaping stop has a stack trace; the message is
 // never parsed or matched.
 export class LoweringStop extends Error {

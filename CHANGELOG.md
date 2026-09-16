@@ -5,6 +5,7 @@
 - Stop trusting the initial value of a module `let` that top-level code assigns again, because the file's functions can run during module initialization and observe the earlier value.
 - Print `assumes: other modules do not modify <name> or any object or array inside it` on functions whose results rest on a module-level object or array.
 - Stop treating number fields declared only in a `.d.ts` file, such as those of library types, as finite after a function call, because the call never checks those fields.
+- Report a later `console.assert` whose condition is outside the supported checks, e.g. `console.assert(content <= sidebarLeft - gap)`, as not checked instead of making the whole function unsupported. This applies to conditions built from variables, properties, array elements, literals, type assertions, `typeof`, ternaries, the `Number` checks, arithmetic, comparison, logical, and bitwise operators, and `instanceof` with a built-in or library class. Any other condition, e.g. one with a function call, an assignment, `++`, or `new`, still makes the function unsupported.
 
 ## 0.0.5 - 2026-09-03
 

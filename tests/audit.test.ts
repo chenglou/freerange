@@ -398,3 +398,25 @@ test('array callbacks route by structured method kind', () => {
     reason: {kind: 'call', arrayMethod: 'other'},
   })
 })
+
+test('a not-checked assertion keeps the refactoring guide of its reason', () => {
+  // Some console typings accept any condition, e.g. Node's `assert(value: any)`, so numeric
+  // truthiness type-checks and reaches the analysis.
+  const audit = auditSource('assertion-guides.ts', `
+    declare global {
+      interface Console {
+        assert(value: unknown): void
+      }
+    }
+    export function truthyWidth(rawWidth: number): number {
+      const width = Math.max(0, rawWidth)
+      console.assert(width)
+      console.assert(width - 1 <= 99)
+      console.assert(width >= 0)
+      return width
+    }
+  `)
+  const assertionReferences = audit.references.filter(reference => reference.reason.kind === 'assertion')
+  expect(assertionReferences.map(reference => reference.guideIDs)).toEqual([['write-explicit-condition'], [], []])
+  expect(formatFileAuditUnit(audit)).toContain('suggestion [write-explicit-condition]')
+})

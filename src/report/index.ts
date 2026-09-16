@@ -20,11 +20,10 @@ export type FunctionReport =
   // observed: 'return is a finite integer number from 0 through 0'.
   | {kind: 'partial'; name: string; assumptions: string[]; partialReasons: string[]; skipped?: string[]; observed: string[]; assertions?: AssertionReport[]}
 
-export type AssertionReport = {
-  verdict: AssertionVerdict['verdict']
-  text: string
-  location: string
-}
+export type AssertionReport =
+  | {verdict: Exclude<AssertionVerdict['verdict'], 'notChecked'>; text: string; location: string}
+  // e.g. reason: 'calculate or read the value before console.assert, then check the variable'
+  | {verdict: 'notChecked'; reason: string; text: string; location: string}
 
 export type AnalysisReport = {
   functions: FunctionReport[]
@@ -234,11 +233,19 @@ export function formatReport(report: AnalysisReport): string {
 }
 
 function assertionReports(assertions: AssertionVerdict[], program: ProgramIR): AssertionReport[] {
-  return assertions.map(assertion => ({
-    verdict: assertion.verdict,
-    text: assertion.text,
-    location: formatSite(program, assertion.site),
-  }))
+  return assertions.map((assertion): AssertionReport => {
+    const location = formatSite(program, assertion.site)
+    switch (assertion.verdict) {
+      case 'notChecked':
+        return {verdict: assertion.verdict, reason: formatUnsupportedReason(assertion.reason), text: assertion.text, location}
+      case 'proven':
+      case 'refuted':
+      case 'unproven':
+      case 'dead':
+      case 'blocked':
+        return {verdict: assertion.verdict, text: assertion.text, location}
+    }
+  })
 }
 
 function formatAssertionReport(assertion: AssertionReport): string {
@@ -248,6 +255,7 @@ function formatAssertionReport(assertion: AssertionReport): string {
     case 'unproven': return `  assertion unproven: could not prove ${assertion.text} (at ${assertion.location})`
     case 'dead': return `  unreachable assertion: ${assertion.text} (at ${assertion.location})`
     case 'blocked': return `  assertion blocked: the function did not finish analysis without site-specific assumptions: ${assertion.text} (at ${assertion.location})`
+    case 'notChecked': return `  assertion not checked: ${assertion.reason}: ${assertion.text} (at ${assertion.location})`
   }
 }
 

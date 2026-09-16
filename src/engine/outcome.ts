@@ -55,12 +55,11 @@ export type Stop = {
 }
 
 // The result for one interior console.assert. A blocked result means its function did not
-// finish analysis on every path without a site-specific assumption.
-export type AssertionVerdict = {
-  site: SiteID
-  text: string
-  verdict: 'proven' | 'refuted' | 'unproven' | 'dead' | 'blocked'
-}
+// finish analysis on every path without a site-specific assumption. A notChecked result means
+// the condition could not be lowered, had no side effects, and was removed from the analysis.
+export type AssertionVerdict =
+  | {site: SiteID; text: string; verdict: 'proven' | 'refuted' | 'unproven' | 'dead' | 'blocked'}
+  | {site: SiteID; text: string; verdict: 'notChecked'; reason: UnsupportedReason}
 
 // One evaluation can hold BOTH a normal outcome and stops: in
 // `if (flag > 0) return 10; unsupportedThing()` the true branch returns 10 while the other
