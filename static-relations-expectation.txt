@@ -1,0 +1,13 @@
+Static relations prototype: scope registered before any code.
+
+Mode: every new rule runs only with FREERANGE_STATIC_RELATIONS=1, and only inside the proof of interior console.assert conditions (staticAssert). Leading requirements (staticRequire), requirement inference and ordinary analysis keep main's rules.
+
+Mechanisms in build order: value numbering, bounded order closure (including max(xs) <= min(ys)), sign through order, facts at joins (not at loop headers), integer offsets (first to cut). No return relations, no float algebra or tolerance rules.
+
+Gates:
+- no proof is lost against main, and no assertion that can be false is reported proved
+- fr --audit requires, ensures and assumes lines are identical to main's
+- per file: wall time at most 2x main, max RSS at most main + 100 MB
+- the float, NaN, 2^53, strictness and join negative tests stay unproven
+
+Caps, each with a test that hits it: closure visit budget 4x the function's instruction count per query; facts read per state max(64, 2x instruction count); 32 join candidates per block.

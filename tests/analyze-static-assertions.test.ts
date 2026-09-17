@@ -1,7 +1,7 @@
 import {describe, expect, test} from 'bun:test'
 import * as ts from 'typescript'
 import {analyzeCheckedSource} from '../src/analyze.ts'
-import {analyzeFile, analyzeSource} from '../src/index.ts'
+import {analyzeFile, analyzeSource, formatReport, type AnalysisReport} from '../src/index.ts'
 import {createReport} from '../src/report/index.ts'
 import {analyzedFunction, requirementsBesidesInputFiniteness} from './analyze-helpers.ts'
 
@@ -1042,5 +1042,712 @@ describe('static console.assert contracts', () => {
       .toEqual(['unproven'])
     expect(analyzedFunction(report, 'branchClamp').assertions?.map(assertion => assertion.verdict))
       .toEqual(['unproven', 'unproven'])
+  })
+})
+
+// Every fixture of the switch also checks that an interior console.assert narrows nothing that
+// later code sees: with every assertion the analysis reads erased, the `fr --audit` contracts
+// are the same apart from the assertion lines. E.g. after `if (a > b) return 0` and
+// `const d = b - a`, the assertion proofs settle the left side of `d >= 0 || b < a`, but d's
+// range in the ensures must not become 0..Infinity because of that.
+// One difference is allowed: a value that only an assertion reads adds its own assumption, e.g.
+// `assumes: flag is a boolean` for `console.assert(flag)`, so erasing may drop assumption lines.
+// It may not add or change any line.
+function analyzeWithAssertForms(file: string, source: string): AnalysisReport {
+  const report = analyzeUnderSwitch(file, source)
+  const erased = analyzeUnderSwitch(file, eraseReportedAssertions(file, source, report))
+  const withAssertionsKeptAssumptions: AnalysisReport = {functions: report.functions.map((fn, index) => {
+    const other = erased.functions[index]
+    if (fn.kind === 'unsupported' || other == null || other.kind === 'unsupported') return fn
+    return {...fn, assumptions: fn.assumptions.filter(line => other.assumptions.includes(line))}
+  })}
+  expect(contractsWithoutAssertions(erased)).toEqual(contractsWithoutAssertions(withAssertionsKeptAssumptions))
+  return report
+}
+
+function analyzeUnderSwitch(file: string, source: string): AnalysisReport {
+  const previous = process.env['FREERANGE_ASSERT_FORMS']
+  process.env['FREERANGE_ASSERT_FORMS'] = '1'
+  try {
+    return analyzeSource(file, source)
+  } finally {
+    if (previous === undefined) delete process.env['FREERANGE_ASSERT_FORMS']
+    else process.env['FREERANGE_ASSERT_FORMS'] = previous
+  }
+}
+
+// The contracts section of `fr --audit` without its assertion lines.
+function contractsWithoutAssertions(report: AnalysisReport): string {
+  return formatReport({functions: report.functions.map(fn => fn.kind === 'unsupported' ? fn : {...fn, assertions: []})})
+}
+
+// Replaces every console.assert statement the report lists as an assertion with spaces, or with
+// an empty block where the statement is a branch body, e.g. `if (width < 0) console.assert(height > 0)`.
+// Newlines and every other offset stay, so the lines and columns that contracts name still match.
+function eraseReportedAssertions(file: string, source: string, report: AnalysisReport): string {
+  const locations = new Set<string>()
+  for (const fn of report.functions) {
+    if (fn.kind === 'unsupported') continue
+    for (const assertion of fn.assertions ?? []) {
+      const location = /:(\d+):(\d+)$/.exec(assertion.location)
+      if (location == null) throw new Error(`Expected a line and column in ${assertion.location}`)
+      locations.add(`${location[1]}:${location[2]}`)
+    }
+  }
+  if (locations.size === 0) return source
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS)
+  const statements: ts.ExpressionStatement[] = []
+  const visit = (node: ts.Node): void => {
+    if (ts.isExpressionStatement(node)) {
+      const {line, character} = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
+      if (locations.has(`${line + 1}:${character + 1}`)) statements.push(node)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  expect(statements).toHaveLength(locations.size)
+  let erased = ''
+  let copiedUpTo = 0
+  for (const statement of statements) {
+    const start = statement.getStart(sourceFile)
+    const blank = source.slice(start, statement.getEnd()).replaceAll(/[^\n]/g, ' ')
+    const listed = ts.isBlock(statement.parent) || ts.isCaseOrDefaultClause(statement.parent)
+    erased += source.slice(copiedUpTo, start) + (listed ? blank : `{}${blank.slice(2)}`)
+    copiedUpTo = statement.getEnd()
+  }
+  return erased + source.slice(copiedUpTo)
+}
+
+function verdictsOf(report: ReturnType<typeof analyzeSource>, name: string): string[] | undefined {
+  return analyzedFunction(report, name).assertions?.map(assertion => assertion.verdict)
+}
+
+function unsupportedReasonOf(report: ReturnType<typeof analyzeSource>, name: string): string {
+  const fn = report.functions.find(candidate => candidate.name === name)
+  if (fn?.kind !== 'unsupported') throw new Error(`Expected ${name} to be unsupported`)
+  return fn.unsupported
+}
+
+describe('the wider console.assert reading behind FREERANGE_ASSERT_FORMS', () => {
+  test('the switch changes only the reading of console.assert', () => {
+    const source = `
+      export function compound(value: number): number {
+        const result = value
+        console.assert(result >= 0 && result <= 10)
+        return result
+      }
+    `
+    expect(unsupportedReasonOf(analyzeSource('switch-off.ts', source), 'compound'))
+      .toContain('one direct numeric comparison')
+    expect(verdictsOf(analyzeWithAssertForms('switch-on.ts', source), 'compound'))
+      .toEqual(['unproven'])
+  })
+
+  test('&& lowers as parts of one assertion and as consecutive requirements', () => {
+    const report = analyzeWithAssertForms('conjunctions.ts', `
+      export function oneUnconstrained(x: number, y: number): number {
+        console.assert(x > 0)
+        const result = x
+        console.assert(x > 0 && y > 0)
+        return result
+      }
+      export function definitelyZero(y: number): number {
+        const x = 0
+        console.assert(x > 0 && y > 0)
+        return y
+      }
+      export function bothRequired(x: number, y: number): number {
+        console.assert(x > 0 && y > 0)
+        const result = x
+        console.assert(x > 0 && y > 0)
+        return result
+      }
+      export function callsWithZero(): number {
+        return bothRequired(1, 0)
+      }
+      export function propagates(x: number, y: number): number {
+        return bothRequired(x, y)
+      }
+      export function leadingDisjunction(x: number, y: number): number {
+        console.assert(x > 0 || y > 0)
+        return x
+      }
+      export function leadingArithmetic(x: number, y: number): number {
+        console.assert(x > 0 && x + 1 < y)
+        return x
+      }
+    `)
+    expect(verdictsOf(report, 'oneUnconstrained')).toEqual(['unproven'])
+    expect(verdictsOf(report, 'definitelyZero')).toEqual(['refuted'])
+    expect(verdictsOf(report, 'bothRequired')).toEqual(['proven'])
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'bothRequired')).map(line => line.split(' (declared')[0]))
+      .toEqual(['x > 0', 'y > 0'])
+    const zero = report.functions.find(fn => fn.name === 'callsWithZero')
+    if (zero?.kind !== 'partial') throw new Error('Expected callsWithZero to be partial')
+    expect(zero.partialReasons[0]).toContain('declared requirement definitely false')
+    expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'propagates')).map(line => line.split(' (declared')[0]))
+      .toEqual(['x > 0', 'y > 0'])
+    expect(unsupportedReasonOf(report, 'leadingDisjunction')).toContain('a leading console.assert describes what callers must provide')
+    expect(unsupportedReasonOf(report, 'leadingArithmetic')).toContain('calculate or read the value before console.assert')
+  })
+
+  test('boolean-valued conditions answer from the held boolean', () => {
+    const report = analyzeWithAssertForms('boolean-conditions.ts', `
+      export function establishedFlag(value: number): number {
+        const flag = true
+        const result = value
+        console.assert(flag)
+        console.assert(!flag)
+        return result
+      }
+      export function branchDoesNotNarrowStoredBoolean(flag: boolean): number {
+        if (!flag) return 0
+        console.assert(flag)
+        console.assert(!flag)
+        return 1
+      }
+      export function unknownFlag(flag: boolean): number {
+        const result = 1
+        console.assert(flag)
+        console.assert(!flag)
+        return result
+      }
+      export function storedOrder(left: number, right: number): number {
+        if (left > right) return 0
+        const ordered = left <= right
+        console.assert(ordered)
+        return 1
+      }
+      export function stringEquality(mode: string): number {
+        const result = 1
+        console.assert(mode === 'compact')
+        return result
+      }
+    `)
+    expect(verdictsOf(report, 'establishedFlag')).toEqual(['proven', 'refuted'])
+    expect(verdictsOf(report, 'branchDoesNotNarrowStoredBoolean')).toEqual(['unproven', 'unproven'])
+    expect(verdictsOf(report, 'unknownFlag')).toEqual(['unproven', 'unproven'])
+    expect(verdictsOf(report, 'storedOrder')).toEqual(['proven'])
+    expect(verdictsOf(report, 'stringEquality')).toEqual(['unproven'])
+  })
+
+  test('interior || checks the right side under the left side\'s false branch', () => {
+    const report = analyzeWithAssertForms('disjunctions.ts', `
+      export function neitherSide(x: number, y: number): number {
+        const result = x
+        console.assert(x > 0 || y > 0)
+        return result
+      }
+      export function leftAlwaysTrue(y: number): number {
+        const one = 1
+        console.assert(one > 0 || y > 0)
+        return y
+      }
+      export function rightEstablished(x: number, y: number): number {
+        if (y <= 0) return 0
+        console.assert(x > 0 || y > 0)
+        return 1
+      }
+      export function leftRefinesRight(x: number): number {
+        const result = x
+        console.assert(x <= 0 || x > 0)
+        return result
+      }
+      export function storedBooleanLeft(x: number): number {
+        const pushed = x > 5
+        const result = x
+        console.assert(pushed || x > 0)
+        return result
+      }
+      export function nanFailsBothSides(text: string): number {
+        const parsed = Number.parseFloat(text)
+        const result = 1
+        console.assert(parsed >= 0 || parsed < 0)
+        return result
+      }
+      export function finiteSatisfiesOneSide(text: string): number {
+        const parsed = Number.parseFloat(text)
+        if (!Number.isFinite(parsed)) return 0
+        console.assert(parsed >= 0 || parsed < 0)
+        return 1
+      }
+      export function negatedLeftOnNaN(text: string, x: number): number {
+        const parsed = Number.parseFloat(text)
+        const result = x
+        console.assert(!(parsed < 0) || x > 0)
+        return result
+      }
+      export function groupInsideConjunction(x: number, y: number, z: number): number {
+        if (z <= 0) return 0
+        if (x <= 0) return 0
+        console.assert((x > 0 || y > 0) && z > 0)
+        return 1
+      }
+      export function threeAlternatives(x: number): number {
+        if (x > 2 || x < 2) return 0
+        console.assert(x === 0 || x === 1 || x === 2)
+        return 1
+      }
+    `)
+    expect(verdictsOf(report, 'neitherSide')).toEqual(['unproven'])
+    expect(verdictsOf(report, 'leftAlwaysTrue')).toEqual(['proven'])
+    expect(verdictsOf(report, 'rightEstablished')).toEqual(['proven'])
+    expect(verdictsOf(report, 'leftRefinesRight')).toEqual(['proven'])
+    expect(verdictsOf(report, 'storedBooleanLeft')).toEqual(['unproven'])
+    expect(verdictsOf(report, 'nanFailsBothSides')).toEqual(['unproven'])
+    expect(verdictsOf(report, 'finiteSatisfiesOneSide')).toEqual(['proven'])
+    expect(verdictsOf(report, 'negatedLeftOnNaN')).toEqual(['unproven'])
+    expect(verdictsOf(report, 'groupInsideConjunction')).toEqual(['proven'])
+    expect(verdictsOf(report, 'threeAlternatives')).toEqual(['proven'])
+  })
+
+  test('pure + - * and Math operands read in assertions, while division, remainder and element reads reject', () => {
+    const report = analyzeWithAssertForms('assertion-operands.ts', `
+      export function tolerance(a: number, b: number): number {
+        if (a > b) return 0
+        console.assert(a <= b + 1e-9)
+        return 1
+      }
+      export function possiblyNegativeOffset(a: number, b: number, c: number): number {
+        if (a > b) return 0
+        console.assert(a <= b + c)
+        return 1
+      }
+      export function mathOperands(raw: number): number {
+        const width = Math.max(0, Math.min(100, raw))
+        console.assert(Math.min(width, 10) <= 10 && Math.abs(-width) >= 0 && width * 2 - 1 >= -1)
+        return width
+      }
+      export function inlineDivision(a: number, d: number): number {
+        const result = a
+        console.assert(a / d > 0)
+        return result
+      }
+      export function inlineRemainder(a: number, d: number): number {
+        const result = a
+        console.assert(a % d === 0 || a > 0)
+        return result
+      }
+      export function inlineIndex(values: number[], index: number): number {
+        const result = index
+        console.assert(index >= 0 && values[index]! > 0)
+        return result
+      }
+      function isPositive(value: number): boolean { return value > 0 }
+      export function projectCall(value: number): number {
+        const result = value
+        console.assert(value > 1 || isPositive(value))
+        return result
+      }
+      export function looseEquality(value: number): number {
+        const result = value
+        console.assert(value == 0 || value > 0)
+        return result
+      }
+    `)
+    expect(verdictsOf(report, 'possiblyNegativeOffset')).toEqual(['unproven'])
+    expect(verdictsOf(report, 'mathOperands')).toEqual(['proven'])
+    expect(unsupportedReasonOf(report, 'inlineDivision')).toContain('calculate or read the value before console.assert')
+    expect(unsupportedReasonOf(report, 'inlineRemainder')).toContain('calculate or read the value before console.assert')
+    expect(unsupportedReasonOf(report, 'inlineIndex')).toContain('calculate or read the value before console.assert')
+    expect(unsupportedReasonOf(report, 'projectCall')).toContain('cannot call a function')
+    expect(unsupportedReasonOf(report, 'looseEquality')).toContain('using ===, !==, <, <=, >, or >=')
+    expect(verdictsOf(report, 'tolerance')).toEqual(['proven'])
+  })
+
+  test('a function\'s contracts are identical with and without its interior assertions', () => {
+    const forms = [
+      'console.assert(left >= 0 && right >= left)',
+      'console.assert(flag)',
+      'console.assert(!flag || left <= 100)',
+      'console.assert(left > 50 || right >= left)',
+      'console.assert(left <= right + 1e-9 && Math.min(left, 10) <= 10 && left * 2 >= left)',
+      'console.assert(close(left, right) || left < right)',
+      'console.assert((left > 10 || left < 5) && (right > 20 || close(right, left)))',
+    ]
+    const source = (assertion: string) => `
+      export function contracts(rawLeft: number, rawRight: number, flag: boolean): number {
+        const close = (x: number, y: number) => Math.abs(x - y) < 0.01
+        const left = Math.max(0, Math.min(100, rawLeft))
+        const right = left + Math.max(0, Math.min(100, rawRight))
+        ${assertion}
+        const width = right - left
+        if (flag) return width
+        return left / Math.max(1, width)
+      }
+    `
+    const without = analyzedFunction(analyzeWithAssertForms('contracts.ts', source('')), 'contracts')
+    expect(without.ensures.length).toBeGreaterThan(0)
+    for (const assertion of forms) {
+      const report = analyzeWithAssertForms('contracts.ts', source(assertion))
+      const fn = analyzedFunction(report, 'contracts')
+      expect(fn.assertions).toHaveLength(1)
+      expect({requires: fn.requires, ensures: fn.ensures, assumptions: fn.assumptions})
+        .toEqual({requires: without.requires, ensures: without.ensures, assumptions: without.assumptions})
+    }
+  })
+
+  test('local predicate helpers inline at value level only where every reference is a whole assertion check', () => {
+    const report = analyzeWithAssertForms('predicate-helpers.ts', `
+      export function withHelper(requested: number, minimum: number): number {
+        console.assert(minimum >= 0 && minimum < 100)
+        const close = (x: number, y: number) => Math.abs(x - y) < 0.01
+        const level = Math.max(minimum, Math.min(requested, 100))
+        console.assert(close(level, minimum) || level > minimum)
+        console.assert(close(level, level))
+        console.assert(level >= minimum && (close(level, minimum) || close(level, 100) || level > minimum))
+        return level
+      }
+      export function handInlined(requested: number, minimum: number): number {
+        console.assert(minimum >= 0 && minimum < 100)
+        const level = Math.max(minimum, Math.min(requested, 100))
+        console.assert(Math.abs(level - minimum) < 0.01 || level > minimum)
+        console.assert(Math.abs(level - level) < 0.01)
+        console.assert(level >= minimum && (Math.abs(level - minimum) < 0.01 || Math.abs(level - 100) < 0.01 || level > minimum))
+        return level
+      }
+      export function argumentEvaluatedOnce(raw: number): number {
+        const same = (value: number) => value === value
+        const result = raw
+        console.assert(same(Math.abs(raw)))
+        console.assert(Math.abs(raw) === Math.abs(raw))
+        return result
+      }
+      function scale(value: number): number { return value * 2 }
+      export function callArgument(raw: number): number {
+        const close = (x: number, y: number) => Math.abs(x - y) < 0.01
+        const result = raw
+        console.assert(close(scale(raw), 1))
+        return result
+      }
+      export function escapingReference(raw: number): number {
+        const close = (x: number, y: number) => Math.abs(x - y) < 0.01
+        const alias = close
+        const result = raw
+        console.assert(alias(raw, 1))
+        return result
+      }
+      export function ordinaryReference(raw: number): number {
+        const close = (x: number, y: number) => Math.abs(x - y) < 0.01
+        const pushed = close(raw, 0)
+        console.assert(pushed || raw > 0)
+        return raw
+      }
+      export function nonMathBody(raw: number): number {
+        const scaled = (value: number) => scale(value) > 0
+        const result = raw
+        console.assert(scaled(raw))
+        return result
+      }
+      export function negatedHelper(raw: number): number {
+        const close = (x: number, y: number) => Math.abs(x - y) < 0.01
+        const result = raw
+        console.assert(!close(raw, 0))
+        return result
+      }
+    `)
+    expect(verdictsOf(report, 'withHelper')).toEqual(verdictsOf(report, 'handInlined'))
+    expect(verdictsOf(report, 'withHelper')).toEqual(['unproven', 'proven', 'unproven'])
+    // The helper's parameter names one lowered value, so comparing it with itself proves; the
+    // hand-written condition lowers Math.abs twice, and no producer rule identifies the two.
+    expect(verdictsOf(report, 'argumentEvaluatedOnce')).toEqual(['proven', 'unproven'])
+    expect(unsupportedReasonOf(report, 'callArgument')).toContain('cannot call a function')
+    for (const name of ['escapingReference', 'ordinaryReference', 'nonMathBody', 'negatedHelper']) {
+      expect(unsupportedReasonOf(report, name)).toContain('expression (ArrowFunction)')
+    }
+  })
+
+  test('the syntax boundary under the switch', () => {
+    const report = analyzeWithAssertForms('static-boundary-switched.ts', `
+      export function message(value: number): number {
+        console.assert(value >= 0, 'nonnegative')
+        return value
+      }
+      export function constant(value: number): number {
+        const result = value
+        console.assert(true)
+        return result
+      }
+      export function optional(value: number): number {
+        console.assert?.(value >= 0)
+        return value
+      }
+      export function inequalityRequirement(left: number, right: number): number {
+        console.assert(left !== right && left > 0)
+        return left
+      }
+      export function directMath(value: number): number {
+        const result = value
+        console.assert(Math.min(0, value) <= value)
+        return result
+      }
+      export function booleanEquality(flag: boolean, value: number): number {
+        const result = flag
+        console.assert(result === result)
+        return value
+      }
+      export function negated(value: number): number {
+        const result = value
+        console.assert(!(result < 0))
+        return result
+      }
+      export function optionalChain(bounds: {width: number} | undefined): number {
+        const result = 1
+        console.assert(bounds?.width === 1)
+        return result
+      }
+      export function groupComparedWithFlag(a: number, b: number, flag: boolean): number {
+        const result = a
+        console.assert((a > 0 || b > 0) === flag)
+        return result
+      }
+      export function negatedGroupAsLastAlternative(a: number, b: number): number {
+        const result = a
+        console.assert(a > 5 || !(a > 0 || b > 0))
+        return result
+      }
+    `)
+    for (const name of ['message', 'optional']) {
+      expect(unsupportedReasonOf(report, name)).toContain('console.assert')
+    }
+    expect(unsupportedReasonOf(report, 'inequalityRequirement')).toContain('!== needs one fixed finite number')
+    expect(unsupportedReasonOf(report, 'optionalChain')).toContain('one direct numeric comparison')
+    // A || group lowered as a value joins in a block parameter, which the removability gate rejects.
+    for (const name of ['groupComparedWithFlag', 'negatedGroupAsLastAlternative']) {
+      expect(unsupportedReasonOf(report, name)).toContain('calculate or read the value before console.assert')
+    }
+    expect(verdictsOf(report, 'constant')).toEqual(['proven'])
+    expect(verdictsOf(report, 'directMath')).toEqual(['proven'])
+    expect(verdictsOf(report, 'booleanEquality')).toEqual(['proven'])
+    expect(verdictsOf(report, 'negated')).toEqual(['unproven'])
+  })
+
+  test('a false assertion is never reported proven', () => {
+    // Each condition is false for the input beside it; `holds` is the same condition in
+    // TypeScript, run on that input.
+    type Scope = {value: number; flag: boolean; parsed: number; close: (x: number, y: number) => boolean}
+    const conditions: Array<{condition: string; holds: (scope: Scope) => boolean; input: {raw: number; flag: boolean; text: string}}> = [
+      {condition: 'value > 0 && value < 10', holds: ({value}) => value > 0 && value < 10, input: {raw: 0, flag: false, text: '1'}},
+      {condition: 'value < 5 || value > 6', holds: ({value}) => value < 5 || value > 6, input: {raw: 5, flag: false, text: '1'}},
+      {condition: 'value <= 10 - 1', holds: ({value}) => value <= 10 - 1, input: {raw: 10, flag: false, text: '1'}},
+      {condition: 'value * 2 < 20', holds: ({value}) => value * 2 < 20, input: {raw: 10, flag: false, text: '1'}},
+      {condition: 'flag', holds: ({flag}) => flag, input: {raw: 1, flag: false, text: '1'}},
+      {condition: '!flag || value < 10', holds: ({flag, value}) => !flag || value < 10, input: {raw: 10, flag: true, text: '1'}},
+      {condition: 'close(value, 4) || value !== 3', holds: ({close, value}) => close(value, 4) || value !== 3, input: {raw: 3, flag: false, text: '1'}},
+      {condition: 'parsed >= 0 || parsed < 0', holds: ({parsed}) => parsed >= 0 || parsed < 0, input: {raw: 1, flag: false, text: 'x'}},
+      {condition: 'Math.min(value, 5) < 5', holds: ({value}) => Math.min(value, 5) < 5, input: {raw: 7, flag: false, text: '1'}},
+      {condition: '(value > 2 || value < 1) && value !== 1.5', holds: ({value}) => (value > 2 || value < 1) && value !== 1.5, input: {raw: 1.5, flag: false, text: '1'}},
+      {condition: 'close(value + 0.001, value) && value > 0', holds: ({close, value}) => close(value + 0.001, value) && value > 0, input: {raw: 0, flag: false, text: '1'}},
+    ]
+    for (const {holds, input} of conditions) {
+      expect(holds({
+        value: Math.max(0, Math.min(10, input.raw)),
+        flag: input.flag,
+        parsed: Number.parseFloat(input.text),
+        close: (x, y) => Math.abs(x - y) < 0.01,
+      })).toBe(false)
+    }
+    const report = analyzeWithAssertForms('false-assertions.ts', `
+      export function falseForms(raw: number, flag: boolean, text: string): number {
+        const value = Math.max(0, Math.min(10, raw))
+        const close = (x: number, y: number) => Math.abs(x - y) < 0.01
+        const parsed = Number.parseFloat(text)
+        ${conditions.map(({condition}) => `console.assert(${condition})`).join('\n')}
+        return value
+      }
+    `)
+    const verdicts = verdictsOf(report, 'falseForms')
+    expect(verdicts).toHaveLength(conditions.length)
+    expect(verdicts?.filter(verdict => verdict === 'proven')).toEqual([])
+  })
+
+  test('each limit of the wider reading rejects the function with its own reason', () => {
+    const nested = (groups: number): string => {
+      let condition = 'value > 0 && value > 1'
+      for (let index = 1; index < groups; index++) {
+        condition = `value > ${index + 1} ${index % 2 === 1 ? '||' : '&&'} (${condition})`
+      }
+      return condition
+    }
+    const chain = (count: number, operator: string): string =>
+      Array.from({length: count}, (_, index) => `value > ${index}`).join(` ${operator} `)
+    const largeBody = `value > 0 && value${' + 1'.repeat(200)} > 0`
+    const report = analyzeWithAssertForms('assertion-limits.ts', `
+      export function deepestAccepted(value: number): number {
+        const result = value
+        console.assert(${nested(32)})
+        return result
+      }
+      export function tooDeep(value: number): number {
+        const result = value
+        console.assert(${nested(33)})
+        return result
+      }
+      export function mostChecksAccepted(value: number): number {
+        const result = value
+        console.assert(${chain(64, '&&')})
+        return result
+      }
+      export function tooManyChecks(value: number): number {
+        const result = value
+        console.assert(${chain(65, '&&')})
+        return result
+      }
+      export function tooManyChecksAcrossGroups(value: number): number {
+        const result = value
+        console.assert((${chain(40, '&&')}) || (${chain(25, '&&')}))
+        return result
+      }
+      export function mostDisjunctsAccepted(value: number): number {
+        const result = value
+        console.assert(${chain(16, '||')})
+        return result
+      }
+      export function tooManyDisjuncts(value: number): number {
+        const result = value
+        console.assert(${chain(17, '||')})
+        return result
+      }
+      export function helperCallsHelper(raw: number): number {
+        const positive = (value: number) => value > 0
+        const bounded = (value: number) => positive(value) && value < 10
+        const result = raw
+        console.assert(bounded(raw))
+        return result
+      }
+      export function outerHelperDeclaredFirst(raw: number): number {
+        const bounded = (value: number) => positive(value) && value < 10
+        const positive = (value: number) => value > 0
+        const result = raw
+        console.assert(bounded(raw))
+        return result
+      }
+      export function largeHelper(raw: number): number {
+        const large = (value: number) => ${largeBody}
+        const result = raw
+        console.assert(large(raw))
+        return result
+      }
+      export function largeOrdinaryArrow(raw: number): number {
+        const large = (value: number) => ${largeBody}
+        return large(raw) ? 1 : 0
+      }
+      export function nestedOrdinaryArrows(raw: number): number {
+        const positive = (value: number) => value > 0
+        const bounded = (value: number) => positive(value) && value < 10
+        return bounded(raw) ? 1 : 0
+      }
+    `)
+    expect(verdictsOf(report, 'deepestAccepted')).toHaveLength(1)
+    expect(unsupportedReasonOf(report, 'tooDeep')).toContain('more than 32 levels deep')
+    expect(verdictsOf(report, 'mostChecksAccepted')).toHaveLength(1)
+    expect(unsupportedReasonOf(report, 'tooManyChecks')).toContain('more than 64 checks')
+    expect(unsupportedReasonOf(report, 'tooManyChecksAcrossGroups')).toContain('more than 64 checks')
+    expect(verdictsOf(report, 'mostDisjunctsAccepted')).toHaveLength(1)
+    expect(unsupportedReasonOf(report, 'tooManyDisjuncts')).toContain('more than 16 alternatives')
+    expect(unsupportedReasonOf(report, 'helperCallsHelper')).toContain('calls another local helper')
+    expect(unsupportedReasonOf(report, 'outerHelperDeclaredFirst')).toContain('calls another local helper')
+    expect(unsupportedReasonOf(report, 'largeHelper')).toContain('more than 256 syntax nodes')
+    // Arrows that no console.assert calls keep today's rejection instead of a helper limit.
+    expect(unsupportedReasonOf(report, 'largeOrdinaryArrow')).toContain('expression (ArrowFunction)')
+    expect(unsupportedReasonOf(report, 'nestedOrdinaryArrows')).toContain('expression (ArrowFunction)')
+  })
+
+  test('the blocks that console.assert conditions create in one function are capped', () => {
+    // A 16-alternative || chain creates 31 blocks: a true and a false block per left side,
+    // and one continuation. 8 chains create 248 blocks and 9 create 279.
+    const assertions = (count: number): string => Array.from({length: count}, (_, assertion) =>
+      `console.assert(${Array.from({length: 16}, (_, index) => `value === ${assertion * 17 + index}`).join(' || ')})`).join('\n')
+    const report = analyzeWithAssertForms('function-block-limit.ts', `
+      export function mostBlocksAccepted(value: number): number {
+        const result = value
+        ${assertions(8)}
+        return result
+      }
+      export function tooManyBlocks(value: number): number {
+        const result = value
+        ${assertions(9)}
+        return result
+      }
+    `)
+    expect(verdictsOf(report, 'mostBlocksAccepted')).toHaveLength(8)
+    expect(unsupportedReasonOf(report, 'tooManyBlocks')).toContain('more than 256 blocks')
+  })
+
+  test('a || assertion is refuted only where every left side is definitely false', () => {
+    const report = analyzeWithAssertForms('disjunction-refutations.ts', `
+      export function producerProofOnLeftSide(a: number, b: number): number {
+        if (a > b) return 0
+        const d = b - a
+        console.assert(d >= 0)
+        console.assert(d >= 0 || b < a)
+        console.assert(b < a || d >= 0)
+        return d
+      }
+      export function minimumOnLeftSide(x: number, y: number): number {
+        const lo = Math.min(x, y)
+        const result = lo
+        console.assert(lo <= x || lo > x + 1)
+        return result
+      }
+      export function requirementsProveLeftGroup(a: number, b: number): number {
+        console.assert(a >= 0 && a <= b)
+        console.assert(b <= 10)
+        const width = b - a
+        console.assert(width >= 0 && width <= 10 || a < 0)
+        return width
+      }
+      export function leftSideTrueButUnproven(raw: number): number {
+        const x = Math.max(0, Math.min(10, raw))
+        const result = x
+        console.assert(x * 10 >= x || x === 0)
+        return result
+      }
+      export function earlyReturnInLoop(n: number, stop: number): number {
+        let total = 0
+        for (let i = 0; i < n; i++) {
+          if (i === stop) return total
+          console.assert(i !== stop || total > 1000)
+          total = total + i
+        }
+        return total
+      }
+      export function counterexampleNotShown(raw: number): number {
+        const x = Math.max(0, Math.min(10, raw))
+        const result = x
+        console.assert(x < 5 || x > 100)
+        return result
+      }
+      export function definitelyFalse(raw: number): number {
+        const x = 5
+        const result = raw
+        console.assert(x < 5 || x > 6)
+        console.assert((raw > 0 || raw <= 0) && x > 6)
+        return result
+      }
+      export function nestedDisjunction(raw: number): number {
+        const x = 5
+        const result = raw
+        console.assert(raw > 0 || (x > 6 || x < 5))
+        return result
+      }
+    `)
+    expect(verdictsOf(report, 'producerProofOnLeftSide')).toEqual(['proven', 'proven', 'proven'])
+    expect(verdictsOf(report, 'minimumOnLeftSide')).toEqual(['proven'])
+    expect(verdictsOf(report, 'requirementsProveLeftGroup')).toEqual(['proven'])
+    // x * 10 >= x holds for every x in 0..10, but no rule proves it. The false branch of the
+    // left side is then reachable for the analysis though no input takes it, and x === 0 is
+    // definitely false there.
+    expect(verdictsOf(report, 'leftSideTrueButUnproven')).toEqual(['unproven'])
+    // The first loop visit holds total === 0, where total > 1000 is definitely false on the
+    // false branch of i !== stop, a branch no input reaches.
+    expect(verdictsOf(report, 'earlyReturnInLoop')).toEqual(['unproven'])
+    // x === 7 makes this assertion false, but the analysis can't tell such an x from the
+    // unreachable false branches above, so the verdict stays unproven.
+    expect(verdictsOf(report, 'counterexampleNotShown')).toEqual(['unproven'])
+    expect(verdictsOf(report, 'definitelyFalse')).toEqual(['refuted', 'refuted'])
+    // x < 5 is definitely false after both left sides, and x > 6 is never true, but raw > 0 can
+    // be true, so a false branch of the outer group is not shown to be taken.
+    expect(verdictsOf(report, 'nestedDisjunction')).toEqual(['unproven'])
   })
 })

@@ -1,4 +1,4 @@
-import type {BlockID, FunctionID, ModuleBindingID, SiteID, ValueID} from './ids.ts'
+import type {BlockID, FunctionID, ModuleBindingID, ModuleID, SiteID, ValueID} from './ids.ts'
 import type {UnsupportedReason} from './program.ts'
 
 type InstructionBase = {
@@ -97,7 +97,15 @@ export type InstructionIR =
   // Static requirements narrow the function body and become caller preconditions.
   // Interior assertions are observational; their indexes address FunctionIR.assertions.
   | (InstructionBase & {kind: 'staticRequire'; value: ValueID; purpose?: 'finiteInput'})
-  | (InstructionBase & {kind: 'staticAssert'; value: ValueID; assertion: number})
+  // disjunctions lists the || groups of the same condition whose left sides were false on
+  // the way to this check, by function-wide index, e.g. the one group of `x < 5 || x > 6` for
+  // the check `x > 6`. The analysis can reach a false branch that no input takes, so a check
+  // that is definitely false there refutes the assertion only if no visit found one of those
+  // left sides true.
+  | (InstructionBase & {kind: 'staticAssert'; value: ValueID; assertion: number; disjunctions: number[]})
+  // The true branch of a left side of a || group inside an interior console.assert condition:
+  // the assertion holds on that path.
+  | (InstructionBase & {kind: 'staticDisjunctionHolds'; assertion: number; disjunction: number})
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})
   | (InstructionBase & {
       kind: 'call'
@@ -105,6 +113,20 @@ export type InstructionIR =
       arguments: ValueID[]
       // A const-bound function is unavailable until its top-level initializer runs.
       binding: ModuleBindingID | null
+    })
+  // A call to a named top-level function declared in another project module, e.g.
+  // `import {feedLayout} from './feed'`. The function index uses the declaring file's own
+  // numbering, so the call lowers before the callee's module does, and `name` is the callee's
+  // declared name, for reports about a callee whose module never lowers. The evaluator looks the
+  // callee up by module; module state never crosses the boundary (see the importedCall arm
+  // in src/engine/transfer.ts). No initialization marker is needed: an acyclic import has
+  // finished initializing before any code in this module runs.
+  | (InstructionBase & {
+      kind: 'importedCall'
+      module: ModuleID
+      function: FunctionID
+      name: string
+      arguments: ValueID[]
     })
   // tag is set when the literal's contextual type is a tagged union and the literal names
   // its tag with a string literal — the engine then builds a single-variant union, so
@@ -128,6 +150,7 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'moduleHavoc':
     case 'moduleHavocStructures':
     case 'platformValue':
+    case 'staticDisjunctionHolds':
       return
     case 'stringLength': visit(instruction.value); return
     case 'moduleWrite': visit(instruction.value); return
@@ -147,7 +170,8 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'arrayIndex': visit(instruction.array); visit(instruction.index); return
     case 'minimum':
     case 'maximum': for (const id of instruction.values) visit(id); return
-    case 'call': for (const id of instruction.arguments) visit(id); return
+    case 'call':
+    case 'importedCall': for (const id of instruction.arguments) visit(id); return
     case 'object': for (const property of instruction.properties) visit(property.value); return
     case 'property': visit(instruction.object); return
   }
@@ -158,10 +182,16 @@ export type EdgeIR = {
   arguments: ValueID[]
 }
 
+// How the engine decides a branch. 'assertionProofs' marks a branch inside an interior
+// console.assert condition, decided with the proofs that decide a whole assertion, e.g. the
+// order between `a` and `b` behind `d >= 0` after `if (a > b) return 0` and `const d = b - a`.
+// Every other branch reads the held boolean.
+export type BranchDecision = 'heldValue' | 'assertionProofs'
+
 export type TerminatorIR =
   | {kind: 'return'; value: ValueID | null; site: SiteID}
   | {kind: 'jump'; target: EdgeIR; site: SiteID}
-  | {kind: 'branch'; condition: ValueID; whenTrue: EdgeIR; whenFalse: EdgeIR; site: SiteID}
+  | {kind: 'branch'; condition: ValueID; whenTrue: EdgeIR; whenFalse: EdgeIR; site: SiteID; decision: BranchDecision}
   // The evaluation must record a stop here instead of returning. Only the file-wide
   // rejections (eval, type-check suppression) emit one today, as the terminator of the
   // replacement initializer; ordinary functions discard their whole body when lowering

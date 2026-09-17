@@ -1,0 +1,18 @@
+Scope of the assert-forms prototype, registered before any code.
+
+Feature switch: FREERANGE_ASSERT_FORMS=1. Without it, Freerange behaves exactly as main.
+
+Forms, in build order:
+1. && in leading requirements (consecutive staticRequire) and interior assertions (parts under one assertion index)
+2. boolean-valued conditions whose lowering emits only removable instructions
+3. interior || (a true-edge constant, B's parts on the false edge, a removability gate over every block the condition creates, at most 16 disjuncts)
+4. pure + - * and supported Math.* operands, in assertion conditions only
+5. expression-bodied local predicate helpers, inlined only where every reference is a direct call inside a console.assert condition
+
+Cut: leading ||, helper references in ordinary code, element reads, / and % in conditions, asserts in loops, any src/engine or src/domain change.
+
+Caps, each past which the function is unsupported with a new staticAssertionForm reason: condition depth 32, parts per assert 64, disjuncts per || chain 16, helper inlining depth 1, helper body 256 AST nodes.
+
+Gates:
+- no line whose verdict was proved without the switch loses its proof with it
+- no assertion that can be false is reported proved

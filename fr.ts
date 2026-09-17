@@ -3,13 +3,19 @@
 // narrows the output to that file. Findings mode is the CI gate: it fails on error-level
 // findings and TypeScript errors. Audit mode is informational and fails only on
 // TypeScript errors.
-import {runFileAudit, runFileFindings, runProjectAudit, runProjectFindings} from './src/project.ts'
+import {runFileAudit, runFileFindings, runFileFindingsWithSweep, runProjectAudit, runProjectFindings, sweepModeFromEnvironment} from './src/project.ts'
 import {formatTypeScriptDiagnostics, TypeScriptDiagnosticsError} from './src/typescript/diagnostics.ts'
 
 const arguments_ = process.argv.slice(2)
 try {
   let failed: boolean
-  if (arguments_[0] === '--audit') {
+  // Prototype: FREERANGE_SWEEP applies to `fr <file>` only. Unset, every command runs origin/main's code path.
+  const sweepMode = arguments_.length === 1 && arguments_[0] !== '--audit' ? sweepModeFromEnvironment() : null
+  if (sweepMode != null) {
+    const exitCode = await runFileFindingsWithSweep(arguments_[0]!, sweepMode)
+    failed = false
+    if (exitCode !== 0) process.exitCode = exitCode
+  } else if (arguments_[0] === '--audit') {
     if (arguments_.length > 2) throw new Error('Usage: fr --audit [file]')
     failed = arguments_.length === 1
       ? runProjectAudit(process.cwd())

@@ -1,11 +1,19 @@
 import {constantNumber} from '../domain/number.ts'
 import {holdsStructure, joinValues, type AbstractValue} from '../domain/value.ts'
 import type {ValueIdentity, ValueIdentityOwner} from '../domain/value-identity.ts'
-import type {BlockID, FunctionID, SiteID} from '../ir/ids.ts'
+import type {BlockID, FunctionID, FunctionRef, ModuleID, SiteID, ValueID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import {finiteInputExpression, finiteInputs} from '../ir/finite-inputs.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
-import {declaredKindOf, declaredKindValue, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import {
+  declaredKindOf,
+  declaredKindValue,
+  type BlockIR,
+  type FunctionIR,
+  type FunctionLowering,
+  type ProgramIR,
+  type ProjectIR,
+} from '../ir/program.ts'
 import {
   addPrecondition,
   constantRequirementStatus,
@@ -20,6 +28,7 @@ import {
   type FunctionEvaluation,
   type LoweredFunctionAnalysis,
   type ProgramAnalysis,
+  type ReturnRelation,
   type Stop,
 } from './outcome.ts'
 import {
@@ -30,15 +39,36 @@ import {
   joinModuleSlots,
   mergeStates,
   type ExecutionState,
+  type JoinFact,
   type SharedState,
   type ValueFact,
 } from './state.ts'
+import {createJoinFlow} from './join-flow.ts'
+import {
+  maximumCallClosureFunctions,
+  maximumImportedModules,
+  type CallClosureAnswer,
+  type ImportedCalls,
+  type ImportedModule,
+  type UnavailableModule,
+} from './imported-calls.ts'
 import {
   asRefinableCheck,
   branchConditionOutcome,
+  cappedJoinFacts,
+  chargeRelationalWork,
+  createStaticRelationCounters,
+  extensionRelations,
+  createStaticRelations,
   evaluateInstruction,
   refineCheck,
+  relationalAtMost,
+  relationalNonnegative,
   requiredValue,
+  staticConditionObservation,
+  type StaticRelationCounters,
+  type StaticRelations,
+  type TransferContext,
 } from './transfer.ts'
 
 // A termination backstop, not an iteration budget: the count is fixed-point rounds of one
@@ -46,7 +76,192 @@ import {
 // ordinary counting loops converge in two or three rounds.
 const maximumLoopHeaderUpdates = 16
 
-export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
+// The static-relations prototype is off unless FREERANGE_STATIC_RELATIONS=1. With it on, the
+// relational rules in transfer.ts and the join facts below run only for interior
+// console.assert proofs (see StaticRelations in transfer.ts).
+// Passing a counters object turns the mode on for an analysis and collects its cap hits.
+function staticRelationCountersFromEnvironment(): StaticRelationCounters | null {
+  return process.env['FREERANGE_STATIC_RELATIONS'] === '1' ? createStaticRelationCounters() : null
+}
+
+function printStaticRelationCounters(counters: StaticRelationCounters): void {
+  console.error(`static relations cap hits: closure budget ${counters.closureBudget}, fact cap ${counters.factCap}, join candidates ${counters.joinCandidates}, join facts ${counters.joinFacts}, evaluation work ${counters.evaluationWork}, linear form ${counters.linearForm}, linear depth ${counters.linearDepth}, linear budget ${counters.linearBudget}, arm split ${counters.armSplit}, return relations ${counters.returnRelations}, loop join facts ${counters.loopJoinFacts}, extension work ${counters.extensionWork}; peak work per instruction ${counters.peakWorkPerInstruction.toFixed(2)}, peak extension work per instruction ${counters.peakExtensionWorkPerInstruction.toFixed(2)}`)
+}
+
+// off: a call to a function declared in another file rejects the caller, as on main.
+// contract: the callee's own analysis, computed once, applies at every call (design B).
+export type ImportedCallMode = 'off' | 'contract'
+
+// A report asks for the modules it prints; an imported call asks for its callee's module. Only
+// the second kind counts toward maximumImportedModules, and only the second kind can come back
+// with TypeScript errors: a report's module has passed the diagnostics gate before lowering.
+export type LowerModule = (module: ModuleID, purpose: 'report' | 'import') => ProgramIR | 'typeScriptErrors'
+
+// A project's modules, analyzed on first use. An imported call needs its callee module's
+// function-entry slots, which come from that module's initializer, and initializing a module
+// can reach further imported calls. A module still initializing, or a function whose analysis
+// is still on the stack, is marked, so a call that reaches it stops as an import cycle.
+export type ProjectAnalysis = {
+  program: (module: ModuleID) => ProgramIR
+  module: (module: ModuleID) => ProgramAnalysis
+}
+
+type ModuleRun = ImportedModule & {
+  initializer: LoweredFunctionAnalysis
+  // Per FunctionID.
+  functions: Array<FunctionAnalysis | 'analyzing' | undefined>
+}
+
+// One counters object serves every module and callee analysis of the project.
+export function createProjectAnalysis(
+  project: ProjectIR,
+  lowerModule: LowerModule,
+  mode: ImportedCallMode,
+  staticRelations: StaticRelationCounters | null = staticRelationCountersFromEnvironment(),
+): ProjectAnalysis {
+  const runs: Array<ModuleRun | 'initializing' | undefined> = []
+  const typeScriptErrors: boolean[] = []
+  let importedLowerings = 0
+  const reportProgram = (module: ModuleID): ProgramIR => {
+    const existing = project.modules[module]
+    if (existing != null) return existing
+    const lowered = lowerModule(module, 'report')
+    if (lowered === 'typeScriptErrors') throw new Error(`Module ${module} reached analysis with TypeScript errors`)
+    return lowered
+  }
+  const importedProgram = (module: ModuleID): ProgramIR | UnavailableModule => {
+    const existing = project.modules[module]
+    if (existing != null) return existing
+    if (typeScriptErrors[module] === true) return 'typeScriptErrors'
+    if (importedLowerings === maximumImportedModules) return 'moduleLimit'
+    importedLowerings++
+    const lowered = lowerModule(module, 'import')
+    if (lowered === 'typeScriptErrors') typeScriptErrors[module] = true
+    return lowered
+  }
+  const moduleRun = (program: ProgramIR): ModuleRun | 'initializing' => {
+    const existing = runs[program.module]
+    if (existing != null) return existing
+    runs[program.module] = 'initializing'
+    const run = initializeModule(program, imports, importedCallsWriteNoObjects(program), staticRelations)
+    runs[program.module] = run
+    return run
+  }
+  const standalone = (callee: FunctionRef): FunctionAnalysis | 'analyzing' => {
+    const run = runs[callee.module]
+    if (run == null) throw new Error(`Module ${callee.module} was never initialized`)
+    if (run === 'initializing') return 'analyzing'
+    const existing = run.functions[callee.function]
+    if (existing != null) return existing
+    run.functions[callee.function] = 'analyzing'
+    const analysis = analyzeFunction(run, callee.function, imports, staticRelations)
+    run.functions[callee.function] = analysis
+    return analysis
+  }
+  // Whether some function a call can reach, through same-file and imported callees, satisfies
+  // `found`. The walk follows the lowered IR, so an unlowered function is a leaf. It visits each
+  // function once and at most maximumCallClosureFunctions of them; past that, or when it reaches
+  // a module it can't lower, it answers `incomplete`.
+  const callClosureSome = (
+    callee: FunctionRef,
+    found: (current: FunctionRef, fn: FunctionLowering) => boolean,
+  ): CallClosureAnswer => {
+    const visited: boolean[][] = []
+    let visitedCount = 0
+    let incomplete = false
+    const queue: FunctionRef[] = [callee]
+    for (let index = 0; index < queue.length; index++) {
+      const current = queue[index]!
+      const seen = visited[current.module] ?? []
+      visited[current.module] = seen
+      if (seen[current.function] === true) continue
+      if (visitedCount === maximumCallClosureFunctions) return 'incomplete'
+      seen[current.function] = true
+      visitedCount++
+      const program = importedProgram(current.module)
+      if (typeof program === 'string') {
+        incomplete = true
+        continue
+      }
+      const fn = program.functions[current.function]
+      if (fn == null) throw new Error(`Unknown function ${current.function} in module ${current.module}`)
+      if (found(current, fn)) return 'found'
+      if (fn.kind !== 'lowered') continue
+      for (const block of fn.blocks) {
+        for (const instruction of block.instructions) {
+          if (instruction.kind === 'call') queue.push({module: current.module, function: instruction.function})
+          if (instruction.kind === 'importedCall') queue.push({module: instruction.module, function: instruction.function})
+        }
+      }
+    }
+    return incomplete ? 'incomplete' : 'notFound'
+  }
+  const reachesModule = (callee: FunctionRef, target: ModuleID): CallClosureAnswer =>
+    callClosureSome(callee, current => current.module === target)
+  // Analyzed code cannot write into an object, but code that never lowered can, e.g.
+  // `remember(pendingWidths, width)` where another file's remember pushes onto the array. An
+  // imported call whose reachable callees include such code, or whose reachable callees couldn't
+  // all be seen, blocks exact structural publishing the same way an unlowered function of this
+  // file does.
+  const importedCallsWriteNoObjects = (program: ProgramIR): boolean => {
+    if (mode === 'off') return true
+    for (const fn of [program.initializer, ...program.functions]) {
+      if (fn.kind !== 'lowered') continue
+      for (const block of fn.blocks) {
+        for (const instruction of block.instructions) {
+          if (instruction.kind !== 'importedCall') continue
+          const callee = {module: instruction.module, function: instruction.function}
+          if (callClosureSome(callee, (_, reached) => reached.kind === 'unsupported') !== 'notFound') return false
+        }
+      }
+    }
+    return true
+  }
+  const imports: ImportedCalls | null = mode === 'off' ? null : {
+    module: module => {
+      const program = importedProgram(module)
+      return typeof program === 'string' ? program : moduleRun(program)
+    },
+    standalone,
+    reachesModule,
+  }
+  return {
+    program: reportProgram,
+    module: module => {
+      const run = moduleRun(reportProgram(module))
+      if (run === 'initializing') throw new Error(`Module ${module} is still initializing`)
+      const functions: FunctionAnalysis[] = []
+      for (let functionID = 0; functionID < run.program.functions.length; functionID++) {
+        const analysis = standalone({module, function: functionID})
+        if (analysis === 'analyzing') throw new Error(`Function ${functionID} of module ${module} is still analyzing`)
+        functions.push(analysis)
+      }
+      // With FREERANGE_STATIC_RELATIONS_DEBUG=1 the counters print after each reported module. They
+      // accumulate over the project's analyses, including imported callees.
+      if (staticRelations != null && process.env['FREERANGE_STATIC_RELATIONS_DEBUG'] === '1') {
+        printStaticRelationCounters(staticRelations)
+      }
+      return {functions, initializer: run.initializer, moduleValues: run.moduleValues}
+    },
+  }
+}
+
+// A single lowered module with calls to other files rejected.
+export function analyzeProgram(
+  program: ProgramIR,
+  staticRelations: StaticRelationCounters | null = staticRelationCountersFromEnvironment(),
+): ProgramAnalysis {
+  return createProjectAnalysis(program.project, module => {
+    throw new Error(`Module ${module} was never lowered`)
+  }, 'off', staticRelations).module(program.module)
+}
+
+function initializeModule(
+  program: ProgramIR,
+  imports: ImportedCalls | null,
+  importedCallsWriteNoObjects: boolean,
+  staticRelations: StaticRelationCounters | null,
+): ModuleRun {
   // The initializer's slots start uninitialized — a top-level read before the writing
   // declaration must stop — except imported constants: the exporting module ran before
   // this module's first statement, so the slot already holds the literal. (A cycle read
@@ -69,49 +284,61 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     initializerState,
     program,
     [],
+    {},
+    imports,
+    staticRelations,
   )
-  const moduleValues = publishedModuleValues(program, initializer.run, initializer.evaluation)
-  const functionEntrySharedState = seedModuleSlots(program, moduleValues)
-  const moduleReads = transitiveModuleBindings(functionUsage(program))
-  const initializerBounds = initializer.evaluation.boundsAssumptions
-  const functions: FunctionAnalysis[] = []
-  for (let functionID = 0; functionID < program.functions.length; functionID++) {
-    const fn = program.functions[functionID]!
-    if (fn.kind === 'unsupported') {
-      functions.push({kind: 'notLowered', lowering: fn})
-      continue
-    }
-    const arguments_: AbstractValue[] = []
-    const argumentExpressions: Array<NumericExpression | null> = []
-    const sharedState = cloneSharedState(functionEntrySharedState)
-    for (let index = 0; index < fn.parameters.length; index++) {
-      const parameter = fn.parameters[index]!
-      // Seeded from the declared kind — the same assumed-finite constructor module hedges
-      // use, with the assumes lines carrying the conditionality. Every parameter is
-      // nameable in requirement expressions; only numeric operations ever surface one, so
-      // a non-numeric parameter's expression is simply never printed.
-      arguments_.push(declaredKindValue(parameter.type))
-      argumentExpressions.push({kind: 'parameter', index})
-    }
-    const {evaluation} = runEvaluation(
-      fn,
-      functionID,
-      arguments_,
-      argumentExpressions,
-      sharedState,
-      program,
-      [],
-      {
-        boundsAssumptions: moduleReads[functionID]!.size > 0 ? initializerBounds : [],
-      },
-    )
-    functions.push(publishedAnalysis(fn, evaluation))
-  }
+  const moduleValues = publishedModuleValues(
+    program,
+    initializer.run,
+    initializer.evaluation,
+    importedCallsWriteNoObjects,
+  )
   return {
-    functions,
-    initializer: publishedAnalysis(program.initializer, initializer.evaluation),
+    program,
+    entryState: seedModuleSlots(program, moduleValues),
     moduleValues,
+    initializerBounds: initializer.evaluation.boundsAssumptions,
+    moduleReads: transitiveModuleBindings(functionUsage(program)),
+    initializer: publishedAnalysis(program.initializer, initializer.evaluation),
+    functions: [],
   }
+}
+
+function analyzeFunction(
+  run: ModuleRun,
+  functionID: FunctionID,
+  imports: ImportedCalls | null,
+  staticRelations: StaticRelationCounters | null,
+): FunctionAnalysis {
+  const fn = run.program.functions[functionID]!
+  if (fn.kind === 'unsupported') return {kind: 'notLowered', lowering: fn}
+  const arguments_: AbstractValue[] = []
+  const argumentExpressions: Array<NumericExpression | null> = []
+  for (let index = 0; index < fn.parameters.length; index++) {
+    const parameter = fn.parameters[index]!
+    // Seeded from the declared kind — the same assumed-finite constructor module hedges
+    // use, with the assumes lines carrying the conditionality. Every parameter is
+    // nameable in requirement expressions; only numeric operations ever surface one, so
+    // a non-numeric parameter's expression is simply never printed.
+    arguments_.push(declaredKindValue(parameter.type))
+    argumentExpressions.push({kind: 'parameter', index})
+  }
+  const {evaluation} = runEvaluation(
+    fn,
+    {module: run.program.module, function: functionID},
+    arguments_,
+    argumentExpressions,
+    run.entryState,
+    run.program,
+    [],
+    {
+      boundsAssumptions: run.moduleReads[functionID]!.size > 0 ? run.initializerBounds : [],
+    },
+    imports,
+    staticRelations,
+  )
+  return publishedAnalysis(fn, evaluation)
 }
 
 function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): LoweredFunctionAnalysis {
@@ -123,6 +350,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
       preconditions: publishedPreconditions(fn, completed.preconditions),
       boundsAssumptions: completed.boundsAssumptions,
       returnValue: completed.returnValue,
+      returnsNormally: true,
       assertions: evaluation.assertions,
     }
   }
@@ -136,6 +364,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
       preconditions: publishedPreconditions(fn, evaluation.preconditions),
       boundsAssumptions: evaluation.boundsAssumptions,
       returnValue: {kind: 'void'},
+      returnsNormally: false,
       assertions: evaluation.assertions,
     }
   }
@@ -214,6 +443,7 @@ function publishedModuleValues(
   program: ProgramIR,
   run: EvaluationRun,
   evaluation: FunctionEvaluation,
+  importedCallsWriteNoObjects: boolean,
 ): Array<AbstractValue | null> {
   const end = evaluation.normal == null
     ? run.moduleEnd
@@ -240,6 +470,7 @@ function publishedModuleValues(
   const fullyAnalyzed = evaluation.stops.length === 0
     && program.initializerSkips.length === 0
     && program.functions.every(lowered => lowered.kind === 'lowered')
+    && importedCallsWriteNoObjects
 
   return program.moduleBindings.map((binding, index) => {
     if (binding.category.kind !== 'value' && binding.category.kind !== 'function') return null
@@ -269,13 +500,28 @@ type BlockRun = {
   // The latest return recorded from the block; overwritten on re-visits (incoming states
   // grow monotonically, so the last visit supersedes earlier ones) and joined only after
   // the worklist drains.
-  pendingReturn: {value: AbstractValue; shared: SharedState; valueFacts: ValueFact[]} | null
+  pendingReturn: {
+    value: AbstractValue
+    shared: SharedState
+    valueFacts: ValueFact[]
+    // Static relations, callee evaluations only: the returned IR value and the state it was
+    // returned from, for return relations.
+    returned: {value: ValueID; state: ExecutionState} | null
+  } | null
+  // Static relations: re-runs of a loop header that only dropped join facts. They do not count
+  // toward maximumLoopHeaderUpdates.
+  joinFactOnlyUpdates: number
 }
 
 type AssertionObservation = {
   sawDefinitelyTrue: boolean
+  // A part outside every || false branch was definitely false.
   sawDefinitelyFalse: boolean
   sawMaybeFalse: boolean
+  // The disjunctions of each staticAssert that was definitely false on the false branch of one
+  // or more || groups. Such a part refutes the assertion only if none of those groups' true
+  // branches was ever reached; otherwise it counts as maybe false.
+  definitelyFalseAfterDisjunctions: number[][]
 }
 
 // Everything one evaluation accumulates; created and discarded together.
@@ -287,6 +533,9 @@ type EvaluationRun = {
   stops: Stop[]
   // Dense by FunctionIR.assertions index when present.
   assertionObservations: Array<AssertionObservation | undefined>
+  // Dense by function-wide || group index when present: the true branch of a left side of
+  // that group inside an interior console.assert condition was reached.
+  reachedDisjunctions: boolean[]
   // Module slots joined across every stop, then with the normal end by the publish rule.
   moduleEnd: SharedState | null
 }
@@ -296,17 +545,21 @@ type EvaluationSeed = {
   valueFacts?: ValueFact[]
   parameterIdentities?: ValueIdentity[]
   identityOwner?: ValueIdentityOwner
+  // Static relations: whether this is a callee evaluation whose caller reads return relations.
+  returnRelations?: boolean
 }
 
 function runEvaluation(
   fn: FunctionIR,
-  functionID: FunctionID | null,
+  functionRef: FunctionRef | null,
   arguments_: AbstractValue[],
   argumentExpressions: Array<NumericExpression | null>,
   sharedState: SharedState,
   program: ProgramIR,
-  callStack: FunctionID[],
-  seed: EvaluationSeed = {},
+  callStack: FunctionRef[],
+  seed: EvaluationSeed,
+  imports: ImportedCalls | null,
+  staticRelations: StaticRelationCounters | null,
 ): {evaluation: FunctionEvaluation; run: EvaluationRun} {
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
@@ -314,6 +567,9 @@ function runEvaluation(
     values: [],
     shared: cloneSharedState(sharedState),
     valueFacts: seed.valueFacts?.slice() ?? [],
+    // Join facts name this evaluation's own block parameters, so a callee starts with none
+    // and publishes none.
+    joinFacts: [],
   }
   for (let index = 0; index < fn.parameters.length; index++) {
     initial.values[fn.parameters[index]!.value] = arguments_[index]!
@@ -329,47 +585,52 @@ function runEvaluation(
   const successors = blockSuccessors(fn)
   const run: EvaluationRun = {
     fn,
-    blocks: fn.blocks.map(() => ({incoming: null, stopped: false, failedHeader: false, pendingReturn: null})),
+    blocks: fn.blocks.map(() => ({incoming: null, stopped: false, failedHeader: false, pendingReturn: null, joinFactOnlyUpdates: 0})),
     queue: [fn.entry],
     stops: [],
     assertionObservations: [],
+    reachedDisjunctions: [],
     moduleEnd: null,
   }
   run.blocks[fn.entry]!.incoming = {state: initial, updateCount: 0}
   // Invariant for the whole evaluation (engineering.md's loop-invariant rule): built once
   // instead of allocating a context object and closure per instruction per fixed-point
   // round. preconditions is shared by reference and accumulates.
-  const transferContext = {
+  const transferContext: TransferContext = {
     program,
-    callStack: functionID == null ? callStack : [...callStack, functionID],
+    callStack: functionRef == null ? callStack : [...callStack, functionRef],
     expressionContext,
     preconditions,
     boundsAssumptions,
+    imports,
+    staticRelations: staticRelations == null
+      ? null
+      : createStaticRelations(expressionContext, createJoinFlow(fn, successors), staticRelations),
     evaluateFunction: (
-      callee: FunctionID,
+      calleeProgram: ProgramIR,
+      callee: FunctionIR,
+      calleeRef: FunctionRef | null,
       values: AbstractValue[],
       expressions: Array<NumericExpression | null>,
       calleeState: SharedState,
-      stack: FunctionID[],
       valueFacts: ValueFact[],
       parameterIdentities: ValueIdentity[],
       identityOwner: ValueIdentityOwner,
-    ) => {
-      const calleeFn = program.functions[callee]
-      if (calleeFn == null) throw new Error(`Unknown function ${callee}`)
-      // Callers turn calls to unlowered functions into calleeStopped records first.
-      if (calleeFn.kind !== 'lowered') throw new Error(`Analysis reached unlowered function ${calleeFn.name}`)
-      return runEvaluation(
-        calleeFn,
-        callee,
-        values,
-        expressions,
-        calleeState,
-        program,
-        stack,
-        {valueFacts, parameterIdentities, identityOwner},
-      ).evaluation
-    },
+      calleeBounds: BoundsAssumption[],
+    ) => runEvaluation(
+      callee,
+      calleeRef,
+      values,
+      expressions,
+      calleeState,
+      calleeProgram,
+      transferContext.callStack,
+      // Return relations are read only after a same-file call; a contract stub (null calleeRef)
+      // publishes none.
+      {valueFacts, parameterIdentities, identityOwner, boundsAssumptions: calleeBounds, returnRelations: calleeRef != null},
+      imports,
+      staticRelations,
+    ).evaluation,
   }
   let queueIndex = 0
   while (queueIndex < run.queue.length) {
@@ -402,7 +663,12 @@ function runEvaluation(
           stopped = true
           break instructionLoop
         case 'assertion':
-          addAssertionObservation(run, result.assertion, result.observation)
+          addAssertionObservation(run, result.assertion, result.observation, result.disjunctions)
+          state.values[instruction.result] = result.value
+          break
+        case 'disjunctionHolds':
+          addAssertionObservation(run, result.assertion, {canBeTrue: true, canBeFalse: false}, [])
+          run.reachedDisjunctions[result.disjunction] = true
           state.values[instruction.result] = result.value
           break
         case 'value':
@@ -420,6 +686,9 @@ function runEvaluation(
           value,
           shared: cloneSharedState(state.shared),
           valueFacts: state.valueFacts.slice(),
+          returned: transferContext.staticRelations != null && seed.returnRelations === true && block.terminator.value != null
+            ? {value: block.terminator.value, state: cloneState(state)}
+            : null,
         }
         break
       }
@@ -438,7 +707,7 @@ function runEvaluation(
         break
       }
       case 'jump': {
-        propagate(state, blockID, block.terminator.target, run)
+        propagate(state, blockID, block.terminator.target, run, transferContext)
         break
       }
       case 'branch': {
@@ -458,7 +727,22 @@ function runEvaluation(
           run.blocks[blockID]!.pendingReturn = null
           break
         }
-        const condition = conditionOutcome.value
+        const held = conditionOutcome.value
+        // A branch inside an interior console.assert condition is decided with the proofs that
+        // decide a whole assertion, e.g. `d >= 0` after `if (a > b) return 0` and
+        // `const d = b - a`. When those proofs settle a condition the held boolean leaves open,
+        // the one successor gets the unrefined state, so the proof narrows nothing that later
+        // code sees. The branch is part of an interior assertion proof, so the static-relations
+        // rules may decide it too; they only answer definitely true, a proof that must hold on the
+        // block's final visit, and a successor skipped on an earlier visit is propagated when the
+        // block runs again.
+        const condition = block.terminator.decision === 'assertionProofs'
+          ? staticConditionObservation(block.terminator.condition, state, transferContext, true)
+          : held
+        if (held.canBeTrue && held.canBeFalse && condition.canBeTrue !== condition.canBeFalse) {
+          propagate(state, blockID, condition.canBeTrue ? block.terminator.whenTrue : block.terminator.whenFalse, run, transferContext)
+          break
+        }
         // expressionContext.instructionByValue is the one which-instruction-produced-this
         // table; a condition refines only when that instruction is a check (refineCheck
         // dispatches over the check kinds in one place).
@@ -469,17 +753,25 @@ function runEvaluation(
           const branch = check != null
             ? refineCheck(state, check, true, expressionContext)
             : condition.canBeFalse ? cloneState(state) : state
-          if (branch != null) propagate(branch, blockID, block.terminator.whenTrue, run)
+          if (branch != null) propagate(branch, blockID, block.terminator.whenTrue, run, transferContext)
         }
         if (condition.canBeFalse) {
           const branch = check != null
             ? refineCheck(state, check, false, expressionContext)
             : state
-          if (branch != null) propagate(branch, blockID, block.terminator.whenFalse, run)
+          if (branch != null) propagate(branch, blockID, block.terminator.whenFalse, run, transferContext)
         }
         break
       }
     }
+  }
+  const relations = transferContext.staticRelations
+  if (relations != null) {
+    const workPerInstruction = (relations.budget - relations.remainingWork) / Math.max(1, expressionContext.instructionCount)
+    relations.counters.peakWorkPerInstruction = Math.max(relations.counters.peakWorkPerInstruction, workPerInstruction)
+    const extension = extensionRelations(relations)
+    const extensionPerInstruction = (extension.budget - extension.remainingWork) / Math.max(1, expressionContext.instructionCount)
+    relations.counters.peakExtensionWorkPerInstruction = Math.max(relations.counters.peakExtensionWorkPerInstruction, extensionPerInstruction)
   }
 
   // A stop inside a loop cuts the back edge, freezing the header short of its fixed point —
@@ -566,6 +858,10 @@ function runEvaluation(
     }
   }
 
+  const returnRelations = relations != null && seed.returnRelations === true && normal != null && run.stops.length === 0
+    ? computeReturnRelations(fn, run, expressionContext, relations)
+    : []
+
   return {
     evaluation: {
       normal,
@@ -573,9 +869,54 @@ function runEvaluation(
       boundsAssumptions,
       assertions: classifyAssertions(run, run.stops.length === 0 && boundsAssumptions.length === 0),
       stops: run.stops,
+      returnRelations,
     },
     run,
   }
+}
+
+// Return blocks one callee evaluation may examine for return relations.
+const maximumReturnBlocks = 8
+// Parameters, in order, examined for return relations.
+const maximumReturnParameters = 16
+
+// Static relations, return relations of a completed callee evaluation (a contradiction of
+// current-decisions.md's "does not publish relationships between a return value and its
+// arguments"). A relation is published when it holds in the final state of every block that
+// returns: the worklist has drained, so each pending return describes every execution that
+// returns from its block, and with no stops every normal return is one of these blocks. The
+// proof is the join verification proof, rooted at the parameter and the returned value, both
+// computed on every execution that returns from that block.
+function computeReturnRelations(
+  fn: FunctionIR,
+  run: EvaluationRun,
+  context: TransferContext['expressionContext'],
+  relations: StaticRelations,
+): ReturnRelation[] {
+  const pending = run.blocks.flatMap(block => block.pendingReturn == null ? [] : [block.pendingReturn])
+  const returns = pending.flatMap(entry => entry.returned == null ? [] : [entry.returned])
+  if (returns.length === 0 || returns.length !== pending.length) return []
+  if (returns.length > maximumReturnBlocks) {
+    relations.counters.returnRelations += 1
+    return []
+  }
+  if (returns.some(entry => entry.state.values[entry.value]?.kind !== 'number')) return []
+  const published: ReturnRelation[] = []
+  if (returns.every(entry => relationalNonnegative(entry.state, context, relations, entry.value))) {
+    published.push({kind: 'nonnegative'})
+  }
+  if (fn.parameters.length > maximumReturnParameters) relations.counters.returnRelations += 1
+  for (let index = 0; index < Math.min(fn.parameters.length, maximumReturnParameters); index++) {
+    const parameter = fn.parameters[index]!.value
+    if (returns.some(entry => entry.state.values[parameter]?.kind !== 'number')) continue
+    if (returns.every(entry => relationalAtMost(entry.state, context, relations, parameter, entry.value))) {
+      published.push({kind: 'atLeast', parameter: index})
+    }
+    if (returns.every(entry => relationalAtMost(entry.state, context, relations, entry.value, parameter))) {
+      published.push({kind: 'atMost', parameter: index})
+    }
+  }
+  return published
 }
 
 function requiredAssertion(run: EvaluationRun, assertionIndex: number): {site: SiteID; text: string} {
@@ -590,6 +931,7 @@ function addAssertionObservation(
   run: EvaluationRun,
   assertionIndex: number,
   observation: {canBeTrue: boolean; canBeFalse: boolean},
+  disjunctions: number[],
 ): void {
   requiredAssertion(run, assertionIndex)
   if (!observation.canBeTrue && !observation.canBeFalse) {
@@ -599,9 +941,15 @@ function addAssertionObservation(
     sawDefinitelyTrue: false,
     sawDefinitelyFalse: false,
     sawMaybeFalse: false,
+    definitelyFalseAfterDisjunctions: [],
   }
-  if (!observation.canBeTrue) aggregate.sawDefinitelyFalse = true
-  else if (observation.canBeFalse) aggregate.sawMaybeFalse = true
+  if (!observation.canBeTrue) {
+    // Pushed once per staticAssert instruction: repeated visits pass the same array.
+    if (disjunctions.length === 0) aggregate.sawDefinitelyFalse = true
+    else if (!aggregate.definitelyFalseAfterDisjunctions.includes(disjunctions)) {
+      aggregate.definitelyFalseAfterDisjunctions.push(disjunctions)
+    }
+  } else if (observation.canBeFalse) aggregate.sawMaybeFalse = true
   else aggregate.sawDefinitelyTrue = true
   run.assertionObservations[assertionIndex] = aggregate
 }
@@ -609,9 +957,14 @@ function addAssertionObservation(
 function classifyAssertions(run: EvaluationRun, proofComplete: boolean): AssertionVerdict[] {
   return run.fn.assertions.map((assertion, assertionIndex) => {
     const observation = run.assertionObservations[assertionIndex]
-    const verdict: AssertionVerdict['verdict'] = observation?.sawDefinitelyFalse === true
+    const refuted = observation != null && (observation.sawDefinitelyFalse
+      || observation.definitelyFalseAfterDisjunctions.some(disjunctions =>
+        disjunctions.every(disjunction => run.reachedDisjunctions[disjunction] !== true)))
+    const maybeFalse = observation != null
+      && (observation.sawMaybeFalse || observation.definitelyFalseAfterDisjunctions.length > 0)
+    const verdict: AssertionVerdict['verdict'] = refuted
       ? 'refuted'
-      : observation?.sawMaybeFalse === true
+      : maybeFalse
         ? 'unproven'
         : !proofComplete
           ? 'blocked'
@@ -644,6 +997,7 @@ function propagate(
   sourceBlock: BlockID,
   edge: EdgeIR,
   run: EvaluationRun,
+  context: TransferContext,
 ): void {
   const target = run.fn.blocks[edge.block]
   if (target == null) throw new Error(`Missing block ${edge.block} in ${run.fn.name}`)
@@ -654,17 +1008,52 @@ function propagate(
   // can be one of the target's own parameter IDs (an unchanged carried binding), so the
   // reads and writes share one value array.
   const argumentValues = edge.arguments.map(argument => requiredValue(state, argument))
+  const previous = run.blocks[edge.block]!.incoming
+  if (context.staticRelations != null) {
+    // Static relations: loop headers maintain join facts like other joins when the graph is
+    // reducible (a contradiction of the recorded decision not to translate order onto
+    // loop-replaced values). An irreducible graph clears them at every header. Verification
+    // reads the edge state before the parameter writes below.
+    if (target.loopHeader != null && !context.staticRelations.joinFlow.dominance.reducible) {
+      state.joinFacts = []
+    } else if (target.parameters.length > 0) {
+      // Loop header maintenance is the second exploration's rule, so it charges the extension
+      // budget; joins elsewhere keep the first prototype's budget.
+      state.joinFacts = maintainedJoinFacts(
+        state,
+        edge,
+        target,
+        previous?.state.joinFacts ?? null,
+        context.expressionContext,
+        target.loopHeader == null ? context.staticRelations : extensionRelations(context.staticRelations),
+      )
+    }
+  }
   const candidate = state
   for (let index = 0; index < target.parameters.length; index++) {
     candidate.values[target.parameters[index]!] = argumentValues[index]!
   }
-  const previous = run.blocks[edge.block]!.incoming
   if (previous == null) {
     run.blocks[edge.block]!.incoming = {state: candidate, updateCount: 0}
     run.queue.push(edge.block)
     return
   }
   const update = mergeStates(previous.state, candidate, target.loopHeader != null && previous.updateCount >= 1)
+  if (update.changed && update.joinFactsOnly && target.loopHeader != null && context.staticRelations != null) {
+    // Static relations: a loop header re-runs when join facts drop, without counting toward
+    // the update backstop, so a drop can never add a loopLimit stop. Such re-runs are bounded
+    // by maximumJoinFactOnlyUpdates: past it the header's facts are cleared (failing closed),
+    // and with no facts left no later change can be a drop.
+    const blockRun = run.blocks[edge.block]!
+    blockRun.joinFactOnlyUpdates += 1
+    if (blockRun.joinFactOnlyUpdates > maximumJoinFactOnlyUpdates) {
+      update.state.joinFacts = []
+      context.staticRelations.counters.loopJoinFacts += 1
+    }
+    blockRun.incoming = {state: update.state, updateCount: previous.updateCount}
+    run.queue.push(edge.block)
+    return
+  }
   if (update.changed) {
     if (target.loopHeader != null && previous.updateCount >= maximumLoopHeaderUpdates) {
       addStop(
@@ -679,6 +1068,147 @@ function propagate(
     run.blocks[edge.block]!.incoming = {state: update.state, updateCount: previous.updateCount + 1}
     run.queue.push(edge.block)
   }
+}
+
+const maximumJoinCandidates = 32
+
+// Re-runs of one loop header that only dropped join facts, before its facts are cleared.
+const maximumJoinFactOnlyUpdates = 8
+
+// Join facts on a block's parameters (static-relations mode, blocks that are not loop
+// headers). The first arrival proposes candidates and keeps those that hold for the values
+// flowing in on that edge; every later arrival only re-verifies the stored facts against its
+// own edge. After the first arrival facts are therefore only ever dropped, and mergeStates
+// turns a drop into a change, so the block re-runs. A fact survives the worklist only when
+// the final visit of every incoming edge verified it from that edge's own state, and on each
+// edge the parameter's new value is exactly the edge argument the fact was verified for.
+// The bound is a function parameter or a value produced in a block that dominates the target,
+// so every path into the block computed it before the edge; and a block on a cycle proposes
+// nothing, so no bound or parameter can be recomputed while a fact names it.
+// Candidate order is stable: parameters in order, each with `nonnegative` first, then bounds
+// in ascending IR value order, `atMost` before `atLeast`. At most 32 verified candidates per
+// block; later ones are dropped (failing closed) and counted.
+// Carried facts that name the target's parameters, as parameter or bound, are removed first:
+// the edge assigns new values to them. At a non-header join none exist, because facts about a
+// block's parameters are minted only on arrival at that block, a non-header block on a cycle
+// mints none, and a bound is never produced in the target itself. A loop header's own facts do
+// come back along its back edges, naming the previous iteration's values.
+// Loop headers (static relations, reducible graphs only): the first arrival is the entry edge,
+// because the header dominates its loop. Bounds must be function parameters or produced in a
+// block on no cycle, so no bound is recomputed while the loop runs. Every back edge re-verifies
+// the stored facts against its own argument, from a state that assumed them at the header, so
+// a fact that survives the worklist holds on every arrival by induction on arrivals. A carried
+// fact about a value the loop body computes cannot survive the header: the header's previous
+// state never held one, and merges only intersect.
+function maintainedJoinFacts(
+  state: ExecutionState,
+  edge: EdgeIR,
+  target: BlockIR,
+  stored: JoinFact[] | null,
+  context: TransferContext['expressionContext'],
+  relations: StaticRelations,
+): JoinFact[] {
+  const parameters = target.parameters
+  const facts = state.joinFacts.filter(fact =>
+    !parameters.includes(fact.parameter) && (fact.kind === 'nonnegative' || !parameters.includes(fact.bound)))
+  const holds = (fact: JoinFact): boolean => {
+    const argument = edge.arguments[parameters.indexOf(fact.parameter)]!
+    switch (fact.kind) {
+      case 'nonnegative': return relationalNonnegative(state, context, relations, argument)
+      case 'atMost': return relationalAtMost(state, context, relations, argument, fact.bound)
+      case 'atLeast': return relationalAtMost(state, context, relations, fact.bound, argument)
+    }
+  }
+  if (stored != null) {
+    for (const fact of stored) {
+      if (parameters.includes(fact.parameter) && holds(fact)) facts.push(fact)
+    }
+    return cappedJoinFacts(facts, relations)
+  }
+  const cyclic = relations.joinFlow.cyclic[edge.block] === true
+  if (cyclic && (target.loopHeader == null || !relations.joinFlow.dominance.reducible)) return cappedJoinFacts(facts, relations)
+  const bounds = joinBounds(state, edge.block, context, relations, cyclic)
+  let verified = 0
+  for (let index = 0; index < parameters.length; index++) {
+    if (state.values[edge.arguments[index]!]?.kind !== 'number') continue
+    const parameter = parameters[index]!
+    const candidates: JoinFact[] = [{kind: 'nonnegative', parameter}]
+    for (const bound of bounds) {
+      candidates.push({kind: 'atMost', parameter, bound}, {kind: 'atLeast', parameter, bound})
+    }
+    for (const candidate of candidates) {
+      if (relations.workExhausted) return cappedJoinFacts(facts, relations)
+      if (!holds(candidate)) continue
+      if (verified === maximumJoinCandidates) {
+        relations.counters.joinCandidates += 1
+        return cappedJoinFacts(facts, relations)
+      }
+      facts.push(candidate)
+      verified += 1
+    }
+  }
+  return cappedJoinFacts(facts, relations)
+}
+
+// The values a join fact may name as its bound: numeric, non-NaN values held on the edge
+// that are function parameters or produced in a block dominating the target, and that are a
+// function parameter, an argument of some edge into the target, or named by an order fact on
+// this edge. One value per value number, the lowest IR value first. Only those three sources
+// are enumerated, not every value in the state, and the enumeration charges the evaluation's
+// work budget.
+// `outsideCycles` (loop headers) also requires a bound's block to lie on no cycle.
+function joinBounds(
+  state: ExecutionState,
+  target: BlockID,
+  context: TransferContext['expressionContext'],
+  relations: StaticRelations,
+  outsideCycles: boolean,
+): ValueID[] {
+  const flow = relations.joinFlow
+  const numbering = relations.numbering
+  if (!chargeRelationalWork(relations, state.valueFacts.length + state.joinFacts.length)) return []
+  const factNumbers = new Set<number>()
+  for (const fact of state.valueFacts) {
+    if (fact.kind !== 'order') continue
+    factNumbers.add(numbering.ofIdentity(fact.left))
+    factNumbers.add(numbering.ofIdentity(fact.right))
+  }
+  for (const fact of state.joinFacts) {
+    factNumbers.add(numbering.ofValue(fact.parameter))
+    if (fact.kind !== 'nonnegative') factNumbers.add(numbering.ofValue(fact.bound))
+  }
+  if (relations.functionValuesByNumber == null) {
+    if (!chargeRelationalWork(relations, flow.values.length)) return []
+    const valuesByNumber = new Map<number, ValueID[]>()
+    for (const value of flow.values) {
+      const number = numbering.ofValue(value)
+      const listed = valuesByNumber.get(number)
+      if (listed == null) valuesByNumber.set(number, [value])
+      else listed.push(value)
+    }
+    relations.functionValuesByNumber = valuesByNumber
+  }
+  const candidates = new Set<ValueID>(flow.functionParameters)
+  for (const argument of flow.incomingArguments[target]!) candidates.add(argument)
+  for (const number of factNumbers) {
+    for (const value of relations.functionValuesByNumber.get(number) ?? []) candidates.add(value)
+  }
+  if (!chargeRelationalWork(relations, candidates.size)) return []
+  const bounds: ValueID[] = []
+  const boundNumbers = new Set<number>()
+  for (const value of [...candidates].sort((left, right) => left - right)) {
+    const held = state.values[value]
+    if (held?.kind !== 'number' || held.mayBeNaN) continue
+    const block = flow.blockOfValue[value]
+    if (context.parameterIndexByValue[value] == null
+      && (block == null || block === target || !flow.dominance.dominates(block, target)
+        || (outsideCycles && flow.cyclic[block] === true))) continue
+    const number = numbering.ofValue(value)
+    if (boundNumbers.has(number)) continue
+    boundNumbers.add(number)
+    bounds.push(value)
+  }
+  return bounds
 }
 
 function blockSuccessors(fn: FunctionIR): BlockID[][] {

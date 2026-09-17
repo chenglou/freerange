@@ -1,11 +1,12 @@
 import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import {holdsStructure, recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
+import {maximumCallClosureFunctions, maximumImportedModules} from '../engine/imported-calls.ts'
 import type {AssertionVerdict, FunctionAnalysis, ProgramAnalysis, RequirementFailure, Stop} from '../engine/outcome.ts'
 import {finiteInputs, type FiniteInput} from '../ir/finite-inputs.ts'
-import type {FunctionID, ModuleBindingID, SiteID, ValueID} from '../ir/ids.ts'
+import type {FunctionRef, ModuleBindingID, SiteID, ValueID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import {forEachOperand} from '../ir/instructions.ts'
-import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
+import {declaredKindOf, formatSite, functionRefName, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {numericParameterPath} from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition} from '../requirements/model.ts'
 import {describePrecondition, formatObservedNeed, formatPrecondition} from './format-requirement.ts'
@@ -810,13 +811,39 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
   const reason = stop.reason
   switch (reason.kind) {
     case 'recursion': {
-      return `recursive call to ${functionName(program, reason.callee)} (call at ${formatSite(program, stop.site)})`
+      return `recursive call to ${functionRefName(program, reason.callee)} (call at ${formatSite(program, stop.site)})`
     }
     case 'calleeStopped': {
       // A partially supported callee did not necessarily hit syntax rejected during lowering;
       // saying so would send an agent hunting through a body whose constructs all lower.
-      const calleeState = calleeStateText(analysis.functions[reason.callee])
-      return `calls ${functionName(program, reason.callee)}, ${calleeState} (call at ${formatSite(program, stop.site)})`
+      const calleeState = reason.callee.module === program.module
+        ? calleeStateText(analysis.functions[reason.callee.function])
+        : importedCalleeStateText(program, reason.callee)
+      return `calls ${functionRefName(program, reason.callee)}, ${calleeState} (call at ${formatSite(program, stop.site)})`
+    }
+    case 'importCycle': {
+      return `calls ${functionRefName(program, reason.callee)}, which can call back into a module that is already running or still initializing; runtime import cycles are outside the analyzed scope (call at ${formatSite(program, stop.site)})`
+    }
+    case 'importedModuleState': {
+      const binding = program.project.modules[reason.callee.module]?.moduleBindings[reason.binding]
+      if (binding == null) throw new Error(`Unknown module binding ${reason.binding} of module ${reason.callee.module}`)
+      return `calls ${functionRefName(program, reason.callee)}, whose result rests on an assumption about ${binding.name} in its own file; assumptions about another file's module state are not carried across files (call at ${formatSite(program, stop.site)})`
+    }
+    case 'contractInput': {
+      const callee = program.project.modules[reason.callee.module]?.functions[reason.callee.function]
+      const parameter = callee?.kind === 'lowered' ? callee.parameters[reason.parameter] : undefined
+      if (parameter == null) throw new Error(`Unknown parameter ${reason.parameter} of function ${reason.callee.function}`)
+      return `calls ${functionRefName(program, reason.callee)}, whose summary assumes more about ${parameter.name} than this argument provides (call at ${formatSite(program, stop.site)})`
+    }
+    case 'importUnavailable': {
+      const why = (() => {
+        switch (reason.why) {
+          case 'typeScriptErrors': return 'whose file has TypeScript errors, so the declared types the analysis would trust may be wrong'
+          case 'moduleLimit': return `whose file would pass the limit of ${maximumImportedModules} files loaded for imported calls in one run`
+          case 'callClosure': return `whose calls could not all be followed to check that none calls back into this file: they reach more than ${maximumCallClosureFunctions} functions, a file past the limit of ${maximumImportedModules} files loaded for imported calls, or a file with TypeScript errors`
+        }
+      })()
+      return `calls ${reason.calleeName}, ${why} (call at ${formatSite(program, stop.site)})`
     }
     case 'kindMismatch': {
       return `uses a value whose runtime kind the analysis cannot establish (at ${formatSite(program, stop.site)})`
@@ -861,7 +888,7 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
 
 function formatRequirementFailure(
   failure: RequirementFailure,
-  calleeID: FunctionID | null,
+  calleeID: FunctionRef | null,
   stopSite: SiteID,
   program: ProgramIR,
 ): string {
@@ -879,7 +906,7 @@ function formatRequirementFailure(
     }
   }
 
-  const callee = functionName(program, calleeID)
+  const callee = functionRefName(program, calleeID)
   const callSite = formatSite(program, stopSite)
   switch (failure.kind) {
     case 'elementInBounds':
@@ -908,10 +935,13 @@ function calleeStateText(callee: FunctionAnalysis | undefined): string {
   }
 }
 
-function functionName(program: ProgramIR, callee: number): string {
-  const fn = program.functions[callee]
-  if (fn == null) throw new Error(`Unknown function ${callee}`)
-  return fn.name
+// An imported callee's own analysis belongs to its module's report, so this prose names only
+// what the callee's lowering shows.
+function importedCalleeStateText(program: ProgramIR, callee: FunctionRef): string {
+  const fn = program.project.modules[callee.module]?.functions[callee.function]
+  return fn?.kind === 'unsupported'
+    ? 'which hit unsupported code'
+    : 'which could not be fully analyzed for this specific call'
 }
 
 // The only place reason prose exists; everything else branches on reason.kind. The
@@ -962,6 +992,12 @@ export function formatUnsupportedReason(reason: UnsupportedReason): string {
         case 'bindValueFirst': return 'calculate or read the value before console.assert, then check the variable'
         case 'functionCall': return 'console.assert cannot call a function inside its condition except Number.isInteger, Number.isFinite, or Number.isNaN'
         case 'callerRequirement': return 'a leading console.assert describes what callers must provide. ===, <, <=, >, and >= may compare two parameters or fixed-record properties; !== needs one fixed finite number. It can also require a parameter to be an integer or a parameter or fixed-record property to be finite'
+        case 'conditionDepth': return 'console.assert condition nests && and || groups more than 32 levels deep'
+        case 'conditionChecks': return 'console.assert condition has more than 64 checks'
+        case 'disjuncts': return 'console.assert condition has more than 16 alternatives in one || chain'
+        case 'helperDepth': return 'a local predicate helper used in console.assert calls another local helper; write the inner check out in the outer helper'
+        case 'helperSize': return 'a local predicate helper used in console.assert has more than 256 syntax nodes'
+        case 'functionBlocks': return 'console.assert conditions in one function create more than 256 blocks through || alternatives'
       }
     }
     case 'varDeclaration': return 'var declarations (use let or const)'
