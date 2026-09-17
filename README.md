@@ -94,6 +94,8 @@ For simplicity and predictability, `console.assert` currently works only in name
 
 We also don't support aliasing `console.assert`, e.g. `const assert = console.assert`.
 
+When one `console.assert` uses a form outside the list above, e.g. an `&&` condition like `console.assert(left >= 0 && left <= right)`, an inline calculation, or a call like `Math.abs(...)`, Freerange doesn't analyze that function at all, including its other `console.assert` calls. `fr` reports the unsupported form as an error, and `fr --audit` marks the function as `unsupported` with the reason and location.
+
 For more complex assertions, like inline calculations, extract them into variables:
 
 ```ts
@@ -122,6 +124,13 @@ There are infinitely many assertable things. Here are some good, non-noisy ones:
     arrow: {centerX: anchorCenterX},
   }
   console.assert(tooltip.arrow.centerX === tooltip.body.centerX)
+  ```
+  When the two values come from different floating-point arithmetic, like a division and a multiplication, rounding can make `===` fail on correct code, e.g. `(1 / 49) * 49` is `0.9999999999999999`. For the values calculated below, `fr` reports `console.assert(rowWidth === containerWidth)` as unproven, and the tolerance check as well:
+  ```ts
+  const columnWidth = containerWidth / columnCount
+  const rowWidth = columnWidth * columnCount
+  const drift = Math.abs(rowWidth - containerWidth)
+  console.assert(drift <= 1e-6) // unproven
   ```
 
 Every plain `number` parameter already requires a finite, non-`NaN` value. The same requirement applies to numeric fields selected from a fixed-shape object parameter. Freerange also checks whether a divisor may be `0` and the other conditions shown by `fr --audit`. You don't need to assert the same information explicitly.
