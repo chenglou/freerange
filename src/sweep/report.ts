@@ -16,8 +16,8 @@ import type {FunctionAnalysis} from '../engine/outcome.ts'
 import {siteLocation} from '../ir/program.ts'
 import {maxMagnitude, type Value} from './domain.ts'
 import {decodeJson, formatCall} from './encode.ts'
-import {DRAIN_MS, type EntryResult, type Requirement, type SweepRun, type SweepSettings, type Verification} from './run.ts'
-import type {CauseClass, FirstInput, Site, SiteCounts} from './types.ts'
+import {DRAIN_MS, FRAME_LIMITS, type EntryResult, type Requirement, type SweepRun, type SweepSettings, type Verification} from './run.ts'
+import {FRAME_END, type CauseClass, type FirstInput, type Site, type SiteCounts} from './types.ts'
 
 export type StaticVerdict = 'proven' | 'refuted' | 'unproven' | 'blocked' | 'dead' | 'not lowered' | 'requirement' | 'requirements not checked' | 'outside'
 export type SiteOutcome = 'counterexample' | 'fails-1e-9' | 'held' | 'starved' | 'not-reached' | 'precondition' | 'unverified' | 'not-run'
@@ -164,12 +164,39 @@ function verificationFailure(verification: Verification | undefined, site: Site,
   return null
 }
 
+/** An entry's frame-driver listing in the JSON, under FREERANGE_SWEEP_FRAMES: the driver's shape, or why a function whose last parameter is an array isn't a driver. */
+function framesJson(result: EntryResult): {frames?: unknown; framesRejected?: string} {
+  const recognition = result.frames
+  if (recognition == null) return {}
+  switch (recognition.kind) {
+    case 'rejected': return {framesRejected: recognition.reason}
+    case 'driver': {
+      const {driver} = recognition
+      const counts = result.counts
+      return {frames: {
+        eventsParameter: driver.eventsParameter, loopLine: driver.loopLine, stepStatements: driver.stepStatements, stepCall: driver.step == null ? null : {step: driver.step.name, state: driver.step.state, line: driver.step.line},
+        ...(counts?.sequence == null ? {} : {sequences: counts.inDomain, frames: counts.sequence.frames, setupDiscards: counts.sequence.setupDiscards, frameDiscards: counts.sequence.frameDiscards, endDiscards: counts.sequence.endDiscards}),
+      }}
+    }
+  }
+}
+
+/** A sequence entry's first input in the JSON: the frame at which the site first reached the needed level, and the events length. */
+function sequenceFirstJson(first: {entry: EntryResult; input: FirstInput}): {frame?: number | 'end'; events?: number} {
+  const plan = first.entry.entry.sequence
+  if (plan == null || first.input.frame == null) return {}
+  const args = decodeJson(first.input.args) as Value[]
+  return {frame: first.input.frame === FRAME_END ? 'end' : first.input.frame, events: (args[plan.eventsIndex] as Value[]).length}
+}
+
 type SiteReport = {site: Site; verdict: StaticVerdict; outcome: SiteOutcome; aggregate: Aggregate; why: string | null; first: {entry: EntryResult; input: FirstInput; verified: boolean} | null; action: 'warning' | 'call-site warning' | 'internal' | 'json only' | null; callLine: number | null}
 
 export function sweepReport(options: {run: SweepRun; verdictOf: (site: Site) => StaticVerdict; detailed: DetailedAnalysis; staticFindings: StaticFinding[]; sourceFile: ts.SourceFile; settings: SweepSettings; level: 'warning' | 'error'; reportFile: string}): SweepReport {
   const {run, verdictOf, detailed, staticFindings, sourceFile, settings, level, reportFile} = options
   const limits = settings.limits
-  const settingsJson = {level, filters: settings.filters, cap: settings.cap, budget: limits.inputsPerEntry, seed: 1, p0Inputs: 10_000, p2ProductMax: 50_000, stepBudget: limits.stepBudget, limits}
+  const frames = settings.frames === true
+  const listedLimits = frames ? limits : Object.fromEntries(Object.entries(limits).filter(([name]) => !FRAME_LIMITS.includes(name)))
+  const settingsJson = {level, filters: settings.filters, cap: settings.cap, budget: limits.inputsPerEntry, seed: 1, p0Inputs: 10_000, p2ProductMax: 50_000, stepBudget: limits.stepBudget, limits: listedLimits, ...(frames ? {frames} : {})}
   const findings: SweepFinding[] = []
   const fileWarning = (message: string, line = 1) => findings.push({line, column: 1, level: 'warning', rule: 'console-assert-sweep', message, details: []})
   if (run.kind === 'not-run') {
@@ -366,11 +393,12 @@ export function sweepReport(options: {run: SweepRun; verdictOf: (site: Site) => 
       name: result.entry.name, line: result.entry.line, status: statusText(result), drawn: result.counts?.drawn ?? 0, inDomain: result.counts?.inDomain ?? 0,
       discards: result.counts?.discards ?? {leading: 0, F1: 0, F3: 0, R1: 0}, overBudget: result.counts?.overBudget ?? 0, threw: result.counts?.threw ?? 0,
       discardSites: result.entry.discardSites.map((discard) => ({line: run.sites[discard.site]!.line, cause: discard.cause})), lengthTies: result.entry.lengthTies,
+      ...(frames ? framesJson(result) : {}),
     })),
     sites: reports.map((report) => ({
       key: report.site.key, line: report.site.line, column: report.site.column, function: report.site.functionName, role: report.site.leading ? 'requirement' : report.verdict === 'outside' ? 'outside' : 'assertion',
       staticVerdict: report.verdict, outcome: report.outcome, n: report.aggregate.n, drawn: report.aggregate.drawn, level2: report.aggregate.level2, level3: report.aggregate.level3, firingByCause: report.aggregate.byCause,
-      first: report.first == null ? null : {entry: report.first.entry.entry.name, index: report.first.input.index, input: report.first.input.args, margin: report.first.input.margin, cause: report.first.input.cause, verified: report.first.verified},
+      first: report.first == null ? null : {entry: report.first.entry.entry.name, index: report.first.input.index, input: report.first.input.args, margin: report.first.input.margin, cause: report.first.input.cause, verified: report.first.verified, ...sequenceFirstJson(report.first)},
       why: report.why, action: report.action, callLine: report.callLine, caller: report.callLine == null ? null : functionAt(report.callLine),
     })),
     internalErrors,

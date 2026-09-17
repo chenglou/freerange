@@ -47,11 +47,16 @@ function newlines(text: string) {
   return count
 }
 
+// A frame driver's loop (FREERANGE_SWEEP_FRAMES): the statement's start offset and the hook id of its sequence entry. Its
+// body starts with a frame hook before the tick, and the statement is followed by the end hook:
+//   for (const event of events) {…}  -> for (const event of events) {__fr.frame(3);__fr.tick();…}__fr.frameEnd(3);
+export type FrameLoop = {start: number; hook: number}
+
 /**
  * The instrumented text and its site table. `file` names the logical file, e.g. `layout` for layout.ts in any copy of a
  * tree; `siteOffset` is the number of sites in the copy's earlier files.
  */
-export function instrumentSource(text: string, path: string, file: string, siteOffset: number): {output: string; sites: Site[]} {
+export function instrumentSource(text: string, path: string, file: string, siteOffset: number, frameLoops: FrameLoop[]): {output: string; sites: Site[]} {
   const sourceFile = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
   const sites: Site[] = []
   const edits: {start: number; end: number; replacement: string}[] = []
@@ -60,11 +65,16 @@ export function instrumentSource(text: string, path: string, file: string, siteO
     if (ts.isIterationStatement(node, false)) {
       const body = node.statement
       const bodyStart = body.getStart(sourceFile)
+      const nodeStart = node.getStart(sourceFile)
+      const hook = frameLoops.find((loop) => loop.start === nodeStart)?.hook
+      const enter = hook == null ? '__fr.tick();' : `__fr.frame(${hook});__fr.tick();`
+      const leave = hook == null ? '' : `__fr.frameEnd(${hook});`
       if (ts.isBlock(body)) {
-        edits.push({start: bodyStart + 1, end: bodyStart + 1, replacement: '__fr.tick();'})
+        edits.push({start: bodyStart + 1, end: bodyStart + 1, replacement: enter})
+        if (hook != null) edits.push({start: node.end, end: node.end, replacement: leave})
       } else {
-        edits.push({start: bodyStart, end: bodyStart, replacement: '{__fr.tick();'})
-        edits.push({start: body.end, end: body.end, replacement: '}'})
+        edits.push({start: bodyStart, end: bodyStart, replacement: `{${enter}`})
+        edits.push({start: body.end, end: body.end, replacement: `}${leave}`})
       }
     }
     if (!isConsoleAssertCall(node)) {

@@ -37,6 +37,7 @@ export type AnalyzedEntry = {
   lengthTies: [Path, Path][]
   unsupported: string | null
   discardAsserts: AssertPosition[] // leak (rule 3), F1 and F3 asserts; the entry's own leading asserts come from the sites
+  frames: FrameRecognition | null
 }
 export type SweepFilters = 'base' | 'default'
 
@@ -545,12 +546,118 @@ function isArrayLeaf(args: TupleDomain, path: Path): boolean {
   return domain.kind === 'array'
 }
 
+// -- Frame drivers (FREERANGE_SWEEP_FRAMES) ------------------------------------------
+//
+// A frame driver builds a state, then walks its last parameter, an events array, with one `for (const event of events)`
+// loop whose body calls the app's frame functions. It's recognized syntactically:
+//   D1 the last parameter is an identifier with an array type whose element type classifies, and isn't optional
+//   D2 the body is the leading asserts, setup statements, exactly one top-level `for (const event of events)` loop, and end
+//      statements
+//   D3 `events` appears nowhere else, e.g. no `events.length`, `events[i]`, `helper(events)` or closure capture, so frame k
+//      depends only on events 1..k
+//   D4 the loop body calls a function of this file
+// The threaded state is the one loop-body statement `state = step(state, …)` over a `let` declared before the loop, `step`
+// a function of this file. With two or more such statements the driver has no threaded state.
+
+export type FrameDriver = {
+  eventsIndex: number
+  eventsParameter: string
+  eventVariable: string
+  loopStart: number // the loop statement's start offset, where instrument.ts inserts the frame hook
+  loopLine: number
+  stepStatements: number // loop-body statements of the form `state = step(state, …)`
+  step: {name: string; state: string; line: number} | null // the threaded state, when stepStatements is 1
+}
+export type FrameRecognition = {kind: 'driver'; driver: FrameDriver} | {kind: 'rejected'; reason: string}
+
+/** Every call under `node`, excluding nested functions. */
+function callsUnder(node: ts.Node): ts.CallExpression[] {
+  const result: ts.CallExpression[] = []
+  const visit = (child: ts.Node): void => {
+    if (ts.isFunctionLike(child) || ts.isClassLike(child)) return
+    if (ts.isCallExpression(child)) result.push(child)
+    ts.forEachChild(child, visit)
+  }
+  visit(node)
+  return result
+}
+
+/** The symbol an identifier reads, including the value of a shorthand property, e.g. `events` in `{events}`. */
+function valueSymbol(checker: ts.TypeChecker, identifier: ts.Identifier): ts.Symbol | undefined {
+  return ts.isShorthandPropertyAssignment(identifier.parent) && identifier.parent.name === identifier
+    ? checker.getShorthandAssignmentValueSymbol(identifier.parent)
+    : checker.getSymbolAtLocation(identifier)
+}
+
+/** Null when `fn`'s last parameter doesn't have an array type, so the function is an ordinary entry. */
+function frameDriver(checker: ts.TypeChecker, sourceFile: ts.SourceFile, fn: NamedFunction, functions: Map<ts.Node, NamedFunction>): FrameRecognition | null {
+  const node = fn.node
+  const parameter = node.parameters.at(-1)
+  if (parameter == null || parameter.dotDotDotToken != null) return null
+  const type = checker.getTypeAtLocation(parameter)
+  if (!checker.isArrayType(type)) return null
+  const rejected = (reason: string): FrameRecognition => ({kind: 'rejected', reason})
+  const lineOf = (target: ts.Node) => sourceFile.getLineAndCharacterOfPosition(target.getStart(sourceFile)).line + 1
+  if (!ts.isIdentifier(parameter.name)) return rejected('D1: the events parameter is destructured')
+  const events = parameter.name.text
+  if (parameter.questionToken != null || parameter.initializer != null) return rejected(`D1: ${events} is optional`)
+  const element = classify(checker, checker.getTypeArguments(type as ts.TypeReference)[0]!, parameter, 2)
+  if (typeof element === 'string') return rejected(`D1: an element of ${events} has ${element}`)
+  if (node.body == null || !ts.isBlock(node.body)) return rejected(`D2: ${fn.name} has no block body`)
+  const eventsSymbol = checker.getSymbolAtLocation(parameter.name)
+  const statements = node.body.statements
+  const loops = statements.filter((statement): statement is ts.ForOfStatement => ts.isForOfStatement(statement) && ts.isIdentifier(unwrap(statement.expression))
+    && checker.getSymbolAtLocation(unwrap(statement.expression)) === eventsSymbol)
+  if (loops.length !== 1) return rejected(`D2: ${fn.name} has ${loops.length} top-level for...of loops over ${events}, not 1`)
+  const loop = loops[0]!
+  const declarations = ts.isVariableDeclarationList(loop.initializer) ? loop.initializer.declarations : null
+  if (loop.awaitModifier != null || declarations == null || (loop.initializer.flags & ts.NodeFlags.Const) === 0 || declarations.length !== 1 || !ts.isIdentifier(declarations[0]!.name)) {
+    return rejected(`D2: the loop over ${events} must declare one const identifier, e.g. for (const event of ${events})`)
+  }
+  const eventVariable = declarations[0]!.name.text
+  const findReference = (child: ts.Node): ts.Identifier | undefined => ts.isIdentifier(child) && child !== unwrap(loop.expression) && valueSymbol(checker, child) === eventsSymbol
+    ? child
+    : ts.forEachChild(child, findReference)
+  const extraReference = findReference(node.body)
+  if (extraReference != null) return rejected(`D3: ${events} is used outside its for...of loop at line ${lineOf(extraReference)}`)
+  if (!callsUnder(loop.statement).some((call) => calleeOf(checker, call, functions) != null)) return rejected('D4: the loop body calls no function of this file')
+
+  const stateSymbols = new Set<ts.Symbol>()
+  for (const statement of statements.slice(0, statements.indexOf(loop))) {
+    if (!ts.isVariableStatement(statement) || (statement.declarationList.flags & ts.NodeFlags.Let) === 0) continue
+    for (const declaration of statement.declarationList.declarations) {
+      const symbol = ts.isIdentifier(declaration.name) ? checker.getSymbolAtLocation(declaration.name) : undefined
+      if (symbol != null) stateSymbols.add(symbol)
+    }
+  }
+  const steps: {name: string; state: string; line: number}[] = []
+  const findSteps = (child: ts.Node): void => {
+    if (ts.isFunctionLike(child) || ts.isClassLike(child)) return
+    if (ts.isExpressionStatement(child) && ts.isBinaryExpression(child.expression) && child.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const {left, right} = child.expression
+      const call = unwrap(right)
+      const state = ts.isIdentifier(left) ? checker.getSymbolAtLocation(left) : undefined
+      const callee = ts.isCallExpression(call) ? calleeOf(checker, call, functions) : null
+      const first = ts.isCallExpression(call) ? call.arguments[0] : undefined
+      if (state != null && stateSymbols.has(state) && callee != null && first != null && ts.isIdentifier(first) && checker.getSymbolAtLocation(first) === state) {
+        steps.push({name: callee.name, state: (left as ts.Identifier).text, line: lineOf(child)})
+      }
+    }
+    ts.forEachChild(child, findSteps)
+  }
+  findSteps(loop.statement)
+  return {kind: 'driver', driver: {
+    eventsIndex: node.parameters.length - 1, eventsParameter: events, eventVariable, loopStart: loop.getStart(sourceFile), loopLine: lineOf(loop),
+    stepStatements: steps.length, step: steps.length === 1 ? steps[0]! : null,
+  }}
+}
+
 // -- Entries ----------------------------------------------------------------------
 
 function analyzeFunction(checker: ts.TypeChecker, sourceFile: ts.SourceFile, fn: NamedFunction, ordinal: number, functions: Map<ts.Node, NamedFunction>, filters: SweepFilters): AnalyzedEntry {
   const node = fn.node
   const lineOf = (target: ts.Node) => sourceFile.getLineAndCharacterOfPosition(target.getStart(sourceFile)).line + 1
-  const entry: AnalyzedEntry = {name: fn.name, ordinal, line: lineOf(node), parameterNames: [], args: {kind: 'tuple', elements: []}, relations: [], lengthTies: [], unsupported: null, discardAsserts: []}
+  const entry: AnalyzedEntry = {name: fn.name, ordinal, line: lineOf(node), parameterNames: [], args: {kind: 'tuple', elements: []}, relations: [], lengthTies: [], unsupported: null, discardAsserts: [], frames: null}
   const bindings = new Map<string, Path>()
   for (const parameter of node.parameters) {
     if (parameter.dotDotDotToken != null) {
@@ -613,12 +720,19 @@ function analyzeFunction(checker: ts.TypeChecker, sourceFile: ts.SourceFile, fn:
   return entry
 }
 
-/** Every named top-level function of the file in source order, numbered from 0. Number sides are still unbounded here. */
-export function sweepEntries(program: ts.Program, sourceFile: ts.SourceFile, filters: SweepFilters): AnalyzedEntry[] {
+/**
+ * Every named top-level function of the file in source order, numbered from 0. Number sides are still unbounded here.
+ * `frames` recognizes frame drivers (FREERANGE_SWEEP_FRAMES); without it every entry's `frames` is null.
+ */
+export function sweepEntries(program: ts.Program, sourceFile: ts.SourceFile, filters: SweepFilters, frames: boolean): AnalyzedEntry[] {
   const checker = program.getTypeChecker()
   const functions = sameFileFunctions(sourceFile)
   const result: AnalyzedEntry[] = []
-  for (const fn of functions.values()) result.push(analyzeFunction(checker, sourceFile, fn, result.length, functions, filters))
+  for (const fn of functions.values()) {
+    const entry = analyzeFunction(checker, sourceFile, fn, result.length, functions, filters)
+    entry.frames = frames ? frameDriver(checker, sourceFile, fn, functions) : null
+    result.push(entry)
+  }
   return result
 }
 

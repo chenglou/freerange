@@ -30,6 +30,12 @@ export type Site = {
 export type DiscardCause = 'leading' | 'F1' | 'F3'
 export const DISCARD_CAUSES: DiscardCause[] = ['leading', 'F1', 'F3']
 
+// A frame driver under FREERANGE_SWEEP_FRAMES runs as a sequence entry: each generated input is one event sequence, run
+// through the driver once. `hook` is the id the driver's instrumented loop passes to __fr.frame and __fr.frameEnd, the
+// entry's ordinal, so the hooks of another driver the entry calls don't count frames. The entry stops after framesPerEntry
+// frames of counted sequences or sequencesPerEntry generated sequences, whichever comes first.
+export type SequencePlan = {hook: number; eventsIndex: number; framesPerEntry: number; sequencesPerEntry: number}
+
 export type SweepEntry = {
   name: string
   ordinal: number // position among the file's named top-level functions, in source order
@@ -40,14 +46,18 @@ export type SweepEntry = {
   // F2: pairs of array parameter paths that a leading `A.length === B.length` ties, drawn with one length.
   lengthTies: [Path, Path][]
   discardSites: {site: number; cause: DiscardCause}[]
+  sequence: SequencePlan | null
 }
+
+// The frame of a sequence run after the driver's loop; frame 0 is setup and frame k is the k-th loop body.
+export const FRAME_END = 0x7fffffff
 
 export type CauseClass = 'subnormal' | 'drift' | 'large' | 'ordinary'
 export const CAUSES: CauseClass[] = ['subnormal', 'drift', 'large', 'ordinary']
 
 // The first input of an entry that raised a site to a level: its index, the input digest, the margin when known, the cause
-// class and the encoded arguments.
-export type FirstInput = {index: number; digest: number; margin: number | null; cause: CauseClass; args: string}
+// class and the encoded arguments. For a sequence entry, `frame` is the frame of that run at which the site first got there.
+export type FirstInput = {index: number; digest: number; margin: number | null; cause: CauseClass; args: string; frame: number | null}
 
 // Per site, over one entry's in-domain calls. A call is in the domain when no discard site failed, no imported assert
 // failed (R1), it stayed within the step budget and it did not throw.
@@ -63,6 +73,10 @@ export type SiteCounts = {
   firstReach: FirstInput | null
 }
 
+// A sequence entry's counts beyond the one-call ones, where `inDomain` counts counted sequences: the summed events-array
+// lengths of counted sequences, and discarded sequences by the frame the discard happened at.
+export type SequenceCounts = {frames: number; setupDiscards: number; frameDiscards: number; endDiscards: number}
+
 export type EntryLine = {
   type: 'entry'
   entry: number // ordinal
@@ -73,6 +87,7 @@ export type EntryLine = {
   threw: number
   firstThrow: string | null
   sites: SiteCounts[]
+  sequence: SequenceCounts | null
 }
 
 export type VerifyItem = {item: number; entry: number; index: number; digest: number; site: number}

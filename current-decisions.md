@@ -217,6 +217,8 @@ These prototypes and proposed directions have not shown enough independent value
 - Deriving requirements from whether the final result is affected. Requirements are currently created at the causing operation, so a division or remainder whose bad result never reaches the return value still reports one.
 - Printing values at a stop (`width` was 100), and recovering the loop evidence that gets suppressed when a stop happens inside a loop.
 - Callback ordering and execution of callback sequences, including caller-selected bounded callback scenarios.
+
+  A runtime-only prototype exists behind `FREERANGE_SWEEP_FRAMES` (with `FREERANGE_SWEEP`): the caller writes a frame driver, a function that builds a state and walks an `events` array with one `for (const event of events)` loop, and the sweep runs generated event sequences through it. The driver's loop body is the caller's model of what happens between frames. Static analysis is unchanged; no sweep result reaches lowering or analysis.
 - The exact relational numeric domain and recurrence analysis.
 - Modeling caught exceptions. `throw` is supported as a path terminator (a thrown path contributes nothing, which is exact while the subset has no `catch` — guard clauses like `if (bad) throw new Error(...)` discharge obligations, and a function annotated `: never` that throws on every path analyzes with callers treating the call like an inline throw). `try`/`catch` itself stays out; supporting it means real exception-flow modeling.
 - Reporting every unsupported construct in a function instead of only the first.

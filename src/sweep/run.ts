@@ -8,9 +8,9 @@ import {tmpdir} from 'node:os'
 import {dirname, extname, join} from 'node:path'
 import type {Readable} from 'node:stream'
 import * as ts from 'typescript'
-import {hasExport, sweepEntries, type SweepFilters} from './analyze.ts'
+import {hasExport, sweepEntries, type AnalyzedEntry, type FrameDriver, type FrameRecognition, type SweepFilters} from './analyze.ts'
 import {capUnboundedEnds} from './domain.ts'
-import {instrumentSource} from './instrument.ts'
+import {instrumentSource, type FrameLoop} from './instrument.ts'
 import type {ChildLine, DiscardCause, EntryLine, Site, SweepEntry, SweepJob, VerifiedLine, VerifyItem} from './types.ts'
 
 const CHILD = new URL('./child.ts', import.meta.url).pathname
@@ -40,14 +40,25 @@ export type SweepLimits = {
   printed: number
   inputBytes: number
   held: number
+  // FREERANGE_SWEEP_FRAMES only. A sequence entry stops after framesPerEntry frames (the summed events-array lengths of
+  // counted sequences) or sequencesPerEntry generated sequences, whichever comes first.
+  framesPerEntry: number
+  sequencesPerEntry: number
+  maxFrames: number // the longest events array a sequence draws
+  redraws: number // per sequence, before a frame whose event is outside the domain truncates the sequence
 }
 
 export const DEFAULT_LIMITS: SweepLimits = {
   inputsPerEntry: 100_000, entriesPerFile: 64, sitesPerFile: 4096, stepBudget: 1000, heartbeatEvery: 1024, loadMs: 20_000, heartbeatMs: 10_000,
   hardMs: 120_000, rssKb: 1024 * 1024, pollMs: 100, psMs: 5000, outputBytes: 16 * 1024 * 1024, verifyItems: 64, verifyMs: 20_000, printed: 64, inputBytes: 2048, held: 1000,
+  framesPerEntry: 1_000_000, sequencesPerEntry: 100_000, maxFrames: 64, redraws: 8,
 }
 
-export type SweepSettings = {filters: SweepFilters; cap: number; limits: SweepLimits}
+// The limits only FREERANGE_SWEEP_FRAMES uses; the JSON of a sweep without the flag doesn't list them.
+export const FRAME_LIMITS: readonly string[] = ['framesPerEntry', 'sequencesPerEntry', 'maxFrames', 'redraws']
+
+// `frames`: FREERANGE_SWEEP_FRAMES=1, frame drivers are recognized.
+export type SweepSettings = {filters: SweepFilters; cap: number; limits: SweepLimits; frames?: boolean}
 
 // 'RSS poller': `ps` could not run or didn't report within `psMs`, so the RSS limit can't be enforced and the child is stopped.
 export type KillReason = 'RSS' | 'heartbeat' | 'hard limit' | 'output cap' | 'load step' | 'RSS poller'
@@ -295,9 +306,36 @@ function exportList(sourceFile: ts.SourceFile): string {
 
 // -- One file ----------------------------------------------------------------------------
 
+/** A frame driver whose parameters classify, so it runs as a sequence entry; null for every other function. */
+function runnableDriver(analyzed: AnalyzedEntry): FrameDriver | null {
+  return analyzed.frames?.kind === 'driver' && analyzed.unsupported == null ? analyzed.frames.driver : null
+}
+
+/**
+ * The child's entry for an analyzed function: its discard sites and capped number sides, and for a frame driver its
+ * sequence plan, with the events array drawn up to maxFrames long.
+ */
+export function sweepEntryFor(analyzed: AnalyzedEntry, sites: Site[], settings: SweepSettings): SweepEntry {
+  const discardSites: {site: number; cause: DiscardCause}[] = []
+  for (const site of sites) if (site.leading && site.functionName === analyzed.name) discardSites.push({site: site.index, cause: 'leading'})
+  for (const position of analyzed.discardAsserts) {
+    const site = sites.find((candidate) => candidate.line === position.line && candidate.column === position.column)
+    if (site != null && !discardSites.some((discard) => discard.site === site.index)) discardSites.push({site: site.index, cause: position.cause})
+  }
+  capUnboundedEnds(analyzed.args, settings.cap)
+  const driver = runnableDriver(analyzed)
+  if (driver != null) {
+    const events = analyzed.args.elements[driver.eventsIndex]
+    if (events?.kind !== 'array') throw new Error(`the events parameter of frame driver ${analyzed.name} has no array domain`)
+    events.maxLength = settings.limits.maxFrames
+  }
+  const sequence = driver == null ? null : {hook: analyzed.ordinal, eventsIndex: driver.eventsIndex, framesPerEntry: settings.limits.framesPerEntry, sequencesPerEntry: settings.limits.sequencesPerEntry}
+  return {name: analyzed.name, ordinal: analyzed.ordinal, line: analyzed.line, parameterNames: analyzed.parameterNames, args: analyzed.args, relations: analyzed.relations, lengthTies: analyzed.lengthTies, discardSites, sequence}
+}
+
 export type EntryStatus = {kind: 'run'} | {kind: 'unsupported'; reason: string} | {kind: 'not-run'; reason: 'entry cap'} | {kind: 'load-failed'} | {kind: 'killed'; reason: string}
 
-export type EntryResult = {entry: SweepEntry; status: EntryStatus; counts: EntryLine | null}
+export type EntryResult = {entry: SweepEntry; status: EntryStatus; counts: EntryLine | null; frames: FrameRecognition | null}
 
 export type Verification = {item: VerifyItem; line: VerifiedLine | null}
 
@@ -327,9 +365,15 @@ export async function sweepFile(path: string, reportFile: string, sourceFile: ts
   // so the version is read as the runtime record it is.
   const bunVersion = (process.versions as Partial<Record<string, string>>)['bun']
   if (bunVersion == null || !existsSync(CHILD)) return {kind: 'not-run', reason: `sweep of ${reportFile} not run: FREERANGE_SWEEP runs only from fr's TypeScript source under Bun, e.g. \`bun fr.ts <file>\``}
+  const analyzedEntries = sweepEntries(program, sourceFile, settings.filters, settings.frames === true)
+  const frameLoops: FrameLoop[] = []
+  for (const analyzed of analyzedEntries) {
+    const driver = runnableDriver(analyzed)
+    if (driver != null) frameLoops.push({start: driver.loopStart, hook: analyzed.ordinal})
+  }
   let instrumented: {output: string; sites: Site[]}
   try {
-    instrumented = instrumentSource(sourceFile.text, path, reportFile, 0)
+    instrumented = instrumentSource(sourceFile.text, path, reportFile, 0, frameLoops)
   } catch (error) {
     return {kind: 'not-run', reason: `could not load ${reportFile} for a sweep: ${error instanceof Error ? error.message : String(error)}`}
   }
@@ -338,25 +382,18 @@ export async function sweepFile(path: string, reportFile: string, sourceFile: ts
 
   const entries: EntryResult[] = []
   let supported = 0
-  for (const analyzed of sweepEntries(program, sourceFile, settings.filters)) {
-    const discardSites: {site: number; cause: DiscardCause}[] = []
-    for (const site of sites) if (site.leading && site.functionName === analyzed.name) discardSites.push({site: site.index, cause: 'leading'})
-    for (const position of analyzed.discardAsserts) {
-      const site = sites.find((candidate) => candidate.line === position.line && candidate.column === position.column)
-      if (site != null && !discardSites.some((discard) => discard.site === site.index)) discardSites.push({site: site.index, cause: position.cause})
-    }
-    capUnboundedEnds(analyzed.args, settings.cap)
-    const entry: SweepEntry = {name: analyzed.name, ordinal: analyzed.ordinal, line: analyzed.line, parameterNames: analyzed.parameterNames, args: analyzed.args, relations: analyzed.relations, lengthTies: analyzed.lengthTies, discardSites}
+  for (const analyzed of analyzedEntries) {
+    const entry = sweepEntryFor(analyzed, sites, settings)
     if (analyzed.unsupported != null) {
-      entries.push({entry, status: {kind: 'unsupported', reason: analyzed.unsupported}, counts: null})
+      entries.push({entry, status: {kind: 'unsupported', reason: analyzed.unsupported}, counts: null, frames: analyzed.frames})
       continue
     }
     if (supported >= limits.entriesPerFile) {
-      entries.push({entry, status: {kind: 'not-run', reason: 'entry cap'}, counts: null})
+      entries.push({entry, status: {kind: 'not-run', reason: 'entry cap'}, counts: null, frames: analyzed.frames})
       continue
     }
     supported += 1
-    entries.push({entry, status: {kind: 'run'}, counts: null})
+    entries.push({entry, status: {kind: 'run'}, counts: null, frames: analyzed.frames})
   }
   const runnable = entries.filter((result) => result.status.kind === 'run').map((result) => result.entry)
   if (runnable.length === 0) return {kind: 'ran', sites, entries, loadError: null, run: null, verify: null, verifications: [], ms: performance.now() - started}

@@ -1,0 +1,115 @@
+frame-checks-expectation.txt: registered at M0, before any src change for frame-sequence sweeps
+
+Flag under test: FREERANGE_SWEEP=1 FREERANGE_SWEEP_FRAMES=1. For comparisons, FREERANGE_ASSERT_FORMS=1 FREERANGE_STATIC_RELATIONS=1 FREERANGE_IMPORTED_CALLS=contract are also set, with and without FREERANGE_SWEEP_FRAMES.
+Defaults: maxFrames 64, framesPerEntry 1,000,000, sequencesPerEntry 100,000, stepBudget 1,000 per frame, redraws 8, shrinkRuns 2,000.
+
+COUNTING RULES
+- sequence: one counted driver run. It returned, with no discard, over-budget, throw, R1 or wrotePrevious, after any redraws or truncation.
+- frames: the summed events-array lengths of counted sequences.
+- reaching: counted sequences in which the site executed.
+- failing: reaching sequences at recorder level >= 3.
+- flagged file: at least one stdout finding with rule console-assert-sweep or internal, carrying an `input:` line whose function is a frame driver. Static findings are excluded and counted separately.
+- quiet file: no console-assert-sweep warning and no internal error on stdout.
+- shrunk length: events in the printed input.
+- time: `/usr/bin/time -l` real seconds of `bun fr.ts <file>`.
+- child RSS: max of JSON timing.run.peakRssKb and timing.verify.peakRssKb.
+- replay-reproduced: the independent oracle (a fresh bun process that imports the original file and overrides console.assert) fires the printed site's line on the printed input.
+- Probe numbers below come from a standalone probe script. It runs in-process, with narrowing emulated by a text parse, and has no child or verification. Implementation counts must match detection yes/no, and land within 0.5x-2x of the probe's failing counts at the same settings, or the difference is explained in the results.
+
+A. DEV SET (the developer sees both versions): 7 pairs plus 1 refusal fixture. Count fixed.
+Paths:
+- tests/fixtures/frames: camera, editor, chart, chart8, queue, layout, zoom, leak.ts.
+
+Predictions at defaults. Probe baselines are at L=64 and 1,000,000 frames unless marked.
+- D1 camera_bug:
+  - flagged, at camera_bug.ts:45 `screenX <= next.viewportWidth`, shrunk to <= 2 events;
+  - probe: 13,592 failing of 37,119 reaching; shrunk 39 -> 2 in 19 runs.
+- D2 editor_bug:
+  - flagged, at editor_bug.ts:75 `drift <= 0.5`, shrunk to <= 2 events;
+  - probe: 2,359 of 15,782; shrunk 52 -> 2 in 104 runs.
+- D3 chart_bug:
+  - flagged, at chart_bug.ts:68, shrunk to <= 3 events;
+  - probe: 4,156 of 14,291; shrunk 56 -> 3 in 64 runs.
+- D4 chart_bug8: flagged, shrunk to <= 9 events. Probe: 2,362 of 14,481.
+- D5 queue_bug:
+  - flagged, at queue_bug.ts:35, shrunk to <= 3 events (hand-minimal 2);
+  - probe: 15,681 of 35,451; shrunk 7 -> 3 in 20 runs.
+- D6 layout_bug:
+  - flagged, at layout_bug.ts:42 `layout === before`, shrunk to 2 events;
+  - probe: 28,296 of 32,371; shrunk in 9 runs.
+- D7 zoom_bug: NOT flagged at defaults. This is a registered known miss.
+  - probe: 0 failing of 37,147 reaching at L=64; 0 of 91,364 at L=16; 0 of 83,904 at L=6.
+  - With maxFrames 256 and framesPerEntry 4,000,000: flagged, with a detail line naming a non-finite state path (probe: 10,852 of 37,731; shrunk 150 -> 73).
+  - With maxFrames 128: probe 4 of 68,582. The implementation may flag or miss; either result is recorded.
+- All 7 correct versions: quiet at defaults.
+  - probe: 0 failing for each; zoom_ok also 0 of 37,731 at L=256.
+- leak.ts: `frames not run` with the module-binding reason; no counterexample.
+- Today's baseline (FREERANGE_SWEEP=1, frames off):
+  - no dev buggy file gets a counterexample whose input is a driver call reproducing the bug (winner probe: camera, editor and chart missed);
+  - camera_ok and camera_bug both print the type-drawn stepCamera counterexample.
+  - With frames on, that stdout warning is gone from both, and the summary counts it as demoted.
+
+B. LENGTH SENSITIVITY (dev, maxFrames 6 / 16 / 64, everything else at defaults)
+- chart_bug8: L=6 not flagged (probe 0 of 3,907); L=16 flagged (probe 17 of 11,805 at the 100,000-sequence cap); L=64 flagged.
+- camera_bug, editor_bug, chart_bug: flagged at L=6 (probe 4,341 / 368 / 179 failing).
+- queue_bug and layout_bug: flagged at L=6, 16, 64 (probe queue 7,675 / 23,039 / 15,681; layout 25,451 / 58,580 / 28,296).
+- All correct versions: quiet at every L.
+
+C. HELD-OUT SYNTHETIC SET: 12 pairs (24 files). Count fixed.
+Written by a separate agent that does not implement fr. The implementer sees neither version until the prototype commit is frozen, and that hash is recorded here before the run. One pair per domain, fixed now:
+1. virtual list keeps the first visible row in place while rows above load (anchoring)
+2. zoomable map keeps the point under the cursor within 0.5 px (anchoring, tolerance)
+3. drag-reorder list stores the drop index the list actually applied after clamping (stored vs applied)
+4. carousel stores the index the snap settled on, not the one requested (stored vs applied)
+5. timeline scrubber refreshes its cached pixels-per-second on zoom or resize (cache refresh)
+6. text-measurement cache keyed on font size and text length (cache refresh)
+7. physics step with bounded speed and a wall clamp keeps position inside the world (state invariant)
+8. grid selection: a pointer move onto the already selected cell returns the same model object (render identity)
+9. autosave debouncer: pending edits always have a timer scheduled (missing wake)
+10. toast stack: at most 3 visible, and the stored visible count equals what was laid out (stored vs applied)
+11. audio level meter: a silent frame after decay has finished doesn't bump the render counter (render counter)
+12. spreadsheet column resize keeps the cell under the pointer in place while widths to its left change, unless the user scrolled (anchoring)
+
+Authoring rules:
+- the driver shape of spec section 2.1;
+- correct and buggy versions differ in at most 3 lines of app code, never in driver, model or asserts;
+- every bug has a hand-written failing sequence of at most 8 events inside the file's bounds, sealed with oracle output (buggy fires, correct doesn't);
+- each correct version is checked by the author's own random runner (not fr) over 100,000 sequences of up to 64 events, with 0 firings.
+
+Metrics and thresholds:
+- M-detect: flagged buggy files at defaults >= 10 of 12. Also report the count at 10x framesPerEntry.
+- M-quiet: flagged correct files = 0 of 12.
+- M-replay: replay-reproduced printed counterexamples = 100% (every one).
+- M-shrink: median shrunk length <= 2x the sealed hand-minimal length.
+- M-first: sequences before the first failure (JSON first.index), reported per file, no threshold.
+- M-today: files flagged by FREERANGE_SWEEP=1 alone, through an input reproducing the sealed bug, <= 3 of 12.
+- M-static: static error findings on driver files, reported (informational; owner decision).
+- M-time: median <= 3 s and max <= 10 s per file; child RSS <= 400 MB per file.
+
+D. MUTANTS (dev correct versions)
+- Operators: stale input, off-by-one, swapped min/max, dropped clamp, `<` to `<=`.
+- Each operator is applied once at its first applicable site in camera_ok, editor_ok, chart_ok, queue_ok, layout_ok and zoom_ok: at most 30 mutants. The adversarial agent generates them, and the final count is recorded before the run.
+- A mutant is non-equivalent if the oracle finds a firing within 100,000 sequences at L=256, or a hand sequence fires.
+- Thresholds: flagged >= 80% of non-equivalent mutants at defaults; flagged = 0 equivalent mutants.
+
+E. ADVERSARIAL ROUND: N = 30 probes, fixed.
+- Probes: S1-S22 from the spec plus at least 8 free-form probes.
+- Thresholds, all 0:
+  - printed counterexamples not replay-reproduced;
+  - internal errors without a real contradiction (a finite, leading-assert-meeting direct call firing a proven line);
+  - held results on planted bugs with p >= 1% per sequence within 8 events under the printed domain (p estimated by the oracle over 10,000 sequences);
+  - verified driver failures at proven sites reported JSON-only.
+
+F. FLAG AND COST
+- Flag off: findings and JSON byte-identical to explore/combined on every existing test fixture and every file in A and C.
+- Flag on, files without a driver: findings byte-identical to flag off (the adversarial probe files and existing sweep fixtures).
+- Flag on, any file: static findings byte-identical to flag off.
+- `bun test`, pre-existing tests only: median of 3 wall times <= 1.10x the M0 baseline median on the same machine.
+- `bun run check` green.
+
+STOP CONDITIONS (the prototype doesn't advance; results reported as-is)
+- M-quiet > 0 without a documented model false alarm confirmed by the author;
+- any E threshold violated and unresolved;
+- M-replay < 100%;
+- any flag-off difference;
+- M-detect < 10 of 12.
