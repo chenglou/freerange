@@ -580,8 +580,9 @@ function runEvaluation(
 
 function requiredAssertion(run: EvaluationRun, assertionIndex: number): {site: SiteID; text: string} {
   const assertion = run.fn.assertions[assertionIndex]
-  if (assertion == null) {
-    throw new Error(`Unknown assertion ${assertionIndex} in ${run.fn.name}`)
+  // Lowering emits no staticAssert instruction for a not-checked assertion.
+  if (assertion?.kind !== 'lowered') {
+    throw new Error(`Unknown lowered assertion ${assertionIndex} in ${run.fn.name}`)
   }
   return assertion
 }
@@ -607,18 +608,26 @@ function addAssertionObservation(
 }
 
 function classifyAssertions(run: EvaluationRun, proofComplete: boolean): AssertionVerdict[] {
-  return run.fn.assertions.map((assertion, assertionIndex) => {
-    const observation = run.assertionObservations[assertionIndex]
-    const verdict: AssertionVerdict['verdict'] = observation?.sawDefinitelyFalse === true
-      ? 'refuted'
-      : observation?.sawMaybeFalse === true
-        ? 'unproven'
-        : !proofComplete
-          ? 'blocked'
-          : observation?.sawDefinitelyTrue === true
-            ? 'proven'
-            : 'dead'
-    return {site: assertion.site, text: assertion.text, verdict}
+  return run.fn.assertions.map((assertion, assertionIndex): AssertionVerdict => {
+    switch (assertion.kind) {
+      // Lowering rolled the condition back and emitted no instruction, so no path observes the
+      // assertion and the completeness of the function does not apply.
+      case 'notChecked':
+        return {site: assertion.site, text: assertion.text, verdict: 'notChecked', reason: assertion.reason}
+      case 'lowered': {
+        const observation = run.assertionObservations[assertionIndex]
+        const verdict = observation?.sawDefinitelyFalse === true
+          ? 'refuted'
+          : observation?.sawMaybeFalse === true
+            ? 'unproven'
+            : !proofComplete
+              ? 'blocked'
+              : observation?.sawDefinitelyTrue === true
+                ? 'proven'
+                : 'dead'
+        return {site: assertion.site, text: assertion.text, verdict}
+      }
+    }
   })
 }
 
