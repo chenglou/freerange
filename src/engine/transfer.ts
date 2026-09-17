@@ -57,6 +57,7 @@ import {
   type ExpressionContext,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
+import type {JoinFlow} from './join-flow.ts'
 import {completedEvaluation, type FunctionEvaluation, type RequirementFailure, type Stop} from './outcome.ts'
 import {
   addValueFact,
@@ -65,6 +66,7 @@ import {
   hasNonzeroFact,
   hasOrderFact,
   type ExecutionState,
+  type JoinFact,
   type SharedState,
   type ValueFact,
 } from './state.ts'
@@ -89,6 +91,8 @@ export type TransferContext = {
   // accumulated per evaluation and adopted from completed callees the same way.
   boundsAssumptions: BoundsAssumption[]
   evaluateFunction: EvaluateFunction
+  // Non-null exactly in static-relations mode (FREERANGE_STATIC_RELATIONS=1).
+  staticRelations: StaticRelations | null
 }
 
 // TypeScript's narrowing is an open-ended set of rules; the analyzer models the common
@@ -519,7 +523,7 @@ function evaluateInstructionKinded(
       return value({kind: 'boolean', canBeTrue: operand.canBeFalse, canBeFalse: operand.canBeTrue})
     }
     case 'staticAssert': {
-      const observation = staticConditionObservation(instruction.value, state, context)
+      const observation = staticConditionObservation(instruction.value, state, context, true)
       return {kind: 'assertion', assertion: instruction.assertion, observation, value: {kind: 'void'}}
     }
     case 'staticRequire': {
@@ -528,7 +532,9 @@ function evaluateInstructionKinded(
       if (check?.kind !== 'compare' && check?.kind !== 'numberCheck') {
         return failedRequirement({kind: failureKind, site: instruction.site, status: 'unproven'})
       }
-      const condition = staticConditionObservation(instruction.value, state, context)
+      // Never relational: a requirement discharged by a static-relations rule would change
+      // requires lines at call sites, outside what the assertion verdicts can check.
+      const condition = staticConditionObservation(instruction.value, state, context, false)
       if (!condition.canBeTrue) {
         return failedRequirement({kind: failureKind, site: instruction.site, status: 'refuted'})
       }
@@ -640,6 +646,21 @@ function evaluateInstructionKinded(
       }
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
+      // Static relations, return relations: the callee's evaluation with these arguments proved
+      // each relation on every return path, so it holds between this call's result and the
+      // argument on every execution that completes the call. Both values are computed before
+      // any later instruction reads the fact, and loop headers and joins intersect facts.
+      if (context.staticRelations != null && completed.returnRelations.length > 0) {
+        const facts = state.joinFacts.slice()
+        for (const relation of completed.returnRelations) {
+          if (relation.kind === 'nonnegative') {
+            facts.push({kind: 'nonnegative', parameter: instruction.result})
+          } else {
+            facts.push({kind: relation.kind, parameter: instruction.result, bound: instruction.arguments[relation.parameter]!})
+          }
+        }
+        state.joinFacts = cappedJoinFacts(facts, context.staticRelations)
+      }
       return passthroughValue(completed.returnValue)
     }
     case 'binary': {
@@ -1511,10 +1532,13 @@ function evaluateSameOperandBinary(
 // rules may revisit the same pair through several min/max operands, so those pairs remain
 // memoized before their producers are expanded.
 
+// `relational` is true only for interior console.assert observations. Declared requirements
+// use this same observation when checking a call, and keep origin/main's rules.
 function staticConditionObservation(
   valueID: ValueID,
   state: ExecutionState,
   context: TransferContext,
+  relational: boolean,
 ): AbstractBoolean {
   const held = requiredValue(state, valueID)
   // Lowering accepts boolean conditions. If an erased type assertion hid the runtime
@@ -1523,14 +1547,14 @@ function staticConditionObservation(
   if (!held.canBeTrue || !held.canBeFalse) return held
   const producer = context.expressionContext.instructionByValue[valueID]
   if (producer?.kind === 'not') {
-    const operand = staticConditionObservation(producer.value, state, context)
+    const operand = staticConditionObservation(producer.value, state, context, relational)
     return {kind: 'boolean', canBeTrue: operand.canBeFalse, canBeFalse: operand.canBeTrue}
   }
   if (producer?.kind !== 'compare') return held
   const left = numberWithFacts(state, producer.left, context.expressionContext)
   const right = numberWithFacts(state, producer.right, context.expressionContext)
   if (left == null || right == null) return held
-  return comparisonLocalProof(left, right, producer, state, context) ?? held
+  return comparisonLocalProof(left, right, producer, state, context, relational) ?? held
 }
 
 function comparisonLocalProof(
@@ -1539,10 +1563,104 @@ function comparisonLocalProof(
   instruction: Extract<InstructionIR, {kind: 'compare'}>,
   state: ExecutionState,
   context: TransferContext,
+  relational: boolean,
 ): AbstractBoolean | null {
   if (left.mayBeNaN || right.mayBeNaN) return null
-  const proof = createComparisonProof(state, context.expressionContext)
+  // origin/main's answer comes first and on its own memo, so the relational rules can only
+  // add answers: a relational sub-query can never leave a pair memoized false that origin/main
+  // would have proved.
+  const answer = comparisonProofAnswer(createComparisonProof(state, context.expressionContext, null, []), instruction)
+  if (answer != null || !relational || context.staticRelations == null) return answer
+  // The relational rules only add proofs, never refutations. An assertion's observations are
+  // aggregated over every visit of its block, and a definitely false observation is kept for good.
+  // Join facts are not monotone: a loop header's first arrival proposes facts that only the entry
+  // edge satisfies, and a block visited before the back edge drops them sees an optimistic, possibly
+  // infeasible state. A proof must hold on the final visit too, which sees the fixed point; a
+  // refutation from an early visit would stay. Fuzz-105 f57 was refuted this way while every
+  // in-domain run reaching it passed. Refutations therefore come only from origin/main's rules.
+  const relationalAnswer = comparisonProofAnswer(
+    createComparisonProof(state, context.expressionContext, context.staticRelations, [instruction.left, instruction.right]),
+    instruction,
+  )
+  if (relationalAnswer != null && !relationalAnswer.canBeFalse) return relationalAnswer
+  const splitAnswer = comparisonProofAnswer(
+    createArmSplitProof(state, context.expressionContext, extensionRelations(context.staticRelations), 0),
+    instruction,
+  )
+  return splitAnswer != null && !splitAnswer.canBeFalse ? splitAnswer : null
+}
 
+// Arm splitting depth: nested splits allowed below the assertion's own compared values.
+const maximumArmSplitDepth = 2
+
+// Static relations, arm splitting at an interior assertion. When a compared value is a
+// parameter p of a block J that lies on no cycle, the comparison is proved separately for the
+// argument a_k of every static edge e_k into J, each with a fresh relational proof rooted at
+// a_k and the other compared value. Why that is sound for an execution that reaches the
+// assertion:
+// - p is assigned only on entry to J, and J lies on no cycle, so p holds the argument of the
+//   one edge the execution took into J.
+// - That argument a_k was computed before the edge. Recomputing it after J would need a path
+//   from J back to a_k's block, which would put J on a cycle; so a_k still holds that value.
+// - The proof for e_k reads only a_k's producer graph, the other value's producer graph and the
+//   facts in the state, as every relational proof does. All of them were computed on this
+//   execution, and a value's interval in the joined state covers every execution that computed
+//   it. Nothing from another arm is read.
+// The caller passes the extension budget, so every split proof and its rules charge it.
+// A split argument may itself be such a block parameter; the nesting stops at
+// maximumArmSplitDepth, failing closed, and is counted. The edges one split enumerates are the
+// block's static incoming edges, and each charges the evaluation's work budget. Lowered code
+// gives a join outside every cycle 2 incoming edges.
+function createArmSplitProof(
+  state: ExecutionState,
+  context: ExpressionContext,
+  relations: StaticRelations,
+  depth: number,
+): ComparisonProof {
+  const flow = relations.joinFlow
+  // The argument lists of the edges into a compared value's block, when it is a parameter of a
+  // block on no cycle.
+  const edgeArguments = (raw: ValueID): ValueID[] | null => {
+    const value = resolveStoredValue(raw, context)
+    const index = flow.blockParameterIndex[value]
+    const block = flow.blockOfValue[value]
+    if (index == null || block == null || flow.cyclic[block] === true) return null
+    return flow.incomingEdges[block]!.map(argumentList => argumentList[index]!)
+  }
+  const split = (
+    left: ValueID,
+    right: ValueID,
+    prove: (proof: ComparisonProof, left: ValueID, right: ValueID) => boolean,
+  ): boolean => {
+    for (const side of ['left', 'right'] as const) {
+      const armArguments = edgeArguments(side === 'left' ? left : right)
+      if (armArguments == null || armArguments.length === 0) continue
+      if (depth >= maximumArmSplitDepth) {
+        relations.counters.armSplit += 1
+        continue
+      }
+      if (!chargeRelationalWork(relations, armArguments.length)) return false
+      const every = armArguments.every(argument => {
+        const armLeft = side === 'left' ? argument : left
+        const armRight = side === 'left' ? right : argument
+        return prove(createComparisonProof(state, context, relations, [armLeft, armRight]), armLeft, armRight)
+          || prove(createArmSplitProof(state, context, relations, depth + 1), armLeft, armRight)
+      })
+      if (every) return true
+    }
+    return false
+  }
+  return {
+    atMost: (left, right) => split(left, right, (proof, armLeft, armRight) => proof.atMost(armLeft, armRight)),
+    strictlyBelow: (left, right) => split(left, right, (proof, armLeft, armRight) => proof.strictlyBelow(armLeft, armRight)),
+    nonnegative: () => false,
+  }
+}
+
+function comparisonProofAnswer(
+  proof: ComparisonProof,
+  instruction: Extract<InstructionIR, {kind: 'compare'}>,
+): AbstractBoolean | null {
   switch (instruction.operator) {
     case 'lessThan': {
       if (proof.strictlyBelow(instruction.left, instruction.right)) return exactBoolean(true)
@@ -1575,14 +1693,326 @@ function comparisonLocalProof(
   }
 }
 
+type ComparisonProof = {
+  atMost: (left: ValueID, right: ValueID) => boolean
+  strictlyBelow: (left: ValueID, right: ValueID) => boolean
+  nonnegative: (value: ValueID) => boolean
+}
+
+// The static-relations prototype (FREERANGE_STATIC_RELATIONS=1), built once per evaluation.
+// Its rules run only in interior console.assert proofs and in join-fact verification;
+// declared requirements, requirement inference and ordinary analysis keep origin/main's
+// rules. Every rule is a theorem about IEEE-754 doubles under its own gate: no cancellation,
+// no reassociation, and nothing moves a term across a comparison.
+export type StaticRelations = {
+  numbering: ValueNumbering
+  joinFlow: JoinFlow
+  counters: StaticRelationCounters
+  // The evaluation's total relational work budget and what is left of it. Every unit of
+  // relational work charges it: each relational proof step (see createComparisonProof), each
+  // fact, value and node the order closure reads, each join-fact verification and each value
+  // a join considers as a bound. Once a charge fails, every later one fails too, so the
+  // remaining proofs answer "not proven" and joins propose nothing and drop what they cannot
+  // re-verify.
+  budget: number
+  remainingWork: number
+  workExhausted: boolean
+  // The function's values by value number, ascending, built on the first join proposal.
+  functionValuesByNumber: Map<number, ValueID[]> | null
+  // The second exploration's rules (integer linear forms, arm splitting, loop header join
+  // facts) draw from a separate budget of the same size, so they can never exhaust the budget
+  // the first prototype's rules use. Null on the extension object itself.
+  extension: StaticRelations | null
+}
+
+// Cap-hit counters for one analysis, across all its evaluations, printed under
+// FREERANGE_STATIC_RELATIONS_DEBUG=1. Each cap fails closed: hitting it drops a fact or
+// answers "not proven".
+export type StaticRelationCounters = {
+  closureBudget: number
+  factCap: number
+  joinCandidates: number
+  joinFacts: number
+  evaluationWork: number
+  // A linear form that would exceed maximumLinearLeaves or maximumLinearMagnitude; the value
+  // stays one leaf.
+  linearForm: number
+  // A linear substitution search that reached maximumLinearDepth.
+  linearDepth: number
+  // A relational proof whose linear visit budget ran out.
+  linearBudget: number
+  // An arm split refused at maximumArmSplitDepth.
+  armSplit: number
+  // A callee evaluation whose return relations were not computed past maximumReturnBlocks, or
+  // parameters past maximumReturnParameters.
+  returnRelations: number
+  // A loop header whose join facts were cleared after maximumJoinFactOnlyUpdates re-runs that
+  // only dropped join facts.
+  loopJoinFacts: number
+  // An evaluation whose extension budget ran out.
+  extensionWork: number
+  // Not a cap: the most relational work one evaluation used, per instruction of its function.
+  peakWorkPerInstruction: number
+  // Not a cap: the same for the extension budget.
+  peakExtensionWorkPerInstruction: number
+}
+
+export function createStaticRelationCounters(): StaticRelationCounters {
+  return {
+    closureBudget: 0,
+    factCap: 0,
+    joinCandidates: 0,
+    joinFacts: 0,
+    evaluationWork: 0,
+    linearForm: 0,
+    linearDepth: 0,
+    linearBudget: 0,
+    armSplit: 0,
+    returnRelations: 0,
+    loopJoinFacts: 0,
+    extensionWork: 0,
+    peakWorkPerInstruction: 0,
+    peakExtensionWorkPerInstruction: 0,
+  }
+}
+
+// Join facts kept per state, carried and new together. Without it, facts about every earlier
+// join ride along through a run of sequential joins, and each proof and merge reads them all.
+// Past the cap the oldest facts are dropped (failing closed) and counted, so the newest stay.
+const maximumJoinFacts = 64
+
+export function cappedJoinFacts(facts: JoinFact[], relations: StaticRelations): JoinFact[] {
+  if (facts.length <= maximumJoinFacts) return facts
+  relations.counters.joinFacts += 1
+  return facts.slice(facts.length - maximumJoinFacts)
+}
+
+// An evaluation's relational work budget per instruction of its function, so total
+// relational work is linear in the function's size. Generated functions with hundreds of
+// sequential joins or a ternary nested 400 deep used to take 90 s to more than 300 s, and stop
+// at this budget within 1.4 s.
+const maximumRelationalWorkPerInstruction = 1024
+
+export function createStaticRelations(
+  context: ExpressionContext,
+  joinFlow: JoinFlow,
+  counters: StaticRelationCounters,
+): StaticRelations {
+  const budget = maximumRelationalWorkPerInstruction * Math.max(1, context.instructionCount)
+  const numbering = createValueNumbering(context)
+  const extension: StaticRelations = {
+    numbering,
+    joinFlow,
+    counters,
+    budget,
+    remainingWork: budget,
+    workExhausted: false,
+    functionValuesByNumber: null,
+    extension: null,
+  }
+  return {
+    numbering,
+    joinFlow,
+    counters,
+    budget,
+    remainingWork: budget,
+    workExhausted: false,
+    functionValuesByNumber: null,
+    extension,
+  }
+}
+
+// The budget the second exploration's rules charge: the extension object, or the object itself
+// when it is the extension.
+export function extensionRelations(relations: StaticRelations): StaticRelations {
+  return relations.extension ?? relations
+}
+
+export function chargeRelationalWork(relations: StaticRelations, cost: number): boolean {
+  if (!relations.workExhausted && relations.remainingWork >= cost) {
+    relations.remainingWork -= cost
+    return true
+  }
+  if (!relations.workExhausted) {
+    relations.workExhausted = true
+    if (relations.extension == null) relations.counters.extensionWork += 1
+    else relations.counters.evaluationWork += 1
+  }
+  return false
+}
+
+// Value numbering of pure numeric formulas. Two IR values get the same number when they
+// resolve to the same stored value, have the same identity (a parameter, or a property or
+// element read of the same object), or are the same pure instruction over operands with the
+// same numbers: constants with the same bits (so 0 and -0 differ), + - * / %, and
+// Math.min/max/floor/ceil/round/trunc/sqrt/abs. A pure double operation on the same operand
+// values returns the same bits, so equal numbers name equal runtime values whenever both
+// values were computed on the current path, which is all a comparison proof ever inspects.
+// Module reads, platform values, calls and block parameters are leaves keyed by their own
+// IR value, exactly like canonicalValueIdentity, so two reads of a module binding never merge.
+export type ValueNumbering = {
+  ofValue: (value: ValueID) => number
+  ofIdentity: (identity: ValueIdentity) => number
+  // The number any computed fl(left - right) would get.
+  ofDifference: (left: ValueID, right: ValueID) => number
+}
+
+export function createValueNumbering(context: ExpressionContext): ValueNumbering {
+  const numberByKey = new Map<string, number>()
+  const numberByValue: Array<number | undefined> = []
+  const ownerIndexes = new Map<ValueIdentityOwner, number>()
+  const intern = (key: string): number => {
+    const existing = numberByKey.get(key)
+    if (existing != null) return existing
+    const created = numberByKey.size
+    numberByKey.set(key, created)
+    return created
+  }
+  const leaf = (owner: ValueIdentityOwner, value: ValueID): number => {
+    let ownerIndex = ownerIndexes.get(owner)
+    if (ownerIndex == null) {
+      ownerIndex = ownerIndexes.size
+      ownerIndexes.set(owner, ownerIndex)
+    }
+    return intern(`leaf ${ownerIndex} ${value}`)
+  }
+  const ofIdentity = (identity: ValueIdentity): number => {
+    switch (identity.kind) {
+      case 'local':
+        return identity.owner === context.identityOwner
+          ? ofValue(identity.value)
+          : leaf(identity.owner, identity.value)
+      case 'property': return intern(`property ${ofIdentity(identity.object)} ${identity.property}`)
+      case 'arrayIndex': return intern(`element ${ofIdentity(identity.array)} ${ofIdentity(identity.index)}`)
+    }
+  }
+  const numberOfStoredValue = (value: ValueID): number => {
+    if (context.parameterIndexByValue[value] != null) {
+      const identity = canonicalValueIdentity(value, context)
+      return identity.kind === 'local' && identity.owner === context.identityOwner && identity.value === value
+        ? leaf(identity.owner, value)
+        : ofIdentity(identity)
+    }
+    const producer = context.instructionByValue[value]
+    switch (producer?.kind) {
+      case 'constant': return intern(`constant ${Object.is(producer.value, -0) ? '-0' : String(producer.value)}`)
+      case 'binary': return intern(`${producer.operator} ${ofValue(producer.left)} ${ofValue(producer.right)}`)
+      case 'minimum':
+      case 'maximum': return intern(`${producer.kind} ${producer.values.map(ofValue).join(' ')}`)
+      case 'floor': return intern(`floor ${ofValue(producer.value)}`)
+      case 'absolute': return intern(`abs ${ofValue(producer.value)}`)
+      case 'mathUnary': return intern(`${producer.operator} ${ofValue(producer.value)}`)
+      case 'property':
+      case 'arrayLength':
+      case 'stringLength':
+      case 'arrayIndex': return ofIdentity(canonicalValueIdentity(value, context))
+      default: return leaf(context.identityOwner, value)
+    }
+  }
+  const ofValue = (raw: ValueID): number => {
+    const value = resolveStoredValue(raw, context)
+    const cached = numberByValue[value]
+    if (cached != null) return cached
+    const number = numberOfStoredValue(value)
+    numberByValue[value] = number
+    return number
+  }
+  const ofDifference = (left: ValueID, right: ValueID): number =>
+    intern(`subtract ${ofValue(left)} ${ofValue(right)}`)
+  return {ofValue, ofIdentity, ofDifference}
+}
+
+// Join-fact verification on one CFG edge (static-relations mode): origin/main's proof first,
+// then the relational proof, each on its own memo. Both values must be non-NaN on the edge.
+export function relationalAtMost(
+  state: ExecutionState,
+  context: ExpressionContext,
+  relations: StaticRelations,
+  left: ValueID,
+  right: ValueID,
+): boolean {
+  if (!chargeRelationalWork(relations, 1)) return false
+  const leftNumber = numberWithFacts(state, resolveStoredValue(left, context), context)
+  const rightNumber = numberWithFacts(state, resolveStoredValue(right, context), context)
+  if (leftNumber == null || rightNumber == null || leftNumber.mayBeNaN || rightNumber.mayBeNaN) return false
+  return createComparisonProof(state, context, null, []).atMost(left, right)
+    || createComparisonProof(state, context, relations, [left, right]).atMost(left, right)
+}
+
+export function relationalNonnegative(
+  state: ExecutionState,
+  context: ExpressionContext,
+  relations: StaticRelations,
+  value: ValueID,
+): boolean {
+  return chargeRelationalWork(relations, 1)
+    && createComparisonProof(state, context, relations, [value]).nonnegative(value)
+}
+
+type ClosureGraph = {
+  edges: Map<number, Array<{to: number; strict: boolean}>>
+  // The closure's values with a non-NaN number, by value number.
+  valuesByNumber: Map<number, ValueID[]>
+}
+
+// A value is integer-safe when it provably holds an integer, cannot be NaN, and both interval
+// endpoints have magnitude at most Number.MAX_SAFE_INTEGER (2^53 - 1). Every integer in that
+// band is representable, and a sum or difference of two integer-safe values whose result is
+// also integer-safe was computed exactly: an exact result of magnitude 2^53 or more rounds to
+// a double of magnitude at least 2^53, outside the gated interval.
+function integerSafe(value: AbstractNumber | null): value is AbstractNumber {
+  return value != null && value.integer && !value.mayBeNaN
+    && Math.abs(value.lower) <= Number.MAX_SAFE_INTEGER
+    && Math.abs(value.upper) <= Number.MAX_SAFE_INTEGER
+}
+
+// An exact integer linear combination of leaf values: sum of coefficient * leaf, plus constant.
+// Terms are keyed by value number, and each keeps one IR value for its interval and producer.
+type LinearForm = {terms: Map<number, {value: ValueID; coefficient: bigint}>; constant: bigint}
+
+// Leaves one linear form may hold.
+const maximumLinearLeaves = 8
+// Largest coefficient or constant magnitude in a linear form.
+const maximumLinearMagnitude = 1n << 60n
+// Substitution steps one integer order proof may nest.
+const maximumLinearDepth = 6
+
+function addLinearForms(left: LinearForm, right: LinearForm, scale: bigint): LinearForm {
+  const terms = new Map(left.terms)
+  for (const [number, term] of right.terms) {
+    const existing = terms.get(number)
+    const coefficient = (existing?.coefficient ?? 0n) + scale * term.coefficient
+    if (coefficient === 0n) terms.delete(number)
+    else terms.set(number, {value: existing?.value ?? term.value, coefficient})
+  }
+  return {terms, constant: left.constant + scale * right.constant}
+}
+
+function withinLinearCaps(form: LinearForm): boolean {
+  const magnitude = (value: bigint): bigint => value < 0n ? -value : value
+  if (form.terms.size > maximumLinearLeaves || magnitude(form.constant) > maximumLinearMagnitude) return false
+  for (const term of form.terms.values()) {
+    if (magnitude(term.coefficient) > maximumLinearMagnitude) return false
+  }
+  return true
+}
+
+function linearFormKey(form: LinearForm): string {
+  const terms = [...form.terms].sort((left, right) => left[0] - right[0]).map(([number, term]) => `${number}:${term.coefficient}`)
+  return `${terms.join(' ')} + ${form.constant}`
+}
+
+// `roots` are the values the relational proof compares. The closure reads intervals and
+// producer edges only for values computed on every execution reaching the proof: the roots'
+// producer graphs, and the values named by facts in the state, which joins intersect. A value
+// computed on only one arm stays in the joined state for executions that took the other arm,
+// so its interval describes nothing about those executions.
 function createComparisonProof(
   state: ExecutionState,
   context: ExpressionContext,
-): {
-  same: (left: ValueID, right: ValueID) => boolean
-  atMost: (left: ValueID, right: ValueID) => boolean
-  strictlyBelow: (left: ValueID, right: ValueID) => boolean
-} {
+  relations: StaticRelations | null,
+  roots: ValueID[],
+): ComparisonProof {
   const atMostMemo = new Map<string, boolean>()
 
   const heldNumber = (value: ValueID): AbstractNumber | null => {
@@ -1590,11 +2020,411 @@ function createComparisonProof(
   }
 
   const same = (left: ValueID, right: ValueID): boolean => sameRuntimeValue(left, right, context)
+    || (relations != null && relations.numbering.ofValue(left) === relations.numbering.ofValue(right))
+
+  const positive = (value: ValueID): boolean => {
+    const held = heldNumber(value)
+    return held != null && !held.mayBeNaN && held.lower > 0
+  }
+
+  const atLeastOne = (value: ValueID): boolean => {
+    const held = heldNumber(value)
+    return held != null && !held.mayBeNaN && held.lower >= 1
+  }
 
   const nonnegative = (value: ValueID): boolean => {
     const held = heldNumber(value)
-    return held != null && held.lower >= 0 && !held.mayBeNaN
+    if (held == null || held.mayBeNaN) return false
+    if (held.lower >= 0) return true
+    return relational != null && relational.nonnegativeThroughOrder(resolveStoredValue(value, context))
   }
+
+  // The rules that need the evaluation's static relations; null with the mode off. The
+  // factory takes the narrowed relations once, so no rule inside re-checks for null.
+  const createRelationalRules = (relationState: StaticRelations) => {
+    const numbering = relationState.numbering
+
+    // One visit budget for this proof, 4x the function's instruction count, drawn from the
+    // evaluation's work budget. Each relational expansion past the memo, each sign rule and
+    // each closure node charges both; exhaustion of either answers false.
+    let remainingVisits = 4 * context.instructionCount
+    let budgetExhausted = false
+    const charge = (cost: number): boolean => {
+      if (budgetExhausted || remainingVisits < cost) {
+        if (!budgetExhausted) {
+          budgetExhausted = true
+          relationState.counters.closureBudget += 1
+        }
+        return false
+      }
+      if (!chargeRelationalWork(relationState, cost)) return false
+      remainingVisits -= cost
+      return true
+    }
+    // Work the visit budget does not count, drawn only from the evaluation's budget: the
+    // closure graph's facts, values and edges, and scans of the join facts. The visit budget
+    // keeps counting proof steps only, so a proof's reach does not depend on how many facts
+    // the state carries.
+    const chargeWork = (cost: number): boolean => chargeRelationalWork(relationState, cost)
+
+    // Sign through order. The value itself is non-NaN (checked by nonnegative), so every
+    // operand below is non-NaN too.
+    // - fl(a - b) has the sign of the exact difference a - b, gradual underflow included, so
+    //   b <= a proves a - b >= 0.
+    // - A quotient or product with a factor whose interval is positive keeps the sign of the
+    //   other operand; a sum of two nonnegative values is nonnegative.
+    // - A block parameter whose join fact says every incoming argument was nonnegative.
+    const nonnegativeThroughOrder = (value: ValueID): boolean => {
+      if (!charge(1) || !chargeWork(state.joinFacts.length)) return false
+      if (state.joinFacts.some(fact => fact.kind === 'nonnegative' && same(fact.parameter, value))) return true
+      const producer = context.instructionByValue[value]
+      if (producer?.kind !== 'binary') return false
+      switch (producer.operator) {
+        case 'subtract': return atMost(producer.right, producer.left)
+        case 'divide': return positive(producer.right) && nonnegative(producer.left)
+        case 'multiply':
+          return (positive(producer.right) && nonnegative(producer.left))
+            || (positive(producer.left) && nonnegative(producer.right))
+        case 'add': return nonnegative(producer.left) && nonnegative(producer.right)
+        case 'remainder': return false
+      }
+    }
+
+    // Bounded transitive order closure: a breadth-first search from the left value over
+    // three edge kinds, tracking strictness.
+    // - Recorded order facts and join facts.
+    // - Defining operands: min(xs) <= x_i and x_i <= max(xs).
+    // - Nonnegative offsets: x - c <= x and x <= x + c, for c >= 0 by interval.
+    // Nodes are value numbers, so a fact about one spelling of a formula applies to another.
+    // `<=` and `<` form a total preorder on non-NaN doubles, so a chain proves its end,
+    // strictly when any edge is strict. NaN: facts are recorded only between non-NaN values;
+    // an edge toward an operand (min(xs) to x_i, x - c to x) starts from a non-NaN result, and
+    // NaN propagates through min, max, + and -; an edge toward a result (x_i to max(xs), x to
+    // x + c) exists only when the result's interval excludes NaN. The search ends at the
+    // target number, or at a node whose interval lies below the target's.
+    // Built on first use; null when the budget ran out while building it.
+    let closureGraph: ClosureGraph | null | undefined
+    const buildClosureGraph = (): ClosureGraph | null => {
+      // Order facts read per state: max(64, 2x the function's instruction count). Later facts
+      // are ignored by the closure, and so are their values, which only loses proofs.
+      const factLimit = Math.max(64, 2 * context.instructionCount)
+      const orderFacts: Array<Extract<ValueFact, {kind: 'order'}>> = []
+      for (const fact of state.valueFacts) {
+        if (fact.kind !== 'order') continue
+        if (orderFacts.length === factLimit) {
+          relationState.counters.factCap += 1
+          break
+        }
+        orderFacts.push(fact)
+      }
+      const orderJoinFacts: Array<Exclude<JoinFact, {kind: 'nonnegative'}>> = []
+      for (const fact of state.joinFacts) {
+        if (fact.kind === 'nonnegative') continue
+        if (orderFacts.length + orderJoinFacts.length === factLimit) {
+          relationState.counters.factCap += 1
+          break
+        }
+        orderJoinFacts.push(fact)
+      }
+      if (!chargeWork(state.valueFacts.length + state.joinFacts.length)) return null
+      const edges: ClosureGraph['edges'] = new Map()
+      const valuesByNumber: ClosureGraph['valuesByNumber'] = new Map()
+      const addEdge = (from: number, to: number, strict: boolean): void => {
+        if (from === to && !strict) return
+        const list = edges.get(from)
+        if (list == null) edges.set(from, [{to, strict}])
+        else list.push({to, strict})
+      }
+      for (const fact of orderFacts) addEdge(numbering.ofIdentity(fact.left), numbering.ofIdentity(fact.right), fact.strict)
+      for (const fact of orderJoinFacts) {
+        if (fact.kind === 'atMost') addEdge(numbering.ofValue(fact.parameter), numbering.ofValue(fact.bound), false)
+        else addEdge(numbering.ofValue(fact.bound), numbering.ofValue(fact.parameter), false)
+      }
+      const nonnegativeInterval = (value: ValueID): boolean => {
+        const held = heldNumber(value)
+        return held != null && !held.mayBeNaN && held.lower >= 0
+      }
+      const computedValues: ValueID[] = []
+      const visited: boolean[] = []
+      // False when the budget runs out.
+      const visit = (raw: ValueID): boolean => {
+        const value = resolveStoredValue(raw, context)
+        if (visited[value] === true) return true
+        if (!chargeWork(1)) return false
+        visited[value] = true
+        computedValues.push(value)
+        const producer = context.instructionByValue[value]
+        switch (producer?.kind) {
+          case 'binary': return visit(producer.left) && visit(producer.right)
+          case 'minimum':
+          case 'maximum': return producer.values.every(operand => visit(operand))
+          case 'floor':
+          case 'absolute':
+          case 'mathUnary': return visit(producer.value)
+          default: return true
+        }
+      }
+      const closureValues: ValueID[] = [...roots]
+      for (const fact of orderFacts) {
+        for (const side of [fact.left, fact.right]) {
+          if (side.kind === 'local' && side.owner === context.identityOwner) closureValues.push(side.value)
+        }
+      }
+      for (const fact of state.joinFacts) {
+        if (fact.kind === 'nonnegative') closureValues.push(fact.parameter)
+      }
+      for (const fact of orderJoinFacts) closureValues.push(fact.parameter, fact.bound)
+      if (!closureValues.every(value => visit(value))) return null
+      for (const value of computedValues) {
+        if (state.values[value]?.kind !== 'number') continue
+        const held = heldNumber(value)
+        if (held == null || held.mayBeNaN) continue
+        const number = numbering.ofValue(value)
+        const listed = valuesByNumber.get(number)
+        if (listed == null) valuesByNumber.set(number, [value])
+        else listed.push(value)
+        const producer = context.instructionByValue[value]
+        if (producer?.kind === 'minimum') {
+          if (!chargeWork(producer.values.length)) return null
+          for (const operand of producer.values) addEdge(number, numbering.ofValue(operand), false)
+        } else if (producer?.kind === 'maximum') {
+          if (!chargeWork(producer.values.length)) return null
+          for (const operand of producer.values) addEdge(numbering.ofValue(operand), number, false)
+        } else if (producer?.kind === 'binary' && producer.operator === 'subtract') {
+          if (nonnegativeInterval(producer.right)) addEdge(number, numbering.ofValue(producer.left), false)
+        } else if (producer?.kind === 'binary' && producer.operator === 'add') {
+          if (nonnegativeInterval(producer.right)) addEdge(numbering.ofValue(producer.left), number, false)
+          if (nonnegativeInterval(producer.left)) addEdge(numbering.ofValue(producer.right), number, false)
+        }
+      }
+      return {edges, valuesByNumber}
+    }
+
+    // Breadth-first search from `left` until `accepts` holds for a node reached with the
+    // given strictness.
+    const closureSearch = (
+      left: ValueID,
+      accepts: (node: number, graph: ClosureGraph, pathStrict: boolean) => boolean,
+    ): boolean => {
+      if (closureGraph === undefined) closureGraph = buildClosureGraph()
+      const graph = closureGraph
+      if (graph == null) return false
+      const seen = new Set<number>()
+      const queue: Array<{node: number; strict: boolean}> = [{node: numbering.ofValue(left), strict: false}]
+      for (let index = 0; index < queue.length; index++) {
+        const {node, strict: pathStrict} = queue[index]!
+        const edges = graph.edges.get(node) ?? []
+        if (!charge(1 + edges.length)) return false
+        if (accepts(node, graph, pathStrict)) return true
+        for (const edge of edges) {
+          const nextStrict = pathStrict || edge.strict
+          const seenKey = edge.to * 2 + (nextStrict ? 1 : 0)
+          if (seen.has(seenKey)) continue
+          seen.add(seenKey)
+          queue.push({node: edge.to, strict: nextStrict})
+        }
+      }
+      return false
+    }
+
+    const closureOrder = (left: ValueID, right: ValueID, strict: boolean): boolean => {
+      const target = numbering.ofValue(right)
+      const targetNumber = heldNumber(right)
+      return closureSearch(left, (node, graph, pathStrict) => {
+        if (node === target && (pathStrict || !strict)) return true
+        if (targetNumber == null || targetNumber.mayBeNaN) return false
+        const listed = graph.valuesByNumber.get(node) ?? []
+        if (!chargeWork(listed.length)) return false
+        for (const value of listed) {
+          const held = heldNumber(value)
+          if (held == null) continue
+          if (strict && !pathStrict ? held.upper < targetNumber.lower : held.upper <= targetNumber.lower) return true
+        }
+        return false
+      })
+    }
+
+    // Whether the closure from `addend` reaches a computed, integer-safe value numbered like
+    // fl(bound - offset).
+    const reachesIntegerSafeDifference = (addend: ValueID, bound: ValueID, offset: ValueID): boolean => {
+      const witness = numbering.ofDifference(bound, offset)
+      return closureSearch(addend, (node, graph) => {
+        if (node !== witness) return false
+        const listed = graph.valuesByNumber.get(node) ?? []
+        return chargeWork(listed.length) && listed.some(value => integerSafe(heldNumber(value)))
+      })
+    }
+
+    // Exact integer linear forms. Under the integer-safe gate every value in a form was computed
+    // exactly: an integer-safe sum, difference or product of integer-safe operands is exact,
+    // because an exact integer result of magnitude above 2^53 - 1 rounds to magnitude at least
+    // 2^53, outside the gated interval. So an integer-safe value equals the exact integer linear
+    // combination of its leaves, and `left <= right` is the statement that the integer form
+    // right - left is nonnegative. Leaves are values with no such producer, keyed by value
+    // number; every leaf is integer-safe. Coefficients use BigInt, so the form's own arithmetic
+    // is exact. A form past maximumLinearLeaves or maximumLinearMagnitude keeps the value as a
+    // leaf (counted), which is always exact.
+    // The linear rules have their own visit budget, 4x the function's instruction count per proof
+    // and drawn from the evaluation's extension budget, so the structural rules that run first
+    // cannot starve them, and they cannot starve anything else. Exhaustion answers false and is
+    // counted.
+    let remainingLinearVisits = 4 * context.instructionCount
+    let linearBudgetExhausted = false
+    const chargeLinear = (cost: number): boolean => {
+      if (linearBudgetExhausted || remainingLinearVisits < cost) {
+        if (!linearBudgetExhausted) {
+          linearBudgetExhausted = true
+          relationState.counters.linearBudget += 1
+        }
+        return false
+      }
+      if (!chargeRelationalWork(extensionRelations(relationState), cost)) return false
+      remainingLinearVisits -= cost
+      return true
+    }
+    const linearMemo = new Map<ValueID, LinearForm | null>()
+    const linearForm = (raw: ValueID): LinearForm | null => {
+      const value = resolveStoredValue(raw, context)
+      const cached = linearMemo.get(value)
+      if (cached !== undefined) return cached
+      const held = heldNumber(value)
+      let form: LinearForm | null = null
+      if (integerSafe(held) && chargeLinear(1)) {
+        const exact = held.lower === held.upper && Number.isInteger(held.lower)
+        form = exact
+          ? {terms: new Map(), constant: BigInt(held.lower)}
+          : {terms: new Map([[numbering.ofValue(value), {value, coefficient: 1n}]]), constant: 0n}
+        const producer = context.instructionByValue[value]
+        if (!exact && producer?.kind === 'binary'
+          && (producer.operator === 'add' || producer.operator === 'subtract' || producer.operator === 'multiply')) {
+          const left = linearForm(producer.left)
+          const right = linearForm(producer.right)
+          let combined: LinearForm | null = null
+          if (left != null && right != null) {
+            if (producer.operator === 'add') combined = addLinearForms(left, right, 1n)
+            else if (producer.operator === 'subtract') combined = addLinearForms(left, right, -1n)
+            else if (left.terms.size === 0) combined = addLinearForms({terms: new Map(), constant: 0n}, right, left.constant)
+            else if (right.terms.size === 0) combined = addLinearForms({terms: new Map(), constant: 0n}, left, right.constant)
+          }
+          if (combined != null && withinLinearCaps(combined)) form = combined
+          else if (combined != null) relationState.counters.linearForm += 1
+        }
+      }
+      linearMemo.set(value, form)
+      return form
+    }
+
+    // Bounds on a leaf from facts, as linear forms: lower bounds when `lower`, else upper bounds.
+    // For integers a strict order moves the bound by 1. Only facts whose other side is a local
+    // value with an integer-safe form are used, so every bound was computed on this execution.
+    const factBounds = (leaf: ValueID, lower: boolean): LinearForm[] => {
+      const leafNumber = numbering.ofValue(leaf)
+      const bounds: LinearForm[] = []
+      const offset = (form: LinearForm, strict: boolean): LinearForm =>
+        strict ? {terms: form.terms, constant: form.constant + (lower ? 1n : -1n)} : form
+      const factLimit = Math.max(64, 2 * context.instructionCount)
+      if (!chargeRelationalWork(extensionRelations(relationState), Math.min(factLimit, state.valueFacts.length + state.joinFacts.length))) return bounds
+      let read = 0
+      for (const fact of state.valueFacts) {
+        if (fact.kind !== 'order') continue
+        if (read++ === factLimit) break
+        const ownSide = lower ? fact.right : fact.left
+        const otherSide = lower ? fact.left : fact.right
+        if (numbering.ofIdentity(ownSide) !== leafNumber) continue
+        if (otherSide.kind !== 'local' || otherSide.owner !== context.identityOwner) continue
+        const form = linearForm(otherSide.value)
+        if (form != null) bounds.push(offset(form, fact.strict))
+      }
+      for (const fact of state.joinFacts) {
+        if (read++ === factLimit) break
+        if (fact.kind === 'nonnegative') {
+          if (lower && numbering.ofValue(fact.parameter) === leafNumber) bounds.push({terms: new Map(), constant: 0n})
+          continue
+        }
+        // atMost: parameter <= bound. atLeast: bound <= parameter.
+        const below = fact.kind === 'atMost' ? fact.parameter : fact.bound
+        const above = fact.kind === 'atMost' ? fact.bound : fact.parameter
+        if (numbering.ofValue(lower ? above : below) !== leafNumber) continue
+        const form = linearForm(lower ? below : above)
+        if (form != null) bounds.push(form)
+      }
+      return bounds
+    }
+
+    // Whether an integer linear form is nonnegative on every execution: by interval lower bound;
+    // otherwise by replacing one leaf with forms that bound the whole form from below, and
+    // proving those. For a leaf x with coefficient c:
+    // - x = min(ys) and c > 0, or x = max(ys) and c < 0: c * x equals c * y_j for the selected
+    //   operand j, so proving the form with x replaced by every operand proves it.
+    // - x = min(ys) and c < 0, or x = max(ys) and c > 0: c * x >= c * y_i for every operand i,
+    //   so proving it with one operand proves it.
+    // - a fact bound b: for c > 0 and b <= x, or c < 0 and x <= b, c * x >= c * b.
+    // Every operand and bound must have an integer-safe form. The search stops at
+    // maximumLinearDepth (counted), skips a form it already tried, and charges the linear visit
+    // budget per node.
+    const nonnegativeForm = (form: LinearForm, depth: number, tried: Set<string>): boolean => {
+      if (!chargeLinear(1 + form.terms.size)) return false
+      let lowest = form.constant
+      for (const term of form.terms.values()) {
+        const held = heldNumber(term.value)
+        if (!integerSafe(held)) return false
+        // An integer value is at least ceil(lower) and at most floor(upper).
+        lowest += term.coefficient * BigInt(term.coefficient > 0n ? Math.ceil(held.lower) : Math.floor(held.upper))
+      }
+      if (lowest >= 0n) return true
+      if (form.terms.size === 0) return false
+      if (depth >= maximumLinearDepth) {
+        relationState.counters.linearDepth += 1
+        return false
+      }
+      const key = linearFormKey(form)
+      if (tried.has(key)) return false
+      tried.add(key)
+      for (const [number, term] of [...form.terms].sort((left, right) => left[0] - right[0])) {
+        const rest = {terms: new Map(form.terms), constant: form.constant}
+        rest.terms.delete(number)
+        const replaced = (replacement: LinearForm): LinearForm | null => {
+          const next = addLinearForms(rest, replacement, term.coefficient)
+          return withinLinearCaps(next) ? next : null
+        }
+        const producer = context.instructionByValue[term.value]
+        if (producer?.kind === 'minimum' || producer?.kind === 'maximum') {
+          const operands = producer.values.map(operand => linearForm(operand))
+          if (operands.every(operand => operand != null)) {
+            const forms = operands.map(operand => replaced(operand))
+            const everyOperand = (producer.kind === 'minimum') === (term.coefficient > 0n)
+            const proved = everyOperand
+              ? forms.every(next => next != null && nonnegativeForm(next, depth + 1, tried))
+              : forms.some(next => next != null && nonnegativeForm(next, depth + 1, tried))
+            if (proved) return true
+          }
+        }
+        for (const bound of factBounds(term.value, term.coefficient > 0n)) {
+          const next = replaced(bound)
+          if (next != null && nonnegativeForm(next, depth + 1, tried)) return true
+        }
+      }
+      return false
+    }
+
+    // left <= right, or left < right when strict, both integer-safe.
+    const integerOrder = (left: ValueID, right: ValueID, strict: boolean): boolean => {
+      const leftForm = linearForm(left)
+      const rightForm = linearForm(right)
+      if (leftForm == null || rightForm == null) return false
+      const difference = addLinearForms(rightForm, leftForm, -1n)
+      if (strict) difference.constant -= 1n
+      return withinLinearCaps(difference) && nonnegativeForm(difference, 0, new Set())
+    }
+
+    return {charge, nonnegativeThroughOrder, closureOrder, reachesIntegerSafeDifference, integerOrder}
+  }
+  const relational = relations == null ? null : createRelationalRules(relations)
+  const rootValues = roots.map(root => resolveStoredValue(root, context))
+  // The integer linear rule runs only on the proof's own compared pair, which bounds how often
+  // a proof builds forms.
+  const isRootPair = (left: ValueID, right: ValueID): boolean =>
+    rootValues.length === 2 && rootValues[0] === left && rootValues[1] === right
 
   const recordedOrder = (left: ValueID, right: ValueID, strict: boolean): boolean => {
     return hasOrderFact(
@@ -1621,6 +2451,7 @@ function createComparisonProof(
     const cached = atMostMemo.get(key)
     if (cached != null) return cached
     atMostMemo.set(key, false)
+    if (relational != null && !relational.charge(1)) return false
 
     const leftProducer = context.instructionByValue[left]
     const rightProducer = context.instructionByValue[right]
@@ -1704,9 +2535,42 @@ function createComparisonProof(
     // Expanding max(xs) <= min(ys) requires the full xs-by-ys relation. That work grows
     // quadratically with user-written operands, so aggregate selection proofs compose on
     // only one side. Bind and assert the relevant component relationship instead.
-    if (!answer && leftProducer?.kind === 'maximum' && rightProducer?.kind === 'minimum') {
+    // Static relations lift that refusal: the expansion below runs under the proof's visit
+    // budget instead, one side at a time, as ordinary selection rules.
+    if (!answer && relational == null && leftProducer?.kind === 'maximum' && rightProducer?.kind === 'minimum') {
       atMostMemo.set(key, false)
       return false
+    }
+
+    // Static relations: 0 <= v, including -0 <= v, from the sign rules.
+    if (!answer && relational != null && leftNumber?.lower === 0 && leftNumber.upper === 0) {
+      answer = nonnegative(right)
+    }
+
+    // Static relations, a quotient or product against its base: for x >= 0 and c >= 1, the
+    // exact quotient x / c is at most x and the exact product x * c is at least x; rounding
+    // is monotone and x is representable, so fl(x / c) <= x and x <= fl(x * c), overflow to
+    // Infinity included. The compared values are non-NaN, so x and c are too.
+    if (!answer && relational != null && leftProducer?.kind === 'binary' && leftProducer.operator === 'divide'
+      && atLeastOne(leftProducer.right) && nonnegative(leftProducer.left)) {
+      answer = atMost(leftProducer.left, right)
+    }
+    if (!answer && relational != null && rightProducer?.kind === 'binary' && rightProducer.operator === 'multiply') {
+      if (atLeastOne(rightProducer.right) && nonnegative(rightProducer.left)) answer = atMost(left, rightProducer.left)
+      if (!answer && atLeastOne(rightProducer.left) && nonnegative(rightProducer.right)) answer = atMost(left, rightProducer.right)
+    }
+
+    // Static relations, integer offsets: x + c <= r follows from x <= fl(r - c) when x, c, r,
+    // fl(x + c) and fl(r - c) are all integer-safe, because every one of those additions and
+    // subtractions was computed exactly. The witness fl(r - c) is never invented: the closure
+    // must reach a value the proof's own graph computed whose value number is r - c, e.g.
+    // `lastTaken + 1 <= itemCount` from `lastTaken = Math.min(itemCount - 1, cursor)`.
+    if (!answer && relational != null && leftProducer?.kind === 'binary' && leftProducer.operator === 'add'
+      && integerSafe(leftNumber) && integerSafe(rightNumber)) {
+      for (const [addend, offset] of [[leftProducer.left, leftProducer.right], [leftProducer.right, leftProducer.left]] as const) {
+        if (answer || !integerSafe(heldNumber(addend)) || !integerSafe(heldNumber(offset))) continue
+        answer = relational.reachesIntegerSafeDifference(addend, right, offset)
+      }
     }
 
     // Selection rules come last because expanding every operand is the broadest search.
@@ -1725,6 +2589,9 @@ function createComparisonProof(
       answer = rightProducer.values.every(operand => atMost(left, operand))
     }
 
+    if (!answer && relational != null) answer = relational.closureOrder(left, right, false)
+    if (!answer && relational != null && isRootPair(left, right)) answer = relational.integerOrder(left, right, false)
+
     atMostMemo.set(key, answer)
     return answer
   }
@@ -1738,6 +2605,20 @@ function createComparisonProof(
       && !leftNumber.mayBeNaN && !rightNumber.mayBeNaN
       && leftNumber.upper < rightNumber.lower) return true
     if (recordedOrder(left, right, true)) return true
+    if (relational != null && relational.closureOrder(left, right, true)) return true
+    if (relational != null && isRootPair(left, right) && relational.integerOrder(left, right, true)) return true
+    // Static relations, integer increment: with x, c and fl(x + c) integer-safe and c >= 1,
+    // the addition is exact, so left <= x < x + c. For a general float the increment can be
+    // absorbed (1e16 + 1 === 1e16), which the gate excludes.
+    if (relational != null && integerSafe(leftNumber) && integerSafe(rightNumber)) {
+      const increment = context.instructionByValue[right]
+      if (increment?.kind === 'binary' && increment.operator === 'add') {
+        for (const [base, offset] of [[increment.left, increment.right], [increment.right, increment.left]] as const) {
+          const offsetNumber = heldNumber(offset)
+          if (integerSafe(offsetNumber) && offsetNumber.lower >= 1 && integerSafe(heldNumber(base)) && atMost(left, base)) return true
+        }
+      }
+    }
 
     const leftProducer = context.instructionByValue[left]
     const rightProducer = context.instructionByValue[right]
@@ -1756,7 +2637,7 @@ function createComparisonProof(
     return divisor != null && !divisor.mayBeNaN && divisor.lower > 0
   }
 
-  return {same, atMost, strictlyBelow}
+  return {atMost, strictlyBelow, nonnegative}
 }
 
 function compareNumbers(left: AbstractNumber, right: AbstractNumber, operator: ComparisonOperator): AbstractBoolean {
