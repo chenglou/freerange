@@ -273,9 +273,11 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
       const message = assertionErrorMessage(fn.lowering.name, assertion)
       if (message != null) addError(assertion.site, 'console-assert', message)
     }
-    // Leading calls are requirements rather than interior assertion records. A function
-    // containing only requirements must still satisfy the same complete-function gate.
-    if (fn.assertions.length > 0) return
+    // Leading calls are requirements rather than interior assertion records. A lowered interior
+    // assertion already produces a finding when the function is incomplete. A function whose
+    // interior assertions were all left unchecked, or that has none, must still satisfy the
+    // same complete-function gate.
+    if (fn.assertions.some(assertion => assertion.verdict !== 'notChecked')) return
     const requirementSite = firstStaticRequirementSite(fn.lowering)
     if (requirementSite == null) return
     const incomplete = fn.kind === 'partial' || fn.boundsAssumptions.length > 0
@@ -339,6 +341,10 @@ function assertionErrorMessage(functionName: string, assertion: AssertionVerdict
     case 'unproven': return `could not prove console.assert condition in ${functionName}: ${assertion.text}`
     case 'dead': return `console.assert is unreachable in ${functionName}: ${assertion.text}`
     case 'blocked': return `could not check console.assert condition in ${functionName}; the function did not finish analysis without site-specific assumptions: ${assertion.text}`
+    // The same wording an unsupported function uses, followed by the condition.
+    case 'notChecked': return assertion.reason.kind === 'staticAssertionForm'
+      ? `${formatUnsupportedReason(assertion.reason)} in ${functionName}: ${assertion.text}`
+      : `console.assert in ${functionName} was not checked because ${formatUnsupportedReason(assertion.reason)}: ${assertion.text}`
   }
 }
 

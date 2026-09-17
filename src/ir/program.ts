@@ -38,7 +38,12 @@ export type BlockIR = {
   terminator: TerminatorIR
 }
 
-export type StaticAssertionIR = {site: SiteID; text: string}
+// An interior console.assert. When a condition that has no side effects cannot be lowered, the
+// assertion keeps the reason, and the rest of the function lowers as if the statement were
+// absent.
+export type StaticAssertionIR =
+  | {kind: 'lowered'; site: SiteID; text: string}
+  | {kind: 'notChecked'; site: SiteID; text: string; reason: UnsupportedReason}
 
 export type FunctionIR = {
   kind: 'lowered'

@@ -94,6 +94,8 @@ For simplicity and predictability, `console.assert` currently works only in name
 
 We also don't support aliasing `console.assert`, e.g. `const assert = console.assert`.
 
+When a later `console.assert` uses a condition outside this list, e.g. `console.assert(label <= toolbarLeft - gap)`, Freerange reports that assertion as not checked and still analyzes the rest of the function. This only applies to conditions built from variables, properties, array elements, literals, type assertions such as `!` and `as`, `typeof`, ternaries, the `Number` checks above, arithmetic, comparison, logical, and bitwise operators, and `instanceof` with a built-in or library class such as `Date`. Any other condition makes the whole function unsupported. For example, skipping a condition that calls a function, assigns, or uses `++` or `new` could change what later code observes. An unsupported caller requirement also makes the whole function unsupported.
+
 For more complex assertions, like inline calculations, extract them into variables:
 
 ```ts
