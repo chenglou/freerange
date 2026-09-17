@@ -459,6 +459,57 @@ An `ensures` line assumes its `requires` and `assumes`. A requirement may be a r
 
 Always read the coverage line. No findings does not mean an unsupported file is safe. A derived guarantee becoming weaker, for example `at least 8` becoming `at least 0`, appears in the audit rather than the shorter findings output.
 
+## Frame-sequence sweeps (prototype)
+
+`FREERANGE_SWEEP=1 FREERANGE_SWEEP_FRAMES=1 fr <file>` runs a function shaped like the one below on generated event sequences instead of calling each frame function on generated previous states, which no run can reach. Without `FREERANGE_SWEEP` the variable has no effect, and without `FREERANGE_SWEEP_FRAMES` the sweep's output is unchanged. Static findings are the same either way.
+
+A frame driver is a named top-level function whose last parameter is an array of events, walked by exactly one top-level `for (const event of events)` loop whose body calls functions of the same file. The events array appears nowhere else in the function, e.g. no `events.length`, no `events[index + 1]`, not passed to a helper and not captured by a closure, so frame k depends only on events 1 through k. A `let` state reassigned by one loop-body statement `state = step(state, event)` is the threaded state.
+
+```ts
+type Queue = {pending: number; wakeScheduled: boolean}
+type QueueEvent = {kind: 'enqueue'; count: number} | {kind: 'wake'} | {kind: 'idle'}
+
+function enqueue(prev: Queue, count: number): Queue {
+  console.assert(Number.isInteger(count))
+  console.assert(count >= 1)
+  console.assert(count <= 10)
+  const next = {pending: prev.pending + count, wakeScheduled: true}
+  return next
+}
+
+function wake(prev: Queue): Queue {
+  const pending = Math.max(0, prev.pending - 4)
+  const next = {pending, wakeScheduled: pending > 0}
+  return next
+}
+
+function stepQueue(prev: Queue, event: QueueEvent): Queue {
+  switch (event.kind) {
+    case 'enqueue': return enqueue(prev, event.count)
+    case 'wake': return wake(prev)
+    case 'idle': return prev
+  }
+}
+
+export function queueFrames(events: QueueEvent[]): void {
+  let queue: Queue = {pending: 0, wakeScheduled: false}
+  for (const event of events) {
+    // The environment: a timer fires only when one was scheduled.
+    if (event.kind === 'wake' && !queue.wakeScheduled) continue
+    queue = stepQueue(queue, event)
+    console.assert(queue.pending === 0 || queue.wakeScheduled)
+  }
+}
+```
+
+The loop body is the model of what the platform does between frames. Freerange never checks that model against a browser, so write it deliberately:
+
+- Keep what the platform retains as driver locals or ghost fields, e.g. `reported = browserScrollTop(editor.scrollTop, ...)`, clamped and rounded the way the browser does. Relate environment inputs only to those values, never to the app's own bookkeeping; otherwise a buggy app that remembers the value it requested proves itself right.
+- Compute anchoring from the value the platform reports, and assert anchoring with a tolerance, e.g. `drift <= 0.5`, or in whole pixels. Exact float cancellation is false for doubles.
+- Write deliveries that depend on state as guards, e.g. `if (event.kind === 'wake' && !queue.wakeScheduled) continue`. A missing wake is then a per-frame claim such as `queue.pending === 0 || queue.wakeScheduled`.
+- Check "nothing re-renders" with object identity or a counter on a frame whose inputs didn't change, e.g. `if (event.kind === 'idle') console.assert(layout === before)`.
+- Coalesced or late events exist only if the driver models them, e.g. an event carrying a count, or a queue of delayed events in driver state.
+
 ## Development
 
 ```sh

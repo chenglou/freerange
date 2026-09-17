@@ -96,7 +96,8 @@ export type SweepMode = {level: 'warning' | 'error'; jsonPath: string | null; se
 // `0`, returns null, and `fr` runs origin/main's code path, which ignores the variable. FREERANGE_SWEEP_JSON names the sidecar
 // file; FREERANGE_SWEEP_FILTERS (base | default) and FREERANGE_SWEEP_CAP (the number cap for sides no assert bounds) are
 // test knobs, and so is FREERANGE_SWEEP_LIMITS, a JSON object that replaces some of DEFAULT_LIMITS, e.g. {"heartbeatMs": 1000}
-// so a survival fixture finishes quickly.
+// so a survival fixture finishes quickly. FREERANGE_SWEEP_FRAMES=1 recognizes frame drivers (README, "Frame-sequence
+// sweeps"); it's read only here, so without FREERANGE_SWEEP it has no effect.
 export function sweepModeFromEnvironment(): SweepMode | null {
   const flag = process.env['FREERANGE_SWEEP']
   if (flag !== '1' && flag !== 'error') return null
@@ -109,7 +110,8 @@ export function sweepModeFromEnvironment(): SweepMode | null {
   const limitsText = process.env['FREERANGE_SWEEP_LIMITS'] ?? ''
   const overrides = limitsText === '' ? {} : JSON.parse(limitsText) as Partial<SweepLimits>
   for (const name of Object.keys(overrides)) if (!(name in DEFAULT_LIMITS)) throw new Error(`FREERANGE_SWEEP_LIMITS has an unknown limit ${name}`)
-  return {level: flag === '1' ? 'warning' : 'error', jsonPath: jsonPath === '' ? null : resolve(jsonPath), settings: {filters, cap, limits: {...DEFAULT_LIMITS, ...overrides}}}
+  const frames = process.env['FREERANGE_SWEEP_FRAMES'] === '1'
+  return {level: flag === '1' ? 'warning' : 'error', jsonPath: jsonPath === '' ? null : resolve(jsonPath), settings: {filters, cap, limits: {...DEFAULT_LIMITS, ...overrides}, frames}}
 }
 
 // The file's findings as the sweep report reads them: each line, error message and, for a finding at a call, the callee

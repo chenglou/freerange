@@ -10,7 +10,11 @@
 // domain@v2) throws DISCARD: the input is outside the entry's domain.
 // Every loop body calls tick() first (instrument.ts). A call whose loop bodies run more than the step budget in total,
 // callees included, throws BUDGET: e.g. with a budget of 1,000, `gridLayout(5000, …)` stops at its 1,001st cell.
-import type {Site} from './types.ts'
+// For a sequence entry (FREERANGE_SWEEP_FRAMES) the driver's loop body calls frame(hook) before its tick, and the statement
+// after the loop calls frameEnd(hook). Each resets the tick count, so the step budget applies to setup (frame 0), to each
+// frame and to the code after the loop separately. The recorder also keeps the frame at which each site was first reached,
+// first reached level 2 and first reached level 3 in the current call.
+import {FRAME_END, type Site} from './types.ts'
 
 export const DISCARD = {sentinel: 'discard'}
 export const BUDGET = {sentinel: 'budget'}
@@ -20,31 +24,51 @@ export type Recorder = {
   margins: Float64Array // the violation at the site's highest level in this call, NaN when unknown
   touched: Uint16Array // sites reached in this call, touchedCount of them
   touchedCount: number
-  ticks: number // loop body entries in this call
-  setEntry: (discardSites: number[]) => void
+  ticks: number // loop body entries in this call, since the last frame hook
+  currentFrame: number // 0 during setup, k during the k-th loop body of the driver, FRAME_END after its loop
+  // Per site, 3 slots: the frame at which this call first reached the site, first reached level >= 2, and >= 3. A slot is
+  // meaningful only once the site reached that level in this call.
+  firstFrames: Int32Array
+  setEntry: (discardSites: number[], sequenceHook: number | null) => void
   cmp: (site: number, left: unknown, op: string, right: unknown) => void
   int: (site: number, value: unknown) => void
   bool: (site: number, condition: unknown) => void
   tick: () => void
+  frame: (hook: number) => void
+  frameEnd: (hook: number) => void
 }
 
 /** `stepBudget` null: no budget, loops run to completion. */
 export function createRecorder(sites: Site[], stepBudget: number | null): Recorder {
   const discard = new Uint8Array(sites.length)
   const budget = stepBudget ?? Infinity
+  let activeHook = -1
   const recorder: Recorder = {
     levels: new Uint8Array(sites.length),
     margins: new Float64Array(sites.length),
     touched: new Uint16Array(sites.length),
     touchedCount: 0,
     ticks: 0,
-    setEntry(discardSites) {
+    currentFrame: 0,
+    firstFrames: new Int32Array(sites.length * 3),
+    setEntry(discardSites, sequenceHook) {
       discard.fill(0)
       for (const site of discardSites) discard[site] = 1
+      activeHook = sequenceHook ?? -1
     },
     tick() {
       recorder.ticks += 1
       if (recorder.ticks > budget) throw BUDGET
+    },
+    frame(hook) {
+      if (hook !== activeHook) return
+      recorder.currentFrame += 1
+      recorder.ticks = 0
+    },
+    frameEnd(hook) {
+      if (hook !== activeHook) return
+      recorder.currentFrame = FRAME_END
+      recorder.ticks = 0
     },
     cmp(site, left, op, right) {
       let ok: boolean
@@ -89,10 +113,15 @@ export function createRecorder(sites: Site[], stepBudget: number | null): Record
   }
   function reach(site: number, level: number, margin: number) {
     const previous = recorder.levels[site]!
-    if (previous === 0) recorder.touched[recorder.touchedCount++] = site
+    if (previous === 0) {
+      recorder.touched[recorder.touchedCount++] = site
+      recorder.firstFrames[site * 3] = recorder.currentFrame
+    }
     if (level > previous) {
       recorder.levels[site] = level
       recorder.margins[site] = margin
+      if (level >= 2 && previous < 2) recorder.firstFrames[site * 3 + 1] = recorder.currentFrame
+      if (level >= 3 && previous < 3) recorder.firstFrames[site * 3 + 2] = recorder.currentFrame
     }
     if (level >= 2 && discard[site] === 1) throw DISCARD
   }
@@ -103,4 +132,5 @@ export function resetRecorder(recorder: Recorder) {
   for (let index = 0; index < recorder.touchedCount; index++) recorder.levels[recorder.touched[index]!] = 0
   recorder.touchedCount = 0
   recorder.ticks = 0
+  recorder.currentFrame = 0
 }
