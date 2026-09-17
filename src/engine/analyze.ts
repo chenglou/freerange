@@ -1,11 +1,11 @@
 import {constantNumber} from '../domain/number.ts'
 import {holdsStructure, joinValues, type AbstractValue} from '../domain/value.ts'
 import type {ValueIdentity, ValueIdentityOwner} from '../domain/value-identity.ts'
-import type {BlockID, FunctionID, SiteID} from '../ir/ids.ts'
+import type {BlockID, FunctionID, FunctionRef, ModuleID, SiteID} from '../ir/ids.ts'
 import {functionUsage, transitiveModuleBindings} from '../ir/function-usage.ts'
 import {finiteInputExpression, finiteInputs} from '../ir/finite-inputs.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
-import {declaredKindOf, declaredKindValue, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import {declaredKindOf, declaredKindValue, type FunctionIR, type FunctionLowering, type ProgramIR, type ProjectIR} from '../ir/program.ts'
 import {
   addPrecondition,
   constantRequirementStatus,
@@ -34,11 +34,20 @@ import {
   type ValueFact,
 } from './state.ts'
 import {
+  maximumCallClosureFunctions,
+  maximumImportedModules,
+  type CallClosureAnswer,
+  type ImportedCalls,
+  type ImportedModule,
+  type UnavailableModule,
+} from './imported-calls.ts'
+import {
   asRefinableCheck,
   branchConditionOutcome,
   evaluateInstruction,
   refineCheck,
   requiredValue,
+  type TransferContext,
 } from './transfer.ts'
 
 // A termination backstop, not an iteration budget: the count is fixed-point rounds of one
@@ -46,7 +55,169 @@ import {
 // ordinary counting loops converge in two or three rounds.
 const maximumLoopHeaderUpdates = 16
 
+// off: a call to a function declared in another file rejects the caller, as on main.
+// contract: the callee's own analysis, computed once, applies at every call (design B).
+export type ImportedCallMode = 'off' | 'contract'
+
+// A report asks for the modules it prints; an imported call asks for its callee's module. Only
+// the second kind counts toward maximumImportedModules, and only the second kind can come back
+// with TypeScript errors: a report's module has passed the diagnostics gate before lowering.
+export type LowerModule = (module: ModuleID, purpose: 'report' | 'import') => ProgramIR | 'typeScriptErrors'
+
+// A project's modules, analyzed on first use. An imported call needs its callee module's
+// function-entry slots, which come from that module's initializer, and initializing a module
+// can reach further imported calls. A module still initializing, or a function whose analysis
+// is still on the stack, is marked, so a call that reaches it stops as an import cycle.
+export type ProjectAnalysis = {
+  program: (module: ModuleID) => ProgramIR
+  module: (module: ModuleID) => ProgramAnalysis
+}
+
+type ModuleRun = ImportedModule & {
+  initializer: LoweredFunctionAnalysis
+  // Per FunctionID.
+  functions: Array<FunctionAnalysis | 'analyzing' | undefined>
+}
+
+export function createProjectAnalysis(
+  project: ProjectIR,
+  lowerModule: LowerModule,
+  mode: ImportedCallMode,
+): ProjectAnalysis {
+  const runs: Array<ModuleRun | 'initializing' | undefined> = []
+  const typeScriptErrors: boolean[] = []
+  let importedLowerings = 0
+  const reportProgram = (module: ModuleID): ProgramIR => {
+    const existing = project.modules[module]
+    if (existing != null) return existing
+    const lowered = lowerModule(module, 'report')
+    if (lowered === 'typeScriptErrors') throw new Error(`Module ${module} reached analysis with TypeScript errors`)
+    return lowered
+  }
+  const importedProgram = (module: ModuleID): ProgramIR | UnavailableModule => {
+    const existing = project.modules[module]
+    if (existing != null) return existing
+    if (typeScriptErrors[module] === true) return 'typeScriptErrors'
+    if (importedLowerings === maximumImportedModules) return 'moduleLimit'
+    importedLowerings++
+    const lowered = lowerModule(module, 'import')
+    if (lowered === 'typeScriptErrors') typeScriptErrors[module] = true
+    return lowered
+  }
+  const moduleRun = (program: ProgramIR): ModuleRun | 'initializing' => {
+    const existing = runs[program.module]
+    if (existing != null) return existing
+    runs[program.module] = 'initializing'
+    const run = initializeModule(program, imports, importedCallsWriteNoObjects(program))
+    runs[program.module] = run
+    return run
+  }
+  const standalone = (callee: FunctionRef): FunctionAnalysis | 'analyzing' => {
+    const run = runs[callee.module]
+    if (run == null) throw new Error(`Module ${callee.module} was never initialized`)
+    if (run === 'initializing') return 'analyzing'
+    const existing = run.functions[callee.function]
+    if (existing != null) return existing
+    run.functions[callee.function] = 'analyzing'
+    const analysis = analyzeFunction(run, callee.function, imports)
+    run.functions[callee.function] = analysis
+    return analysis
+  }
+  // Whether some function a call can reach, through same-file and imported callees, satisfies
+  // `found`. The walk follows the lowered IR, so an unlowered function is a leaf. It visits each
+  // function once and at most maximumCallClosureFunctions of them; past that, or when it reaches
+  // a module it can't lower, it answers `incomplete`.
+  const callClosureSome = (
+    callee: FunctionRef,
+    found: (current: FunctionRef, fn: FunctionLowering) => boolean,
+  ): CallClosureAnswer => {
+    const visited: boolean[][] = []
+    let visitedCount = 0
+    let incomplete = false
+    const queue: FunctionRef[] = [callee]
+    for (let index = 0; index < queue.length; index++) {
+      const current = queue[index]!
+      const seen = visited[current.module] ?? []
+      visited[current.module] = seen
+      if (seen[current.function] === true) continue
+      if (visitedCount === maximumCallClosureFunctions) return 'incomplete'
+      seen[current.function] = true
+      visitedCount++
+      const program = importedProgram(current.module)
+      if (typeof program === 'string') {
+        incomplete = true
+        continue
+      }
+      const fn = program.functions[current.function]
+      if (fn == null) throw new Error(`Unknown function ${current.function} in module ${current.module}`)
+      if (found(current, fn)) return 'found'
+      if (fn.kind !== 'lowered') continue
+      for (const block of fn.blocks) {
+        for (const instruction of block.instructions) {
+          if (instruction.kind === 'call') queue.push({module: current.module, function: instruction.function})
+          if (instruction.kind === 'importedCall') queue.push({module: instruction.module, function: instruction.function})
+        }
+      }
+    }
+    return incomplete ? 'incomplete' : 'notFound'
+  }
+  const reachesModule = (callee: FunctionRef, target: ModuleID): CallClosureAnswer =>
+    callClosureSome(callee, current => current.module === target)
+  // Analyzed code cannot write into an object, but code that never lowered can, e.g.
+  // `remember(pendingWidths, width)` where another file's remember pushes onto the array. An
+  // imported call whose reachable callees include such code, or whose reachable callees couldn't
+  // all be seen, blocks exact structural publishing the same way an unlowered function of this
+  // file does.
+  const importedCallsWriteNoObjects = (program: ProgramIR): boolean => {
+    if (mode === 'off') return true
+    for (const fn of [program.initializer, ...program.functions]) {
+      if (fn.kind !== 'lowered') continue
+      for (const block of fn.blocks) {
+        for (const instruction of block.instructions) {
+          if (instruction.kind !== 'importedCall') continue
+          const callee = {module: instruction.module, function: instruction.function}
+          if (callClosureSome(callee, (_, reached) => reached.kind === 'unsupported') !== 'notFound') return false
+        }
+      }
+    }
+    return true
+  }
+  const imports: ImportedCalls | null = mode === 'off' ? null : {
+    module: module => {
+      const program = importedProgram(module)
+      return typeof program === 'string' ? program : moduleRun(program)
+    },
+    standalone,
+    reachesModule,
+  }
+  return {
+    program: reportProgram,
+    module: module => {
+      const run = moduleRun(reportProgram(module))
+      if (run === 'initializing') throw new Error(`Module ${module} is still initializing`)
+      const functions: FunctionAnalysis[] = []
+      for (let functionID = 0; functionID < run.program.functions.length; functionID++) {
+        const analysis = standalone({module, function: functionID})
+        if (analysis === 'analyzing') throw new Error(`Function ${functionID} of module ${module} is still analyzing`)
+        functions.push(analysis)
+      }
+      return {functions, initializer: run.initializer, moduleValues: run.moduleValues}
+    },
+  }
+}
+
+// A single lowered module with calls to other files rejected.
 export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
+  return createProjectAnalysis(program.project, module => {
+    throw new Error(`Module ${module} was never lowered`)
+  }, 'off').module(program.module)
+}
+
+function initializeModule(
+  program: ProgramIR,
+  imports: ImportedCalls | null,
+  importedCallsWriteNoObjects: boolean,
+): ModuleRun {
   // The initializer's slots start uninitialized — a top-level read before the writing
   // declaration must stop — except imported constants: the exporting module ran before
   // this module's first statement, so the slot already holds the literal. (A cycle read
@@ -69,49 +240,54 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     initializerState,
     program,
     [],
+    {},
+    imports,
   )
-  const moduleValues = publishedModuleValues(program, initializer.run, initializer.evaluation)
-  const functionEntrySharedState = seedModuleSlots(program, moduleValues)
-  const moduleReads = transitiveModuleBindings(functionUsage(program))
-  const initializerBounds = initializer.evaluation.boundsAssumptions
-  const functions: FunctionAnalysis[] = []
-  for (let functionID = 0; functionID < program.functions.length; functionID++) {
-    const fn = program.functions[functionID]!
-    if (fn.kind === 'unsupported') {
-      functions.push({kind: 'notLowered', lowering: fn})
-      continue
-    }
-    const arguments_: AbstractValue[] = []
-    const argumentExpressions: Array<NumericExpression | null> = []
-    const sharedState = cloneSharedState(functionEntrySharedState)
-    for (let index = 0; index < fn.parameters.length; index++) {
-      const parameter = fn.parameters[index]!
-      // Seeded from the declared kind — the same assumed-finite constructor module hedges
-      // use, with the assumes lines carrying the conditionality. Every parameter is
-      // nameable in requirement expressions; only numeric operations ever surface one, so
-      // a non-numeric parameter's expression is simply never printed.
-      arguments_.push(declaredKindValue(parameter.type))
-      argumentExpressions.push({kind: 'parameter', index})
-    }
-    const {evaluation} = runEvaluation(
-      fn,
-      functionID,
-      arguments_,
-      argumentExpressions,
-      sharedState,
-      program,
-      [],
-      {
-        boundsAssumptions: moduleReads[functionID]!.size > 0 ? initializerBounds : [],
-      },
-    )
-    functions.push(publishedAnalysis(fn, evaluation))
-  }
+  const moduleValues = publishedModuleValues(
+    program,
+    initializer.run,
+    initializer.evaluation,
+    importedCallsWriteNoObjects,
+  )
   return {
-    functions,
-    initializer: publishedAnalysis(program.initializer, initializer.evaluation),
+    program,
+    entryState: seedModuleSlots(program, moduleValues),
     moduleValues,
+    initializerBounds: initializer.evaluation.boundsAssumptions,
+    moduleReads: transitiveModuleBindings(functionUsage(program)),
+    initializer: publishedAnalysis(program.initializer, initializer.evaluation),
+    functions: [],
   }
+}
+
+function analyzeFunction(run: ModuleRun, functionID: FunctionID, imports: ImportedCalls | null): FunctionAnalysis {
+  const fn = run.program.functions[functionID]!
+  if (fn.kind === 'unsupported') return {kind: 'notLowered', lowering: fn}
+  const arguments_: AbstractValue[] = []
+  const argumentExpressions: Array<NumericExpression | null> = []
+  for (let index = 0; index < fn.parameters.length; index++) {
+    const parameter = fn.parameters[index]!
+    // Seeded from the declared kind — the same assumed-finite constructor module hedges
+    // use, with the assumes lines carrying the conditionality. Every parameter is
+    // nameable in requirement expressions; only numeric operations ever surface one, so
+    // a non-numeric parameter's expression is simply never printed.
+    arguments_.push(declaredKindValue(parameter.type))
+    argumentExpressions.push({kind: 'parameter', index})
+  }
+  const {evaluation} = runEvaluation(
+    fn,
+    {module: run.program.module, function: functionID},
+    arguments_,
+    argumentExpressions,
+    run.entryState,
+    run.program,
+    [],
+    {
+      boundsAssumptions: run.moduleReads[functionID]!.size > 0 ? run.initializerBounds : [],
+    },
+    imports,
+  )
+  return publishedAnalysis(fn, evaluation)
 }
 
 function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): LoweredFunctionAnalysis {
@@ -123,6 +299,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
       preconditions: publishedPreconditions(fn, completed.preconditions),
       boundsAssumptions: completed.boundsAssumptions,
       returnValue: completed.returnValue,
+      returnsNormally: true,
       assertions: evaluation.assertions,
     }
   }
@@ -136,6 +313,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Lowe
       preconditions: publishedPreconditions(fn, evaluation.preconditions),
       boundsAssumptions: evaluation.boundsAssumptions,
       returnValue: {kind: 'void'},
+      returnsNormally: false,
       assertions: evaluation.assertions,
     }
   }
@@ -214,6 +392,7 @@ function publishedModuleValues(
   program: ProgramIR,
   run: EvaluationRun,
   evaluation: FunctionEvaluation,
+  importedCallsWriteNoObjects: boolean,
 ): Array<AbstractValue | null> {
   const end = evaluation.normal == null
     ? run.moduleEnd
@@ -240,6 +419,7 @@ function publishedModuleValues(
   const fullyAnalyzed = evaluation.stops.length === 0
     && program.initializerSkips.length === 0
     && program.functions.every(lowered => lowered.kind === 'lowered')
+    && importedCallsWriteNoObjects
 
   return program.moduleBindings.map((binding, index) => {
     if (binding.category.kind !== 'value' && binding.category.kind !== 'function') return null
@@ -300,13 +480,14 @@ type EvaluationSeed = {
 
 function runEvaluation(
   fn: FunctionIR,
-  functionID: FunctionID | null,
+  functionRef: FunctionRef | null,
   arguments_: AbstractValue[],
   argumentExpressions: Array<NumericExpression | null>,
   sharedState: SharedState,
   program: ProgramIR,
-  callStack: FunctionID[],
-  seed: EvaluationSeed = {},
+  callStack: FunctionRef[],
+  seed: EvaluationSeed,
+  imports: ImportedCalls | null,
 ): {evaluation: FunctionEvaluation; run: EvaluationRun} {
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
@@ -339,37 +520,35 @@ function runEvaluation(
   // Invariant for the whole evaluation (engineering.md's loop-invariant rule): built once
   // instead of allocating a context object and closure per instruction per fixed-point
   // round. preconditions is shared by reference and accumulates.
-  const transferContext = {
+  const transferContext: TransferContext = {
     program,
-    callStack: functionID == null ? callStack : [...callStack, functionID],
+    callStack: functionRef == null ? callStack : [...callStack, functionRef],
     expressionContext,
     preconditions,
     boundsAssumptions,
+    imports,
     evaluateFunction: (
-      callee: FunctionID,
+      calleeProgram: ProgramIR,
+      callee: FunctionIR,
+      calleeRef: FunctionRef | null,
       values: AbstractValue[],
       expressions: Array<NumericExpression | null>,
       calleeState: SharedState,
-      stack: FunctionID[],
       valueFacts: ValueFact[],
       parameterIdentities: ValueIdentity[],
       identityOwner: ValueIdentityOwner,
-    ) => {
-      const calleeFn = program.functions[callee]
-      if (calleeFn == null) throw new Error(`Unknown function ${callee}`)
-      // Callers turn calls to unlowered functions into calleeStopped records first.
-      if (calleeFn.kind !== 'lowered') throw new Error(`Analysis reached unlowered function ${calleeFn.name}`)
-      return runEvaluation(
-        calleeFn,
-        callee,
-        values,
-        expressions,
-        calleeState,
-        program,
-        stack,
-        {valueFacts, parameterIdentities, identityOwner},
-      ).evaluation
-    },
+      calleeBounds: BoundsAssumption[],
+    ) => runEvaluation(
+      callee,
+      calleeRef,
+      values,
+      expressions,
+      calleeState,
+      calleeProgram,
+      transferContext.callStack,
+      {valueFacts, parameterIdentities, identityOwner, boundsAssumptions: calleeBounds},
+      imports,
+    ).evaluation,
   }
   let queueIndex = 0
   while (queueIndex < run.queue.length) {
