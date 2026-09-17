@@ -1,0 +1,21 @@
+Static relations prototype: registered design
+
+Written before any code on proto/static-relations.
+
+Mode: every new rule runs only with FREERANGE_STATIC_RELATIONS=1, and only inside the proof of interior console.assert conditions (staticAssert). Leading requirements (staticRequire), requirement inference and ordinary analysis keep main's rules.
+
+Mechanisms in build order: value numbering, bounded order closure (including max(xs) <= min(ys)), sign through order, facts at joins (not at loop headers), integer offsets (first to cut). No return relations, no float algebra or tolerance rules.
+
+Counting rules, per assertion site, comparing the mode on with main on the same files:
+- newly proved: main's verdict not proved, new verdict proved
+- lost proof: main proved, new verdict not proved
+
+Gates:
+- no assertion that fails on a concrete input reads proved
+- newly analyzed 0, can be false 0, lost proofs 0
+- any newly proved site is listed with its mechanism
+- fr --audit requires, ensures and assumes lines identical to main on every evaluated file
+- per file: wall time at most 2x main's, max RSS at most main's + 100 MB
+- the float, NaN, 2^53, strictness and join negative tests stay unproven
+
+Caps, each with a test that hits it: closure visit budget 4x the function's instruction count per query; facts read per state max(64, 2x instruction count); 32 join candidates per block.

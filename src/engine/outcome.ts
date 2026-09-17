@@ -71,7 +71,17 @@ export type FunctionEvaluation = {
   boundsAssumptions: BoundsAssumption[]
   assertions: AssertionVerdict[]
   stops: Stop[]
+  // Static-relations mode only, and only for a callee evaluation that completed: order between
+  // the numeric return value and a numeric parameter that holds on every return path. A caller
+  // publishes them as assertion-only join facts. Always empty otherwise.
+  returnRelations: ReturnRelation[]
 }
+
+// `atLeast`: the return value is at least the parameter. `atMost`: at most the parameter.
+// `nonnegative`: the return value is at least 0.
+export type ReturnRelation =
+  | {kind: 'atLeast' | 'atMost'; parameter: number}
+  | {kind: 'nonnegative'}
 
 // The result of a fully completed evaluation: the only data that may reach contract
 // consumers (a caller adopting callee state, the report's requires/ensures lines).
@@ -83,6 +93,7 @@ export type CompletedEvaluation = {
   valueFacts: ValueFact[]
   preconditions: InferredPrecondition[]
   boundsAssumptions: BoundsAssumption[]
+  returnRelations: ReturnRelation[]
 }
 
 export function completedEvaluation(evaluation: FunctionEvaluation): CompletedEvaluation | null {
@@ -93,6 +104,7 @@ export function completedEvaluation(evaluation: FunctionEvaluation): CompletedEv
     valueFacts: evaluation.normal.valueFacts,
     preconditions: evaluation.preconditions,
     boundsAssumptions: evaluation.boundsAssumptions,
+    returnRelations: evaluation.returnRelations,
   }
 }
 

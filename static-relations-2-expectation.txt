@@ -1,0 +1,24 @@
+Static relations, second exploration: registered design
+
+Written before any code on explore/static-relations-2, on top of the static relations prototype.
+
+Mode: unchanged. Every new rule runs only with FREERANGE_STATIC_RELATIONS=1, and only inside the proofs of interior console.assert conditions and join-fact verification. Leading requirements, requirement inference and ordinary analysis keep main's rules.
+
+Targets, in build order:
+1. Exact integer linear forms. Under the integer-safe gate every + - and * by an integer constant is exact, so a comparison reduces to the sign of an integer linear form over leaf values. The proof splits Math.min and Math.max leaves into their operands, substitutes bounds from order and join facts, and ends at interval lower bounds. It never invents a computed value.
+2. Arm splitting at the assertion. A compared value that is a parameter of a block outside every cycle is proved on each incoming edge argument separately.
+3. Return relations (the cut RET step). A completed same-file call publishes, as assertion-only facts, the order between its numeric return value and each numeric argument that holds on every return path of the callee's evaluation.
+4. Join facts at loop headers (the cut loop-header step). Loop headers propose and re-verify join facts like other joins, with bounds produced outside every cycle. A change that only drops join facts does not count toward the 16-update backstop.
+
+Counting rules: as in static-relations-expectation.txt, per assertion site (unit, file, line, column).
+
+Gates:
+- no assertion that fails on a concrete input reads proved
+- lost proofs 0 against main, and no proof of the first prototype is lost
+- any newly proved site is listed with its mechanism
+- fr --audit requires, ensures and assumes lines identical to main on every evaluated file
+- per file: wall time at most 2x main's, max RSS at most main's + 100 MB
+- the generated probe and random batteries report 0 unsound rows; mutants that detected holes before still detect them
+- every change from could not prove to proved is checked by hand
+
+Caps, each failing closed with a test that hits it: linear form leaves and coefficient size, linear substitution depth, arm split depth and edges per split, return relation parameters and return blocks, join-fact-only loop header updates.
