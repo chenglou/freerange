@@ -808,3 +808,40 @@ test('targeted fr has fallback options while project commands require a tsconfig
     rmSync(directory, {recursive: true, force: true})
   }
 })
+
+test('the wider console.assert reading reports the whole condition and names its limits', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-assert-forms-'))
+  try {
+    const alternatives = Array.from({length: 17}, (_, index) => `x === ${index}`).join(' || ')
+    writeProject(projectDirectory, {'forms.ts': `export function unproven(x: number, y: number): number {
+  const result = x
+  console.assert(x > 0 && y > 0)
+  return result
+}
+
+export function tooManyAlternatives(x: number): number {
+  const result = x
+  console.assert(${alternatives})
+  return result
+}
+`})
+
+    const withoutSwitch: Record<string, string | undefined> = {...process.env}
+    delete withoutSwitch['FREERANGE_ASSERT_FORMS']
+    const runWith = (env: Record<string, string | undefined>) => {
+      const result = Bun.spawnSync({cmd: [process.execPath, freerangeCli], cwd: projectDirectory, env, stdout: 'pipe', stderr: 'pipe'})
+      return {exitCode: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString()}
+    }
+    const defaultLint = runWith(withoutSwitch)
+    expect(defaultLint.exitCode).toBe(1)
+    expect(defaultLint.stdout).toContain('console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check in unproven')
+
+    const lint = runWith({...withoutSwitch, FREERANGE_ASSERT_FORMS: '1'})
+    expect(lint.exitCode).toBe(1)
+    expect(lint.stderr).toBe('')
+    expect(lint.stdout).toContain('error [console-assert]: could not prove console.assert condition in unproven: x > 0 && y > 0')
+    expect(lint.stdout).toContain('console.assert condition has more than 16 alternatives in one || chain in tooManyAlternatives')
+  } finally {
+    rmSync(projectDirectory, {recursive: true, force: true})
+  }
+})

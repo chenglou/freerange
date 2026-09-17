@@ -39,6 +39,7 @@ import {
   evaluateInstruction,
   refineCheck,
   requiredValue,
+  staticConditionObservation,
 } from './transfer.ts'
 
 // A termination backstop, not an iteration budget: the count is fixed-point rounds of one
@@ -274,8 +275,13 @@ type BlockRun = {
 
 type AssertionObservation = {
   sawDefinitelyTrue: boolean
+  // A part outside every || false branch was definitely false.
   sawDefinitelyFalse: boolean
   sawMaybeFalse: boolean
+  // The disjunctions of each staticAssert that was definitely false on the false branch of one
+  // or more || groups. Such a part refutes the assertion only if none of those groups' true
+  // branches was ever reached; otherwise it counts as maybe false.
+  definitelyFalseAfterDisjunctions: number[][]
 }
 
 // Everything one evaluation accumulates; created and discarded together.
@@ -287,6 +293,9 @@ type EvaluationRun = {
   stops: Stop[]
   // Dense by FunctionIR.assertions index when present.
   assertionObservations: Array<AssertionObservation | undefined>
+  // Dense by function-wide || group index when present: the true branch of a left side of
+  // that group inside an interior console.assert condition was reached.
+  reachedDisjunctions: boolean[]
   // Module slots joined across every stop, then with the normal end by the publish rule.
   moduleEnd: SharedState | null
 }
@@ -333,6 +342,7 @@ function runEvaluation(
     queue: [fn.entry],
     stops: [],
     assertionObservations: [],
+    reachedDisjunctions: [],
     moduleEnd: null,
   }
   run.blocks[fn.entry]!.incoming = {state: initial, updateCount: 0}
@@ -402,7 +412,12 @@ function runEvaluation(
           stopped = true
           break instructionLoop
         case 'assertion':
-          addAssertionObservation(run, result.assertion, result.observation)
+          addAssertionObservation(run, result.assertion, result.observation, result.disjunctions)
+          state.values[instruction.result] = result.value
+          break
+        case 'disjunctionHolds':
+          addAssertionObservation(run, result.assertion, {canBeTrue: true, canBeFalse: false}, [])
+          run.reachedDisjunctions[result.disjunction] = true
           state.values[instruction.result] = result.value
           break
         case 'value':
@@ -458,7 +473,19 @@ function runEvaluation(
           run.blocks[blockID]!.pendingReturn = null
           break
         }
-        const condition = conditionOutcome.value
+        const held = conditionOutcome.value
+        // A branch inside an interior console.assert condition is decided with the proofs that
+        // decide a whole assertion, e.g. `d >= 0` after `if (a > b) return 0` and
+        // `const d = b - a`. When those proofs settle a condition the held boolean leaves open,
+        // the one successor gets the unrefined state, so the proof narrows nothing that later
+        // code sees.
+        const condition = block.terminator.decision === 'assertionProofs'
+          ? staticConditionObservation(block.terminator.condition, state, transferContext)
+          : held
+        if (held.canBeTrue && held.canBeFalse && condition.canBeTrue !== condition.canBeFalse) {
+          propagate(state, blockID, condition.canBeTrue ? block.terminator.whenTrue : block.terminator.whenFalse, run)
+          break
+        }
         // expressionContext.instructionByValue is the one which-instruction-produced-this
         // table; a condition refines only when that instruction is a check (refineCheck
         // dispatches over the check kinds in one place).
@@ -590,6 +617,7 @@ function addAssertionObservation(
   run: EvaluationRun,
   assertionIndex: number,
   observation: {canBeTrue: boolean; canBeFalse: boolean},
+  disjunctions: number[],
 ): void {
   requiredAssertion(run, assertionIndex)
   if (!observation.canBeTrue && !observation.canBeFalse) {
@@ -599,9 +627,15 @@ function addAssertionObservation(
     sawDefinitelyTrue: false,
     sawDefinitelyFalse: false,
     sawMaybeFalse: false,
+    definitelyFalseAfterDisjunctions: [],
   }
-  if (!observation.canBeTrue) aggregate.sawDefinitelyFalse = true
-  else if (observation.canBeFalse) aggregate.sawMaybeFalse = true
+  if (!observation.canBeTrue) {
+    // Pushed once per staticAssert instruction: repeated visits pass the same array.
+    if (disjunctions.length === 0) aggregate.sawDefinitelyFalse = true
+    else if (!aggregate.definitelyFalseAfterDisjunctions.includes(disjunctions)) {
+      aggregate.definitelyFalseAfterDisjunctions.push(disjunctions)
+    }
+  } else if (observation.canBeFalse) aggregate.sawMaybeFalse = true
   else aggregate.sawDefinitelyTrue = true
   run.assertionObservations[assertionIndex] = aggregate
 }
@@ -609,9 +643,14 @@ function addAssertionObservation(
 function classifyAssertions(run: EvaluationRun, proofComplete: boolean): AssertionVerdict[] {
   return run.fn.assertions.map((assertion, assertionIndex) => {
     const observation = run.assertionObservations[assertionIndex]
-    const verdict: AssertionVerdict['verdict'] = observation?.sawDefinitelyFalse === true
+    const refuted = observation != null && (observation.sawDefinitelyFalse
+      || observation.definitelyFalseAfterDisjunctions.some(disjunctions =>
+        disjunctions.every(disjunction => run.reachedDisjunctions[disjunction] !== true)))
+    const maybeFalse = observation != null
+      && (observation.sawMaybeFalse || observation.definitelyFalseAfterDisjunctions.length > 0)
+    const verdict: AssertionVerdict['verdict'] = refuted
       ? 'refuted'
-      : observation?.sawMaybeFalse === true
+      : maybeFalse
         ? 'unproven'
         : !proofComplete
           ? 'blocked'
