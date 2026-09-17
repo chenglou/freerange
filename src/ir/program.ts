@@ -2,7 +2,7 @@ import {relative} from 'node:path'
 import type * as ts from 'typescript'
 import {finiteInputNumber, unknownNumber, type AbstractNumber} from '../domain/number.ts'
 import {recordValue, unknownBoolean, type AbstractValue, type TaggedVariant} from '../domain/value.ts'
-import type {BlockID, SiteID, ValueID} from './ids.ts'
+import type {BlockID, FunctionRef, ModuleID, SiteID, ValueID} from './ids.ts'
 import type {InstructionIR, TerminatorIR} from './instructions.ts'
 
 export type ParameterIR = {
@@ -21,10 +21,12 @@ export type ParameterIR = {
 // and opaque (string) leaves — a label or id in a parameter record no longer rejects the
 // function around it.
 
-// UTF-16 offsets into the analyzed source, from ts.Node.getStart/getEnd. Line and column
-// are computed only at message-formatting time. Spans may repeat across sites (the constant 1
-// and the add that `count++` lowers to share a span); identity is the SiteID, never the span.
+// UTF-16 offsets into one module's source, from ts.Node.getStart/getEnd, and the module the
+// offsets belong to. Line and column are computed only at message-formatting time. Spans may
+// repeat across sites (the constant 1 and the add that `count++` lowers to share a span);
+// identity is the SiteID, never the span.
 export type SourceSpan = {
+  module: ModuleID
   start: number
   end: number
 }
@@ -171,7 +173,7 @@ export type UnsupportedReason =
 
 // A function whose lowering stopped. The half-built CFG is discarded wholesale so nothing
 // downstream can mistake this record for analyzable IR. Sites already pushed while lowering
-// the discarded blocks stay in ProgramIR.sites; do not roll the array back — that would
+// the discarded blocks stay in ProjectIR.sites; do not roll the array back — that would
 // invalidate the SiteID recorded here.
 export type UnsupportedFunctionIR = {
   kind: 'unsupported'
@@ -357,17 +359,32 @@ export type ModuleBindingIR = {
   category: ModuleBindingCategory
 }
 
-export type ProgramIR = {
-  file: string
+// One analysis run's lowered modules and the site table they share. Sites are numbered
+// across modules because a requirement, assumption, or blame site adopted through an
+// imported call keeps pointing at the callee module's operation.
+export type ProjectIR = {
   // What report paths are made relative to; CLI commands use their working directory,
   // matching TypeScript diagnostics. See reportPath.
   baseDirectory: string
+  // Indexed by SiteID. Push-only during lowering, immutable afterward.
+  sites: SourceSpan[]
+  // Indexed by ModuleID. A module lowers on first use, so its entry stays undefined until
+  // then; every site belongs to a lowered module.
+  modules: Array<ProgramIR | undefined>
+}
+
+export function createProjectIR(baseDirectory: string): ProjectIR {
+  return {baseDirectory, sites: [], modules: []}
+}
+
+export type ProgramIR = {
+  module: ModuleID
+  project: ProjectIR
+  file: string
   // Offset of each line's first character, copied from ts.SourceFile.getLineStarts(), so
   // locations can be formatted after the TypeScript objects are gone (analyzeSource inputs
   // never exist on disk, so re-reading the file is not an option).
   lineStarts: number[]
-  // Indexed by SiteID. Push-only during lowering, immutable afterward.
-  sites: SourceSpan[]
   // Still indexed by FunctionID, assigned from declaration order before any body lowers, so
   // call instructions may reference an index that later turns out unsupported.
   functions: FunctionLowering[]
@@ -395,29 +412,47 @@ export const moduleInitializerName = 'module initialization'
 // unsupported. The report lists these on the module initialization entry.
 export type InitializerSkip = {site: SiteID; reason: UnsupportedReason}
 
-// The span an AST node covers, for pushing into ProgramIR.sites.
-export function nodeSpan(sourceFile: ts.SourceFile, node: ts.Node): SourceSpan {
-  return {start: node.getStart(sourceFile), end: node.getEnd()}
+// The span an AST node covers in its module, for pushing into ProjectIR.sites.
+export function nodeSpan(sourceFile: ts.SourceFile, node: ts.Node, module: ModuleID): SourceSpan {
+  return {module, start: node.getStart(sourceFile), end: node.getEnd()}
 }
 
-// A site rendered as file:line:column, the form every report line uses.
+// A site rendered as file:line:column, the form every report line uses. The file is the
+// site's own module, which differs from `program` for a site adopted through an imported call.
 export function formatSite(program: ProgramIR, site: SiteID): string {
   const {line, column} = siteLocation(program, site)
-  return `${reportPath(program)}:${line}:${column}`
+  return `${reportPath(siteProgram(program, site))}:${line}:${column}`
+}
+
+// The lowered module a site belongs to.
+export function siteProgram(program: ProgramIR, site: SiteID): ProgramIR {
+  const span = program.project.sites[site]
+  if (span == null) throw new Error(`Unknown site ${site}`)
+  const owner = program.project.modules[span.module]
+  if (owner == null) throw new Error(`Site ${site} belongs to unlowered module ${span.module}`)
+  return owner
+}
+
+// A function's name across modules. A stop can name an imported callee only after the
+// evaluator looked the callee up, so its module has lowered.
+export function functionRefName(program: ProgramIR, callee: FunctionRef): string {
+  const fn = program.project.modules[callee.module]?.functions[callee.function]
+  if (fn == null) throw new Error(`Unknown function ${callee.function} in module ${callee.module}`)
+  return fn.name
 }
 
 // Report lines name files relative to the analysis base. CLI commands use their working
 // directory, matching TypeScript diagnostics and producing stable relative paths without
 // absolute machine-specific prefixes.
 export function reportPath(program: ProgramIR): string {
-  return relative(program.baseDirectory, program.file)
+  return relative(program.project.baseDirectory, program.file)
 }
 
-// 1-based line and column of a site's start offset.
+// 1-based line and column of a site's start offset, in the site's own module.
 export function siteLocation(program: ProgramIR, site: SiteID): {line: number; column: number} {
-  const span = program.sites[site]
+  const span = program.project.sites[site]
   if (span == null) throw new Error(`Unknown site ${site}`)
-  const lineStarts = program.lineStarts
+  const lineStarts = siteProgram(program, site).lineStarts
   let low = 0
   let high = lineStarts.length - 1
   while (low < high) {

@@ -10,12 +10,11 @@ import {
   type InitializerSkip,
   type ModuleBindingCategory,
   type ModuleBindingIR,
-  type SourceSpan,
 } from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
 import {numericLiteralValue} from './literals.ts'
 import {declaredOnlyInDeclarationFiles, isExternalRecordType} from './platform.ts'
-import {addInstruction, addSite, createFunctionContext, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type TopLevelFunction} from './context.ts'
+import {addInstruction, addSite, createFunctionContext, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FileLowering, type FunctionContext} from './context.ts'
 import {lowerExpression, nonMissingUnionMembers, tagLiteralValues, taggedUnionProperty, valueKind} from './expression.ts'
 import type {AccessedProperties} from './record-properties.ts'
 import {directFunctionExpression} from './function-unit.ts'
@@ -221,14 +220,11 @@ function demoteModuleWritesInNode(
 // writes demoted and havocked — and lowering continues, so the initializer covers the
 // whole file and ends with a plain return.
 export function lowerModuleInitializer(
-  sourceFile: ts.SourceFile,
-  checker: ts.TypeChecker,
-  program: ts.Program,
-  functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
+  file: FileLowering,
   scan: ModuleScan,
-  sites: SourceSpan[],
 ): {initializer: FunctionIR; skips: InitializerSkip[]} {
-  const context = createFunctionContext(sourceFile, checker, program, functionsBySymbol, scan.bindingsBySymbol, sites)
+  const {sourceFile, checker} = file
+  const context = createFunctionContext(file)
   const skips: InitializerSkip[] = []
   const statements = sourceFile.statements
   // Each statement gets its own catch: an unsupported one is skipped — its half-lowered

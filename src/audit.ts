@@ -175,12 +175,15 @@ export function createFileAudit({program, analysis}: {program: ProgramIR; analys
     site: SiteID,
     reason: AuditReason,
   ): void => {
-    const span = program.sites[site]
+    const span = program.project.sites[site]
     if (span == null) throw new Error(`Unknown site ${site}`)
+    // A site adopted from an imported callee belongs to its own module's audit, whose
+    // suggestions name that module's file.
+    if (span.module !== program.module) return
     references.push({
       functionName,
       ...siteLocation(program, site),
-      span: {...span},
+      span: {start: span.start, end: span.end},
       reason,
       guideIDs: guidesForReason(reason),
     })
@@ -450,6 +453,10 @@ function guidesForStop(reason: StopReason): RefactorGuideID[] {
     case 'moduleRead':
     case 'recursion':
     case 'calleeStopped':
+    case 'importCycle':
+    case 'importedModuleState':
+    case 'contractInput':
+    case 'importUnavailable':
     case 'loopLimit':
     case 'nonExitingLoop':
     case 'kindMismatch': return []

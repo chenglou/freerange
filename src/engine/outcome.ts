@@ -1,5 +1,5 @@
 import type {AbstractValue} from '../domain/value.ts'
-import type {FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
+import type {FunctionRef, ModuleBindingID, SiteID} from '../ir/ids.ts'
 import type {FunctionIR, UnsupportedFunctionIR, UnsupportedReason} from '../ir/program.ts'
 import type {BoundsAssumption, InferredPrecondition} from '../requirements/model.ts'
 import type {SharedState, ValueFact} from './state.ts'
@@ -13,10 +13,29 @@ export type RequirementFailure =
 // Why one function's evaluation stopped on some path. Code branches only on `kind`; prose
 // is composed only in src/report.
 export type StopReason =
-  | {kind: 'recursion'; callee: FunctionID}
+  | {kind: 'recursion'; callee: FunctionRef}
   // The called function never lowered, or its own evaluation has stops. The callee's report
   // entry carries the next hop or the root cause.
-  | {kind: 'calleeStopped'; callee: FunctionID}
+  | {kind: 'calleeStopped'; callee: FunctionRef}
+  // An imported call can call back into the caller's own module, or into a module that is
+  // still initializing or a function whose own analysis is still running. Each needs a runtime
+  // import cycle, which is outside the analyzed scope, so the path stops rather than trusting
+  // module state the cycle may have changed.
+  | {kind: 'importCycle'; callee: FunctionRef}
+  // The imported callee's result rests on a module binding of its own file that its report
+  // prints as an assumption: a declared-kind binding, e.g. `assumes: scaleFactor is finite and
+  // not NaN`, or a published structure, e.g. `assumes: other modules do not modify gaps or any
+  // object or array inside it`. Those assumes lines are computed per file, so the caller could
+  // not print them; the path stops instead of publishing a result that silently depends on them.
+  | {kind: 'importedModuleState'; callee: FunctionRef; binding: ModuleBindingID}
+  // An argument lies outside the declared kind the callee's own analysis seeded the parameter
+  // with, e.g. a possibly NaN element in a number[] argument, so the callee's published summary
+  // does not describe this call.
+  | {kind: 'contractInput'; callee: FunctionRef; parameter: number}
+  // The imported call can't be followed: the callee's file has TypeScript errors, lowering it
+  // would pass maximumImportedModules, or checking where its calls lead couldn't finish (see
+  // CallClosureAnswer). The callee's file may never lower, so the reason carries its name.
+  | {kind: 'importUnavailable'; calleeName: string; why: 'typeScriptErrors' | 'moduleLimit' | 'callClosure'}
   // A loop header's abstract state kept changing through the fixed-point backstop. No
   // result computed before convergence is published as a guarantee.
   | {kind: 'loopLimit'; updates: number}
@@ -46,7 +65,7 @@ export type StopReason =
   | {
       kind: 'requirementFailure'
       failure: RequirementFailure
-      callee: FunctionID | null
+      callee: FunctionRef | null
     }
 
 export type Stop = {
@@ -103,6 +122,9 @@ export type FunctionAnalysis =
       preconditions: InferredPrecondition[]
       boundsAssumptions: BoundsAssumption[]
       returnValue: AbstractValue
+      // False when every path throws: the function is fully analyzed, but a call to it never
+      // returns, so a caller applying its summary ends the path like an inline throw.
+      returnsNormally: boolean
       assertions: AssertionVerdict[]
     }
   // Some path stopped. The evidence fields share no names with the contract fields above,

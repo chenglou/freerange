@@ -1,4 +1,4 @@
-import type {BlockID, FunctionID, ModuleBindingID, SiteID, ValueID} from './ids.ts'
+import type {BlockID, FunctionID, ModuleBindingID, ModuleID, SiteID, ValueID} from './ids.ts'
 import type {UnsupportedReason} from './program.ts'
 
 type InstructionBase = {
@@ -106,6 +106,20 @@ export type InstructionIR =
       // A const-bound function is unavailable until its top-level initializer runs.
       binding: ModuleBindingID | null
     })
+  // A call to a named top-level function declared in another project module, e.g.
+  // `import {feedLayout} from './feed'`. The function index uses the declaring file's own
+  // numbering, so the call lowers before the callee's module does, and `name` is the callee's
+  // declared name, for reports about a callee whose module never lowers. The evaluator looks the
+  // callee up by module; module state never crosses the boundary (see the importedCall arm
+  // in src/engine/transfer.ts). No initialization marker is needed: an acyclic import has
+  // finished initializing before any code in this module runs.
+  | (InstructionBase & {
+      kind: 'importedCall'
+      module: ModuleID
+      function: FunctionID
+      name: string
+      arguments: ValueID[]
+    })
   // tag is set when the literal's contextual type is a tagged union and the literal names
   // its tag with a string literal — the engine then builds a single-variant union, so
   // branches building different variants join per tag instead of dropping properties.
@@ -147,7 +161,8 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'arrayIndex': visit(instruction.array); visit(instruction.index); return
     case 'minimum':
     case 'maximum': for (const id of instruction.values) visit(id); return
-    case 'call': for (const id of instruction.arguments) visit(id); return
+    case 'call':
+    case 'importedCall': for (const id of instruction.arguments) visit(id); return
     case 'object': for (const property of instruction.properties) visit(property.value); return
     case 'property': visit(instruction.object); return
   }
