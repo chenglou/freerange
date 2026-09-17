@@ -5,16 +5,21 @@
 // version narrowed to that file: same configuration, same content kinds, same line
 // formats, one file's slice.
 
-import {existsSync, realpathSync} from 'node:fs'
-import {resolve} from 'node:path'
+import {existsSync, realpathSync, writeFileSync} from 'node:fs'
+import {resolve, sep} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
 import {createFileAudit, formatFileAuditUnit} from './audit.ts'
+import {createProjectAnalysis, type ImportedCallMode} from './engine/analyze.ts'
 import type {AssertionVerdict, FunctionAnalysis, RequirementFailure} from './engine/outcome.ts'
-import type {SiteID} from './ir/ids.ts'
-import {reportPath, siteLocation} from './ir/program.ts'
+import type {ModuleID, SiteID} from './ir/ids.ts'
+import {createProjectIR, functionRefName, reportPath, siteLocation, siteProgram} from './ir/program.ts'
+import {lowerSource} from './lower/program.ts'
 import {formatUnsupportedReason} from './report/index.ts'
-import {checkFile} from './typescript/check.ts'
+import {NUMBER_CAP} from './sweep/domain.ts'
+import {requirementFor, staticVerdictLookup, sweepReport, type StaticFinding, type SweepFinding} from './sweep/report.ts'
+import {DEFAULT_LIMITS, sweepFile, type SweepLimits, type SweepSettings} from './sweep/run.ts'
+import {checkFile, type CheckedSource} from './typescript/check.ts'
 import {formatDiagnosticLocation, formatDiagnosticPrefix, formatTypeScriptDiagnostics, TypeScriptDiagnosticsError, usePrettyOutput} from './typescript/diagnostics.ts'
 import {
   findTypeScriptConfig,
@@ -39,12 +44,17 @@ type ErrorLintFinding = {
   column: number
   rule: 'console-assert' | 'declared-requirement' | 'inferred-requirement'
   message: string
-  related?: {label: string; line: number; column: number}
+  related?: {label: string; file: string; line: number; column: number}
+  callee?: string // the callee a finding at a call is about; FREERANGE_SWEEP matches call findings by it
 }
+
+// A FREERANGE_SWEEP result: a counterexample, an internal soundness error, or a note that the sweep didn't run fully.
+type SweepLintFinding = {kind: 'sweep'; file: string} & SweepFinding
 
 type LintFinding =
   | SimpleLintFinding
   | ErrorLintFinding
+  | SweepLintFinding
 
 export type ProjectCoverage = {
   functions: number
@@ -78,6 +88,54 @@ export function runFileFindings(file: string): boolean {
     .sort((left, right) => left.line - right.line || left.column - right.column)
   console.log(formatFindings(findings, fileCoverage(target.detailed), target.pretty))
   return findings.some(finding => lintLevel(finding) === 'error')
+}
+
+export type SweepMode = {level: 'warning' | 'error'; jsonPath: string | null; settings: SweepSettings}
+
+// FREERANGE_SWEEP `1` prints counterexamples at warning level, `error` at error level. Any other value, e.g. unset, empty or
+// `0`, returns null, and `fr` runs origin/main's code path, which ignores the variable. FREERANGE_SWEEP_JSON names the sidecar
+// file; FREERANGE_SWEEP_FILTERS (base | default) and FREERANGE_SWEEP_CAP (the number cap for sides no assert bounds) are
+// test knobs, and so is FREERANGE_SWEEP_LIMITS, a JSON object that replaces some of DEFAULT_LIMITS, e.g. {"heartbeatMs": 1000}
+// so a survival fixture finishes quickly.
+export function sweepModeFromEnvironment(): SweepMode | null {
+  const flag = process.env['FREERANGE_SWEEP']
+  if (flag !== '1' && flag !== 'error') return null
+  const filters = process.env['FREERANGE_SWEEP_FILTERS'] ?? 'default'
+  if (filters !== 'base' && filters !== 'default') throw new Error(`FREERANGE_SWEEP_FILTERS must be base or default, not ${filters}`)
+  const capText = process.env['FREERANGE_SWEEP_CAP'] ?? ''
+  const cap = capText === '' ? NUMBER_CAP : Number(capText)
+  if (!(cap > 0) || !Number.isFinite(cap)) throw new Error(`FREERANGE_SWEEP_CAP must be a positive number, not ${capText}`)
+  const jsonPath = process.env['FREERANGE_SWEEP_JSON'] ?? ''
+  const limitsText = process.env['FREERANGE_SWEEP_LIMITS'] ?? ''
+  const overrides = limitsText === '' ? {} : JSON.parse(limitsText) as Partial<SweepLimits>
+  for (const name of Object.keys(overrides)) if (!(name in DEFAULT_LIMITS)) throw new Error(`FREERANGE_SWEEP_LIMITS has an unknown limit ${name}`)
+  return {level: flag === '1' ? 'warning' : 'error', jsonPath: jsonPath === '' ? null : resolve(jsonPath), settings: {filters, cap, limits: {...DEFAULT_LIMITS, ...overrides}}}
+}
+
+// The file's findings as the sweep report reads them: each line, error message and, for a finding at a call, the callee
+// the finding is about.
+export function sweepStaticFindings(detailed: DetailedAnalysis): StaticFinding[] {
+  return collectLintFindings(detailed).map(finding => finding.kind === 'error'
+    ? {line: finding.line, message: finding.message, callee: finding.callee ?? null}
+    : {line: finding.line, message: '', callee: null})
+}
+
+// `FREERANGE_SWEEP=1 fr <file>`: the file's findings, then the sweep's findings, merged in line order. The sweep runs after
+// the static findings are computed and changes none of them. Exit code 2 on an internal soundness error.
+export async function runFileFindingsWithSweep(file: string, mode: SweepMode): Promise<number> {
+  const target = analyzeTargetFile(file)
+  const findings = collectLintFindings(target.detailed)
+  const reportFile = reportPath(target.detailed.program)
+  const staticFindings = sweepStaticFindings(target.detailed)
+  const verdictOf = staticVerdictLookup(target.detailed, staticFindings)
+  const run = await sweepFile(target.detailed.program.file, reportFile, target.checked.sourceFile, target.checked.program, mode.settings, site => requirementFor(verdictOf(site)))
+  const report = sweepReport({run, verdictOf, detailed: target.detailed, staticFindings, sourceFile: target.checked.sourceFile, settings: mode.settings, level: mode.level, reportFile})
+  const all: LintFinding[] = [...findings, ...report.findings.map((finding): LintFinding => ({kind: 'sweep', file: reportFile, ...finding}))]
+    .sort((left, right) => left.line - right.line || left.column - right.column)
+  console.log(formatFindings(all, fileCoverage(target.detailed), target.pretty, report.summaryLine))
+  if (mode.jsonPath != null) writeFileSync(mode.jsonPath, `${JSON.stringify(report.json, null, 1)}\n`)
+  if (report.soundnessError) return 2
+  return all.some(finding => lintLevel(finding) === 'error') ? 1 : 0
 }
 
 // `fr --audit`: the deep layer at project scope. One unit per file — contracts, then
@@ -120,8 +178,10 @@ function analyzeProject(searchFrom: string): ProjectScan {
   let partial = 0
   let unsupported = 0
 
-  for (const source of sources) {
-    const detailed = analyzeProjectSource(source, process.cwd())
+  // Every source passed the diagnostics gate above.
+  const analyzeModule = createProjectRun(sources.map(checkedProjectSource), importedCallMode(), () => false)
+  for (let module = 0; module < sources.length; module++) {
+    const detailed = analyzeModule(module)
     files.push(detailed)
     const perFile = fileCoverage(detailed)
     analyzed += perFile.analyzed
@@ -141,7 +201,7 @@ function analyzeProject(searchFrom: string): ProjectScan {
   }
 }
 
-function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding[] {
+export function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding[] {
   const file = reportPath(program)
   const findings: LintFinding[] = []
   const addError = (
@@ -149,10 +209,15 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
     rule: ErrorLintFinding['rule'],
     message: string,
     related?: ErrorLintFinding['related'],
+    callee?: string,
   ): void => {
     const location = siteLocation(program, site)
-    findings.push({kind: 'error', file, ...location, rule, message, ...(related == null ? {} : {related})})
+    findings.push({kind: 'error', file, ...location, rule, message, ...(related == null ? {} : {related}), ...(callee == null ? {} : {callee})})
   }
+  // A related location can sit in another module: the origin of a requirement adopted
+  // through an imported call.
+  const relatedLocation = (site: SiteID): {file: string; line: number; column: number} =>
+    ({file: reportPath(siteProgram(program, site)), ...siteLocation(program, site)})
 
   const addRequirementFailure = (
     failure: RequirementFailure,
@@ -165,12 +230,13 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
         const location = siteLocation(program, stopSite)
         findings.push({kind: 'simple', file, ...location, functionName, stop: 'outOfBoundsRead'})
       } else {
-        const origin = siteLocation(program, failure.site)
+        const origin = relatedLocation(failure.site)
         addError(
           stopSite,
           'inferred-requirement',
           `call to ${calleeName} makes an asserted element read definitely out of bounds`,
           {label: 'element read at', ...origin},
+          calleeName,
         )
       }
       return
@@ -184,19 +250,20 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
           `${failure.operation} has a divisor that is definitely zero in ${functionName}`,
         )
       } else {
-        const origin = siteLocation(program, failure.site)
+        const origin = relatedLocation(failure.site)
         addError(
           stopSite,
           'inferred-requirement',
           `call to ${calleeName} violates its nonzero divisor requirement`,
           {label: `${failure.operation} at`, ...origin},
+          calleeName,
         )
       }
       return
     }
 
     if (failure.kind === 'finiteInput') {
-      const origin = siteLocation(program, failure.site)
+      const origin = relatedLocation(failure.site)
       addError(
         stopSite,
         'inferred-requirement',
@@ -208,6 +275,7 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
             ? `call to ${calleeName} passes a number that is definitely not finite`
             : `could not verify ${calleeName}'s number input at this call`,
         {label: 'input declared at', ...origin},
+        calleeName ?? undefined,
       )
       return
     }
@@ -221,7 +289,7 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
           : `could not express or prove the declared console.assert requirement in ${functionName}`,
       )
     } else {
-      const origin = siteLocation(program, failure.site)
+      const origin = relatedLocation(failure.site)
       addError(
         stopSite,
         'declared-requirement',
@@ -229,6 +297,7 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
           ? `call to ${calleeName} makes its declared requirement definitely false`
           : `could not express or prove ${calleeName}'s declared requirement at this call`,
         {label: 'declared at', ...origin},
+        calleeName,
       )
     }
   }
@@ -251,13 +320,16 @@ function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding
           break
         }
         case 'requirementFailure': {
-          const callee = reason.callee == null ? null : program.functions[reason.callee]
-          if (reason.callee != null && callee == null) throw new Error(`Unknown function ${reason.callee}`)
-          addRequirementFailure(reason.failure, stop.site, fn.lowering.name, callee?.name ?? null)
+          const calleeName = reason.callee == null ? null : functionRefName(program, reason.callee)
+          addRequirementFailure(reason.failure, stop.site, fn.lowering.name, calleeName)
           break
         }
         case 'recursion':
         case 'calleeStopped':
+        case 'importCycle':
+        case 'importedModuleState':
+        case 'contractInput':
+        case 'importUnavailable':
         case 'loopLimit':
         case 'unsupportedCode':
         case 'moduleRead':
@@ -344,7 +416,7 @@ function assertionErrorMessage(functionName: string, assertion: AssertionVerdict
 
 // Project and file findings share this format: with a file argument, the output is the
 // project output narrowed to the file, so only the coverage counts differ.
-function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pretty: boolean): string {
+function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pretty: boolean, sweepSummary: string | null = null): string {
   const lines: string[] = []
   for (const finding of findings) lines.push(formatLintFinding(finding, pretty))
 
@@ -355,6 +427,7 @@ function formatFindings(findings: LintFinding[], coverage: ProjectCoverage, pret
     '',
     `${findings.length} finding${findings.length === 1 ? '' : 's'} (${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'}).`,
     formatCoverage(coverage),
+    ...(sweepSummary == null ? [] : [sweepSummary]),
     'Run `fr --audit [file]` for every function\'s contracts and refactoring suggestions.',
   )
   return lines.join('\n')
@@ -388,12 +461,13 @@ function formatLintFinding(finding: LintFinding, pretty: boolean): string {
       const related = finding.related == null
         ? ''
         : ` (${finding.related.label} ${formatDiagnosticLocation({
-          file: finding.file,
+          file: finding.related.file,
           line: finding.related.line,
           column: finding.related.column,
         }, pretty)})`
       return `${formatLintPrefix(finding, finding.rule, pretty)}${finding.message}${related}`
     }
+    case 'sweep': return [`${formatLintPrefix(finding, finding.rule, pretty)}${finding.message}`, ...finding.details].join('\n')
   }
 }
 
@@ -401,6 +475,7 @@ function lintLevel(finding: LintFinding): 'error' | 'warning' {
   switch (finding.kind) {
     case 'simple': return finding.stop === 'outOfBoundsRead' ? 'error' : 'warning'
     case 'error': return 'error'
+    case 'sweep': return finding.level
   }
 }
 
@@ -413,7 +488,7 @@ function formatCoverage(coverage: ProjectCoverage): string {
 }
 
 // A target file analyzed on its own, with the output styling its project configures.
-type TargetFile = {detailed: DetailedAnalysis; pretty: boolean}
+type TargetFile = {detailed: DetailedAnalysis; pretty: boolean; checked: CheckedSource}
 
 // The configuration rule: like a bare `fr`, the tsconfig is resolved from the current
 // directory, never from the file's own directory. The file argument narrows the output,
@@ -429,16 +504,24 @@ function analyzeTargetFile(file: string): TargetFile {
   const projects = loadTypeScriptProjectGraph(configPath)
   const rootProject = projects.at(-1)!
   const targetPath = canonicalFilePath(absoluteFile)
-  const source = projectSources(projects).find(candidate =>
+  const sources = projectSources(projects)
+  const targetModule = sources.findIndex(candidate =>
     canonicalFilePath(candidate.sourceFile.fileName) === targetPath)
+  const source = sources[targetModule]
   if (source == null) {
     throw new Error(`File is not part of the project resolved from ${configPath}: ${absoluteFile}`)
   }
   const diagnostics = ts.getPreEmitDiagnostics(source.project.program, source.sourceFile)
   requireNoTypeScriptErrors(diagnostics, rootProject.parsed.options)
+  // An imported call lowers its callee's module too, and the analysis trusts that module's
+  // declared types, so a module with TypeScript errors is never lowered for an imported call.
+  // The call stops instead of failing the whole run: the target file itself is error-free.
+  const analyzeModule = createProjectRun(sources.map(checkedProjectSource), importedCallMode(), imported =>
+    hasErrorDiagnostics(ts.getPreEmitDiagnostics(imported.program, imported.sourceFile)))
   return {
-    detailed: analyzeProjectSource(source, process.cwd()),
+    detailed: analyzeModule(targetModule),
     pretty: usePrettyOutput(rootProject.parsed.options['pretty']),
+    checked: {sourceFile: source.sourceFile, program: source.project.program},
   }
 }
 
@@ -447,22 +530,57 @@ function canonicalFilePath(file: string): string {
   return ts.sys.useCaseSensitiveFileNames ? real : real.toLowerCase()
 }
 
-// A single-file program when no tsconfig resolves from the current directory.
+// A single-file program when no tsconfig resolves from the current directory. The program also
+// loads the project files the file imports, and checkFile has already rejected TypeScript errors
+// in every one of them. With imported calls on, those files are the modules a call can reach, by
+// the same rule projectSources applies to a tsconfig project: no declaration files, nothing
+// under node_modules.
 function analyzeFileAlone(absoluteFile: string): TargetFile {
-  return {
-    detailed: analyzeCheckedSource(checkFile(absoluteFile), process.cwd()),
-    pretty: usePrettyOutput(undefined),
-  }
+  const checked = checkFile(absoluteFile)
+  const pretty = usePrettyOutput(undefined)
+  const mode = importedCallMode()
+  if (mode === 'off') return {detailed: analyzeCheckedSource(checked, process.cwd()), pretty, checked}
+  const sources = checked.program.getSourceFiles()
+    .filter(sourceFile => !sourceFile.isDeclarationFile && !sourceFile.fileName.includes(`${sep}node_modules${sep}`))
+    .map(sourceFile => ({sourceFile, program: checked.program}))
+  const targetModule = sources.findIndex(source => source.sourceFile === checked.sourceFile)
+  if (targetModule === -1) throw new Error(`TypeScript did not load ${absoluteFile} as a source file`)
+  return {detailed: createProjectRun(sources, mode, () => false)(targetModule), pretty, checked}
 }
 
-function analyzeProjectSource(
-  source: ProjectSource,
-  reportBaseDirectory: string,
-): DetailedAnalysis {
-  return analyzeCheckedSource({
-    sourceFile: source.sourceFile,
-    program: source.project.program,
-  }, reportBaseDirectory)
+function checkedProjectSource(source: ProjectSource): CheckedSource {
+  return {sourceFile: source.sourceFile, program: source.project.program}
+}
+
+// A project's modules, lowered and analyzed on first use. With imported calls off, a module
+// lowers only when its own report needs it, matching independent per-file analysis.
+function createProjectRun(
+  sources: CheckedSource[],
+  mode: ImportedCallMode,
+  hasTypeScriptErrors: (imported: CheckedSource) => boolean,
+): (module: ModuleID) => DetailedAnalysis {
+  const project = createProjectIR(process.cwd())
+  const moduleByFile = mode === 'off'
+    ? null
+    : new Map(sources.map((source, module) => [resolve(source.sourceFile.fileName), module] as const))
+  const analysis = createProjectAnalysis(project, (module, purpose) => {
+    const source = sources[module]!
+    if (purpose === 'import' && hasTypeScriptErrors(source)) return 'typeScriptErrors'
+    return lowerSource(source, project, module, moduleByFile)
+  }, mode)
+  return module => ({program: analysis.program(module), analysis: analysis.module(module)})
+}
+
+// The imported-call prototype, selected in one place. Design A (evaluating an imported callee's
+// body at every call) stays on the mvp-imported-functions branch.
+function importedCallMode(): ImportedCallMode {
+  const setting = process.env['FREERANGE_IMPORTED_CALLS']
+  switch (setting) {
+    case undefined:
+    case 'off': return 'off'
+    case 'contract': return 'contract'
+    default: throw new Error(`FREERANGE_IMPORTED_CALLS must be off or contract, not ${setting}`)
+  }
 }
 
 function uniqueDiagnostics(diagnostics: readonly ts.Diagnostic[]): ts.Diagnostic[] {

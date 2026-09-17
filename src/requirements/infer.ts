@@ -122,6 +122,7 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       case 'not':
       case 'absolute':
       case 'call':
+      case 'importedCall':
       case 'compare':
       case 'maximum':
       case 'minimum':
@@ -135,6 +136,7 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       case 'numberCheck':
       case 'staticRequire':
       case 'staticAssert':
+      case 'staticDisjunctionHolds':
       case 'tagCheck':
       case 'nullishCheck':
       case 'arrayLiteral':
