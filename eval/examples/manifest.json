@@ -1,0 +1,17 @@
+{
+ "version": "synthetic-example@v1",
+ "builtAt": "written by hand",
+ "scratchRoot": "none: every source was written for this example",
+ "counting": {
+  "site": "every console.assert call found by the TypeScript AST in a unit's analyzed files",
+  "groundTruthSite": "a site whose key (path|owner|condition text with whitespace collapsed|occurrence) matches a record in the unit's groundTruth",
+  "catching": "false for every site: the example has no mutation run or replay oracle"
+ },
+ "slices": {
+  "synthetic": {"status": "built", "units": 1, "description": "hand-written width helpers with one stored counterexample input"}
+ },
+ "skipped": [],
+ "units": [
+  {"id": "synthetic-widths", "slice": "synthetic", "family": "widths", "unitFile": "synthetic/synthetic-widths/unit.json"}
+ ]
+}

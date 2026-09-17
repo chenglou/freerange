@@ -1,0 +1,33 @@
+{
+ "id": "synthetic-widths",
+ "slice": "synthetic",
+ "family": "widths",
+ "tree": "synthetic/synthetic-widths/tree",
+ "analyze": ["layout.ts"],
+ "tsconfig": true,
+ "nodeModules": null,
+ "packages": [],
+ "unresolvedImports": [],
+ "provenance": {
+  "sources": [{"path": "layout.ts", "from": "written for this example", "sha1": "1f339ab8b74c0792941e7d3140c0d66d01b4f48d"}],
+  "runs": [],
+  "notes": ["tsconfig: a strict default with types []"]
+ },
+ "recordedFindings": [],
+ "groundTruth": [
+  {
+   "key": "layout.ts|insetWidth|inner >= 0|0",
+   "file": "layout.ts",
+   "line": 13,
+   "owner": "insetWidth",
+   "text": "inner >= 0",
+   "labels": null,
+   "lattice": null,
+   "witness": null,
+   "kills": null,
+   "catching": false,
+   "replay": null,
+   "examples": [{"entryFile": "layout.ts", "entry": "insetWidth", "args": "[10, 8]", "source": "hand-written: an inset above half the width"}]
+  }
+ ]
+}
