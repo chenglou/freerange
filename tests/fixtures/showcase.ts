@@ -16,7 +16,7 @@ const gapSizes = [4, 8, 24] as const
 let cursor = {x: 0, y: 0}
 let animatedUntilTime: number | null = null
 
-export function springStep(s: Spring): Spring {
+export function integrateSpring(s: Spring): Spring {
   const t = msPerStep / 1000
   const acceleration = -stiffness * (s.pos - s.dest) - damping * s.v
   const v = s.v + acceleration * t

@@ -210,7 +210,7 @@ export type DeclaredKind =
   // or label keeps its numeric contract instead of rejecting wholesale.
   | {kind: 'opaque'}
   // One of several record shapes told apart by a shared string-literal property
-  // (route.type is 'explore' or 'lightbox'). The variant list is written in the type;
+  // (section.type is 'intro' or 'chapter'). The variant list is written in the type;
   // analysis only ever removes variants. The tag rides inside each variant's properties
   // as an ordinary opaque leaf; tagProperty and tagValue carry which one it is.
   | {kind: 'taggedUnion'; tagProperty: string; variants: [DeclaredVariant, ...DeclaredVariant[]]}
@@ -232,7 +232,7 @@ export type ModuleBindingCategory =
   // An imported binding. Single-file analysis knows nothing about the other module.
   | {kind: 'import'}
   // An imported binding whose target declaration is a const with a plain numeric-literal
-  // initializer in a project .ts file, e.g. `export const INPUT_ROW_HEIGHT = 54`. The
+  // initializer in a project .ts file, e.g. `export const BADGE_SIZE = 20`. The
   // literal is trusted exactly, without analyzing the exporting module; the soundness
   // argument sits on importedCategory in src/lower/module.ts.
   | {kind: 'importedConstant'; value: number}
@@ -272,8 +272,8 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
 
 // Inside a declared variant, the tag property holds exactly its tag value — the string
 // content or the pinned boolean — rather than the walked hedge. This is what lets the
-// rebuild idiom keep its variant: after `frame.type === 'sidebar'` narrows the union,
-// `{type: frame.type, width}` reads a tag whose VALUE still says 'sidebar', and the
+// rebuild idiom keep its variant: after `shape.type === 'rect'` narrows the union,
+// `{type: shape.type, width}` reads a tag whose VALUE still says 'rect', and the
 // engine's object arm pins from that value (an unnarrowed multi-variant union joins its
 // tags to bare opaque or an unknown boolean, so nothing pins — correctly).
 function exactTagValue(tagValue: string | boolean): AbstractValue {

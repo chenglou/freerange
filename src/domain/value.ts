@@ -86,7 +86,7 @@ export function joinSentinels(left: NullishSentinels, right: NullishSentinels): 
 }
 
 // A value that is one of several record shapes, told apart by a shared property holding
-// a distinct string per shape (route.type is 'explore' or 'lightbox' or 'archive'). The
+// a distinct string per shape (section.type is 'intro' or 'chapter' or 'appendix'). The
 // variant list comes from the declared type and analysis never grows it — checks only
 // ever remove variants — so the representation is bounded by what the author wrote. A
 // single-variant value stays in this form (rather than collapsing to a plain record) so a
@@ -252,10 +252,10 @@ export function tryJoinValues(left: AbstractValue, right: AbstractValue): Abstra
   }
 }
 
-// Variants merge per tag value AND property-name shape: a branch that built the lightbox
-// shape joining a branch that built the archive shape carries both, each shape's facts
-// intact — and two variants sharing a tag ({type: 'updates'; tab} | {type: 'updates';
-// article}) stay separate, because pairing them by tag alone would intersect away the
+// Variants merge per tag value AND property-name shape: a branch that built the rect
+// shape joining a branch that built the circle shape carries both, each shape's facts
+// intact — and two variants sharing a tag ({type: 'note'; title} | {type: 'note';
+// body}) stay separate, because pairing them by tag alone would intersect away the
 // properties that distinguish the declared shapes (a self-join would then prune a
 // reachable branch). The list can only hold shapes some side already had — analysis
 // never invents a variant — so it stays bounded by the declared type. Mismatched tag
@@ -293,7 +293,7 @@ function taggedUnionHull(union: AbstractTaggedUnion): AbstractRecord | null {
 
 // Same property-name set: the shape identity that keeps duplicate-tag variants apart.
 // Order-insensitive, names only — the property VALUES join; it is the presence set that
-// distinguishes {tab} from {article}.
+// distinguishes {title} from {body}.
 function sameVariantShape(left: AbstractRecord, right: AbstractRecord): boolean {
   if (left.properties.length !== right.properties.length) return false
   const rightProperties = recordPropertiesByName(right)

@@ -360,7 +360,7 @@ describe('static console.assert contracts', () => {
         rawFactor: number,
         rawCap: number,
         rawDivisor: number,
-        natural: number,
+        requestedPosition: number,
       ): number {
         const base = Math.max(0, Math.min(100, rawBase))
         const offset = Math.max(0, Math.min(100, rawOffset))
@@ -393,13 +393,12 @@ describe('static console.assert contracts', () => {
         console.assert(frame.left <= frame.right)
         console.assert(frame.nested.edge === upper)
 
-        const width = Math.max(1, rawBase)
-        const minimumHeight = width * 0.5
-        const maximumHeight = width * 2
-        const height = Math.min(Math.max(minimumHeight, natural), maximumHeight)
-        console.assert(minimumHeight <= height)
-        console.assert(height <= maximumHeight)
-        return height
+        const trackStart = Math.max(0, rawBase)
+        const trackEnd = trackStart + Math.max(0, rawOffset)
+        const clampedPosition = Math.max(trackStart, Math.min(requestedPosition, trackEnd))
+        console.assert(trackStart <= clampedPosition)
+        console.assert(clampedPosition <= trackEnd)
+        return clampedPosition
       }
 
       export function negativeControls(rawBase: number, rawOffset: number): number {

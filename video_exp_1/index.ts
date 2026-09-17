@@ -1587,7 +1587,7 @@ function processInput(layout: EditorLayout, input: RawInput): void {
   }
 }
 
-function springStep(config: Spring): void {
+function integrateSpring(config: Spring): void {
   const seconds = animationStepMilliseconds / 1000
   const stiffness = 333
   const damping = 33
@@ -1599,12 +1599,12 @@ function springStep(config: Spring): void {
   config.position += velocity * seconds
 }
 
-function springMostlyDone(config: Spring): boolean {
+function springNearlySettled(config: Spring): boolean {
   return Math.abs(config.velocity) < 0.01
     && Math.abs(config.destination - config.position) < 0.01
 }
 
-function springGoToEnd(config: Spring): void {
+function settleSpring(config: Spring): void {
   config.position = config.destination
   config.velocity = 0
 }
@@ -1623,15 +1623,15 @@ function advanceMenuAnimation(now: number, layout: EditorLayout): boolean {
   const requestedSteps = Math.floor((now - animatedUntilTime) / animationStepMilliseconds)
   const steps = Math.min(maximumAnimationSteps, Math.max(0, requestedSteps))
   for (let step = 0; step < steps; step++) {
-    springStep(state.menuX)
-    springStep(state.menuY)
+    integrateSpring(state.menuX)
+    integrateSpring(state.menuY)
   }
   animatedUntilTime += steps * animationStepMilliseconds
 
-  const animationDone = springMostlyDone(state.menuX) && springMostlyDone(state.menuY)
+  const animationDone = springNearlySettled(state.menuX) && springNearlySettled(state.menuY)
   if (animationDone) {
-    springGoToEnd(state.menuX)
-    springGoToEnd(state.menuY)
+    settleSpring(state.menuX)
+    settleSpring(state.menuY)
     state.animatedUntilTime = null
     state.menuRecentlyReleased = false
     return false

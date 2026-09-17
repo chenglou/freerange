@@ -277,7 +277,7 @@ describe('module state and nullability', () => {
     const inertWrite = analyzeSource('module-inert-write.ts', `
       let value = 1
       function changeValue(): void { value = Infinity }
-      document.title = 'Gallery'
+      document.title = 'Ready'
       const doubled = value * 2
       export function readDoubled(): number { return doubled }
     `)
@@ -475,16 +475,16 @@ describe('module state and nullability', () => {
 
   test('optional properties inside tagged-union variants classify too', () => {
     const report = analyzeSource('optional-variant.ts', `
-      type Route = {type: 'style-creator'; scroll?: number} | {type: 'home'; scroll: number}
-      export function scrollOf(route: Route): number {
-        if (route.type === 'home') return route.scroll
-        return route.scroll ?? 0
+      type Section = {type: 'outro'; scroll?: number} | {type: 'intro'; scroll: number}
+      export function scrollOf(section: Section): number {
+        if (section.type === 'intro') return section.scroll
+        return section.scroll ?? 0
       }
     `)
     expect(analyzedFunction(report, 'scrollOf').assumptions)
       .toEqual([
-        "route.scroll is undefined or a finite non-NaN number (when route.type is 'style-creator')",
-        "route.scroll is finite and not NaN (when route.type is 'home')",
+        "section.scroll is undefined or a finite non-NaN number (when section.type is 'outro')",
+        "section.scroll is finite and not NaN (when section.type is 'intro')",
       ])
     expect(analyzedFunction(report, 'scrollOf').ensures).toEqual(['return is a finite number'])
   })

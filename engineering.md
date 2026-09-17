@@ -44,7 +44,7 @@ Data structures tier:
 
 When using homogenous collections (array, map, set), avoid special-casing specific items. Items can be tagged unions if needed. Truly heterogenous operations belong in object and tuple.
 
-Orient your data structure to match your access pattern. If you have `folders: Map<folderName, Set<imageId>>` but your hot path asks "which folders is this image in?", build `imageToFolders: Map<imageId, Set<folderName>>` once upfront. Don't scan all folders per image — that turns an O(1) lookup into O(folders).
+Orient your data structure to match your access pattern. If you have `tags: Map<tagName, Set<postId>>` but your hot path asks "which tags does this post have?", build `postToTags: Map<postId, Set<tagName>>` once upfront. Don't scan all tags per post — that turns an O(1) lookup into O(tags).
 
 If you wanna refactor a data structure that's used everywhere, and can't do it one shot, make the new data structure, have it side by side with the old, and gradually migrate to the new one. Ideally, don't make the new one into a new state, since old callsites mutating the old data structure wouldn't have their changes reflected in the new one, and vice versa. So derive the new one from the old one each time through some function. Naturally, the accessors modifying the new one should, under the hood, mutate the old one (then the new one is again, automatically derived from the old one). Unidirectional data flow.
 
@@ -80,9 +80,9 @@ Folks try to "solve" performance by hiding them behind ever more obscure control
 Avoid excessive asyncs. If needed, at least spot the asyncs that need to go together, and wrap them in a group with Promise.all. Prefer top-down control flow. E.g. don't do one `configLoaded.then(...)`, one `dataLoaded.then(...)`, then some shared `maybeStart()` / `if (fooReady && barReady)` handshake if what you really mean is "wait for both, then start".
 
 Aggressively prefer `switch` over `if/else`, when possible (e.g. union values). Get those exhaustiveness coverages. Write conditions like a functional langauge with pattern matching:
-- Do: `switch (payload.type) { case 'image': return handleImage(payload); case 'text': return handleText(payload); }`
-- Don't: `if (payload.type === 'image') { handleImage(payload); } else if (payload.type === 'text') { handleText(payload); }`
-- Don't: `const dispatch = { image: handleImage, text: handleText }; dispatch[payload.type](payload)`
+- Do: `switch (notification.type) { case 'email': return sendEmail(notification); case 'sms': return sendSms(notification); }`
+- Don't: `if (notification.type === 'email') { sendEmail(notification); } else if (notification.type === 'sms') { sendSms(notification); }`
+- Don't: `const dispatch = { email: sendEmail, sms: sendSms }; dispatch[notification.type](notification)`
 
 The latter's especially prominent (using objects as dynamic dispatch tables). It's overly cute, wrecks static analysis, and cannot varie the value (function)'s shape
 
@@ -96,7 +96,7 @@ Avoid iterators if regular loops work. They hide extra work and allocs
 A single forEach or map over data is fine. filter + map or map + filter are too. But more than that, you're not saving on conciseness; convert to regular loops.
 Avoid `reduce` in most cases except for simple cases like summing up numbers. Using reduce, especially with objects, likely means the data modeling is wrong. Likewise with `flatMap` most of the time.
 
-Usually, O(n^2) or O(nm) are fine if n and m are bounded by the domain, e.g. images per job (~4) × collections (~tens) = ~hundreds. It's not fine when one n or m are user data that grows unboundedly (10k jobs, feed items). Watch out for bounded-looking inner loops that get nested inside an unbounded outer loop and repeated across the system — each instance is cheap but 4 repetitions × 10k jobs × 18 re-renders adds up. If you encounter O(n^3), then you're either doing interesting mathy things or you're likely modeling your product data wrong.
+Usually, O(n^2) or O(nm) are fine if n and m are bounded by the domain, e.g. line items per order (~4) × tags (~tens) = ~hundreds. It's not fine when one n or m are user data that grows unboundedly (10k orders, posts). Watch out for bounded-looking inner loops that get nested inside an unbounded outer loop and repeated across the system — each instance is cheap but 4 repetitions × 10k orders × 18 re-renders adds up. If you encounter O(n^3), then you're either doing interesting mathy things or you're likely modeling your product data wrong.
 
 Between monkey-patching data vs control flow, the latter is the lesser evil, but still, don't do it.
 

@@ -187,7 +187,7 @@ function lowerFunction(
       const type = lowerParameterType(parameter, parameterType, scan)
       // The pattern text becomes the parameter's report name; a pattern the author wrapped
       // across source lines would otherwise break the one-fact-per-line report format
-      // (`assumes: {` and orphan fragments — a corpus census caught eight of these).
+      // (`assumes: {` and orphan fragments).
       const patternName = parameter.name.getText(sourceFile).replace(/\s+/g, ' ')
       if (parameter.initializer != null) {
         throw unsupported(parameter, {kind: 'parameterDefaultValue', name: patternName})

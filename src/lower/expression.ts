@@ -234,11 +234,11 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       if (ts.isSpreadAssignment(property)) throw unsupported(property, {kind: 'objectSpread'})
       throw unsupported(property, {kind: 'objectPropertyForm'})
     }
-    // A literal written where a tagged union is expected ({type: 'sidebar', width: 240}
-    // returned as Frame) records which variant it builds, so branches building different
+    // A literal written where a tagged union is expected ({type: 'rect', width: 240}
+    // returned as Shape) records which variant it builds, so branches building different
     // variants join per tag instead of dropping every mismatched property. The tag VALUE
     // comes from the literal's own checked type, not its syntax, so the rebuild idiom
-    // {type: frame.type, width: frame.width + 40} — where the tag arrives via a property
+    // {type: shape.type, width: shape.width + 40} — where the tag arrives via a property
     // read of the narrowed union — is recognized too.
     const contextual = context.checker.getContextualType(current)
     // Omitted optionals become explicit undefined values, keeping the invariant that a
@@ -272,7 +272,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         // claim); WHICH VARIANT the literal builds is decided by the engine from the tag
         // property's runtime-tracked value, never from the checker's type of the tag —
         // the type channel is assertion-taintable at any distance (a review round chained
-        // `{kind: raw as 'lightbox'}`, its quoted-key spelling, and a spread of a
+        // `{kind: raw as 'rect'}`, its quoted-key spelling, and a spread of a
         // cast-tagged template), while value-carried content only ever originates from
         // written literals and declared-variant seeding.
         tag = {property: tagProperty}
@@ -994,8 +994,7 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
   // condition refines each conjunct in the arms — `a > 0 && b > 0 ? a / b : 0`
   // discharges b's nonzero exactly like the if-statement spelling does. Lowering the
   // condition as one boolean expression (the previous shape) hid the conjuncts behind a
-  // joined block parameter no branch refinement could see through; a conversion pass on
-  // the owner's repo caught the asymmetry.
+  // joined block parameter no branch refinement could see through.
   return lowerBranchingValue(
     expression,
     expression.condition,
@@ -1141,9 +1140,9 @@ type ValueKindResult = 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 
 
 // Exact memoization keyed on (interned type, remaining depth budget): the walk is pure
 // over both, so the cache cannot change any answer — it only stops the same type being
-// re-walked from every expression node that mentions it. A profiling pass measured one
-// context-bag file issuing 757 million checker queries over ~216 distinct types, ~93% of
-// the whole survey's wall time, precisely because these walks recompute per call site.
+// re-walked from every expression node that mentions it. Without the cache, a file whose
+// few shared types appear at many expression nodes repeats the same checker queries at
+// every one of those nodes, because these walks recompute per call site.
 // (declaredKind has had the same cache since the tagged-union milestone; valueKind and
 // taggedUnionProperty gain theirs here.)
 const valueKindCache = new WeakMap<ts.Type, ValueKindResult[]>()
@@ -1179,8 +1178,8 @@ function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number
     const element = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
     return element != null && valueKind(element, checker, depth + 1) != null ? 'array' : null
   }
-  // Object types and intersections of object types (`Base & {subPage: 'select'}` — the
-  // extends idiom for route variants) run the same classification: the checker's property
+  // Object types and intersections of object types (`Base & {radius: number}` — the
+  // extends idiom for variants) run the same classification: the checker's property
   // and signature queries answer for an intersection's merged view, so one body serves
   // both. A member outside the object kind keeps the whole intersection out.
   const objectLike = (type.flags & ts.TypeFlags.Object) !== 0
@@ -1233,7 +1232,7 @@ function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number
       const rest = nonMissingUnionMembers(type)
       // The non-missing rest classifies as a group, so `4 | 8 | 24 | undefined` — an
       // as-const table's bare dynamic read — is nullable like `number | undefined`. A
-      // rest that is itself a tagged union (`null | LightboxOwnerRoute`) is nullable too.
+      // rest that is itself a tagged union (`null | Shape`) is nullable too.
       const restKind = classifyUnionMembers(rest, checker, depth + 1)
       if (restKind != null) return 'nullable'
       return taggedUnionProperty(rest, checker, depth) == null ? null : 'nullable'
@@ -1264,8 +1263,8 @@ export function nonMissingUnionMembers(type: ts.UnionType): readonly ts.Type[] {
 // The property that tells a union of record shapes apart: present and required in every
 // member, typed as a single string literal in each. The first property (in the first
 // member's declaration order) that qualifies wins — by convention the tag comes first
-// (`type: 'lightbox'`). Two members MAY share a tag value (`{type: 'updates'; tab} |
-// {type: 'updates'; article}`): a tag check then keeps both. Code that must tell them apart
+// (`type: 'chapter'`). Two members MAY share a tag value (`{type: 'note'; title} |
+// {type: 'note'; body}`): a tag check then keeps both. Code that must tell them apart
 // needs a distinct tag value; `in` checks are outside the subset because width subtyping
 // permits undeclared extra properties. Null when no property qualifies.
 // Keyed on the members ARRAY: a union type's .types array is interned by the checker, so
@@ -1292,8 +1291,8 @@ function taggedUnionPropertyUncached(members: readonly ts.Type[], checker: ts.Ty
     if (valueKind(member, checker, depth + 1) !== 'object') return null
   }
   // Two passes: a property whose tag is a SINGLE literal per member (`ok: true` /
-  // `ok: false`, `type: 'lightbox'`) is a real discriminant and wins first. Only then do
-  // multi-literal tags qualify (`type: 'desktopCollapsedNav' | 'desktopExpandedNav'` in
+  // `ok: false`, `type: 'chapter'`) is a real discriminant and wins first. Only then do
+  // multi-literal tags qualify (`type: 'sunny' | 'cloudy'` in
   // one variant, or a plain boolean property every member carries) — otherwise a
   // non-discriminating `enabled: boolean` shared by all members could shadow the actual
   // tag declared after it.
@@ -1320,8 +1319,8 @@ function taggedUnionPropertyUncached(members: readonly ts.Type[], checker: ts.Ty
 // receiver reads naturally (localStorage.getItem, Math.max — one or two identifiers); a
 // method on a computed receiver — a call result, a regex literal, a chained pipeline —
 // collapses to (…).method. Raw source text carried newlines into the report (breaking
-// the one-fact-per-line format) and made the survey tally fragment into one bucket per
-// call site; the collapsed form keeps lines whole and groups the tally by method.
+// the one-fact-per-line format) and gave every call site its own distinct name; the
+// collapsed form keeps lines whole and groups calls to the same method under one name.
 function calleeDisplayName(expression: ts.Expression, sourceFile: ts.SourceFile): string {
   if (ts.isPropertyAccessExpression(expression)) {
     const receiver = expression.expression
@@ -1497,7 +1496,7 @@ function lowerElementAccess(access: ts.ElementAccessExpression, asserted: boolea
   })
 }
 
-// A read of the union's tag property (`route.type` where route is one of several
+// A read of the union's tag property (`section.type` where section is one of several
 // shapes): the recognizer both the === form and the switch subject share. Returns the
 // union expression, or null when the expression is not a tag read.
 export function taggedUnionTagRead(expression: ts.Expression, context: FunctionContext): ts.Expression | null {
@@ -1509,7 +1508,7 @@ export function taggedUnionTagRead(expression: ts.Expression, context: FunctionC
   return tagProperty === unwrapped.name.text ? unwrapped.expression : null
 }
 
-// route.type === 'lightbox' (and !==, the loose spellings, and result.ok === true): the
+// section.type === 'chapter' (and !==, the loose spellings, and result.ok === true): the
 // check consumes the union value directly and the branches narrow its variant list — the
 // same move the null checks make, pointed at the tag. The compared side must be a string
 // or boolean literal; comparing two tag reads to each other stays an unknown boolean

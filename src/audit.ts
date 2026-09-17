@@ -29,15 +29,15 @@ export const refactorGuides = [
     title: 'Check the exact divisor',
     summary: 'Give the divisor expression a name, then handle zero before dividing.',
     caveat: 'The function owns the zero case. If zero is invalid input, keep the caller requirement instead.',
-    before: `export function remap(value: number, oldMin: number, oldMax: number, newMin: number, newMax: number): number {
-  if (oldMin === oldMax) return (newMin + newMax) / 2
-  return (value - oldMin) / (oldMax - oldMin) * (newMax - newMin) + newMin
+    before: `export function progressBar(value: number, start: number, end: number): number {
+  if (start === end) return 0
+  return (value - start) / (end - start)
 }`,
-    after: `export function remap(value: number, oldMin: number, oldMax: number, newMin: number, newMax: number): number {
-  const oldSpan = oldMax - oldMin
-  if (oldMin === oldMax) return (newMin + newMax) / 2
-  if (oldSpan === 0) return (newMin + newMax) / 2
-  return (value - oldMin) / oldSpan * (newMax - newMin) + newMin
+    after: `export function progressBar(value: number, start: number, end: number): number {
+  const span = end - start
+  if (start === end) return 0
+  if (span === 0) return 0
+  return (value - start) / span
 }`,
   },
   {

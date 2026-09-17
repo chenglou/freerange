@@ -252,7 +252,7 @@ function formatAssertionReport(assertion: AssertionReport): string {
 }
 
 
-// A string tag prints quoted ('lightbox'); a boolean tag prints bare (true), matching how
+// A string tag prints quoted ('chapter'); a boolean tag prints bare (true), matching how
 // each is written in the type.
 function formatTagValue(tagValue: string | boolean): string {
   return typeof tagValue === 'string' ? `'${tagValue}'` : String(tagValue)
@@ -595,7 +595,7 @@ function numberLeafCount(declared: DeclaredKind, segments: string[], keep: KeepP
       }
       return count
     }
-    // Tagged unions never fold: their per-leaf lines carry the `(when route.type is ...)`
+    // Tagged unions never fold: their per-leaf lines carry the `(when section.type is ...)`
     // qualifier scoping each assumption to its variant, which one folded line cannot
     // express — a legal value of one variant has no values in the other variants' slots,
     // so an unqualified declaration-wide assertion is violated by every legal value,
@@ -728,8 +728,8 @@ function pushDeclaredAssumptions(path: string, segments: string[], declared: Dec
       break
     }
     case 'taggedUnion': {
-      // Per-variant leaf lines, each qualified by the tag — e.g. `route.index is finite
-      // and not NaN (when route.type is 'lightbox')`. The tag property itself is skipped:
+      // Per-variant leaf lines, each qualified by the tag — e.g. `section.index is finite
+      // and not NaN (when section.type is 'chapter')`. The tag property itself is skipped:
       // a string tag is an opaque leaf with no line anyway, and a boolean tag's "ok is a
       // boolean" would restate what the qualifier already pins. When several variants
       // share one tag value, or when a plain-boolean tag expands into several shapes, the
@@ -1027,7 +1027,7 @@ function returnSummaries(path: string, value: AbstractValue, program: ProgramIR)
     }
     case 'taggedUnion': {
       // One line naming the possible tags, then each variant's facts qualified by its
-      // tag — e.g. `return.width is a finite number (when return.type is 'sidebar')`.
+      // tag — e.g. `return.width is a finite number (when return.type is 'rect')`.
       const uniqueTags: Array<string | boolean> = []
       for (const variant of value.variants) {
         if (!uniqueTags.includes(variant.tagValue)) uniqueTags.push(variant.tagValue)

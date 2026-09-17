@@ -115,7 +115,7 @@ function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): 
 function lowerSwitchStatement(statement: ts.SwitchStatement, context: FunctionContext): void {
   const subjectType = context.checker.getTypeAtLocation(statement.expression)
   const subjectKind = valueKind(subjectType, context.checker)
-  // switch (route.type) is tagged-union dispatch: the subject becomes the union value
+  // switch (section.type) is tagged-union dispatch: the subject becomes the union value
   // itself and every case emits a tag check, so each body knows its exact shape — the
   // same narrowing the === spelling gets.
   const tagUnionExpression = taggedUnionTagRead(statement.expression, context)

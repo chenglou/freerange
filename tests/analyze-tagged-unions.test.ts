@@ -4,85 +4,85 @@ import {analyzedFunction, requirementsBesidesInputFiniteness} from './analyze-he
 
 describe('tagged unions and narrowing', () => {
   test('tagged unions: checks narrow, else-if chains prune, switch dispatches, literals build variants', () => {
-    // A union of record shapes told apart by route.type carries one record per variant.
+    // A union of record shapes told apart by section.type carries one record per variant.
     // Tag checks keep matching variants per branch; a single-variant union stays a union,
     // so later checks against other tags are definitely false and dead branches prune —
-    // by the third arm of the chain, route is provably the lightbox shape and its index
+    // by the third arm of the chain, section is provably the chapter shape and its index
     // reads. Literals remember which variant they build, so branches building different
     // variants join per tag and callers narrow them back apart.
     const report = analyzeSource('tagged-unions.ts', `
-      type Route =
-        | {type: 'explore'; filter: string}
-        | {type: 'lightbox'; id: string; index: number}
-        | {type: 'archive'; page: number}
-      export function elseIfChain(route: Route): number {
-        if (route.type === 'explore') { return 1 }
-        if (route.type === 'archive') { return route.page }
-        return route.index
+      type Section =
+        | {type: 'intro'; title: string}
+        | {type: 'chapter'; id: string; index: number}
+        | {type: 'appendix'; page: number}
+      export function elseIfChain(section: Section): number {
+        if (section.type === 'intro') { return 1 }
+        if (section.type === 'appendix') { return section.page }
+        return section.index
       }
-      type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
-      export function pick(wide: boolean): Frame {
-        if (wide) { return {type: 'sidebar', width: 240} }
-        return {type: 'mobile', scale: 0.5}
+      type Shape = {type: 'rect'; width: number} | {type: 'circle'; scale: number}
+      export function pick(wide: boolean): Shape {
+        if (wide) { return {type: 'rect', width: 240} }
+        return {type: 'circle', scale: 0.5}
       }
       export function useIt(wide: boolean): number {
-        const frame = pick(wide)
-        if (frame.type === 'sidebar') { return frame.width }
-        return frame.scale * 100
+        const shape = pick(wide)
+        if (shape.type === 'rect') { return shape.width }
+        return shape.scale * 100
       }
-      export function switchOnTag(frame: Frame): number {
-        switch (frame.type) {
-          case 'sidebar': return frame.width
-          default: return frame.scale
+      export function switchOnTag(shape: Shape): number {
+        switch (shape.type) {
+          case 'rect': return shape.width
+          default: return shape.scale
         }
       }
-      export function total(frames: Frame[]): number {
+      export function total(shapes: Shape[]): number {
         let sum = 0
-        for (const frame of frames) {
-          if (frame.type === 'sidebar') { sum = sum + frame.width }
+        for (const shape of shapes) {
+          if (shape.type === 'rect') { sum = sum + shape.width }
         }
         return sum
       }
     `)
     expect(analyzedFunction(report, 'elseIfChain').assumptions).toEqual([
-      "route.index is finite and not NaN (when route.type is 'lightbox')",
-      "route.page is finite and not NaN (when route.type is 'archive')",
+      "section.index is finite and not NaN (when section.type is 'chapter')",
+      "section.page is finite and not NaN (when section.type is 'appendix')",
     ])
     expect(analyzedFunction(report, 'elseIfChain').ensures).toEqual(['return is a finite number'])
     // The two variants' exact constants survive the join and re-split at the caller.
     expect(analyzedFunction(report, 'useIt').ensures).toEqual(['return is a finite integer number from 50 through 240'])
     expect(analyzedFunction(report, 'switchOnTag').ensures).toEqual(['return is a finite number'])
     expect(analyzedFunction(report, 'pick').ensures).toEqual([
-      "return.type is 'sidebar' or 'mobile'",
-      "return.width is a finite integer number from 240 through 240 (when return.type is 'sidebar')",
-      "return.scale is a finite number from 0.5 through 0.5 (when return.type is 'mobile')",
+      "return.type is 'rect' or 'circle'",
+      "return.width is a finite integer number from 240 through 240 (when return.type is 'rect')",
+      "return.scale is a finite number from 0.5 through 0.5 (when return.type is 'circle')",
     ])
     expect(analyzedFunction(report, 'total').assumptions).toEqual([
-      'frames is a plain array — its length counts its elements, and every index below the length holds an element',
-      "frames[each].width is finite and not NaN (when frames[each].type is 'sidebar')",
-      "frames[each].scale is finite and not NaN (when frames[each].type is 'mobile')",
+      'shapes is a plain array — its length counts its elements, and every index below the length holds an element',
+      "shapes[each].width is finite and not NaN (when shapes[each].type is 'rect')",
+      "shapes[each].scale is finite and not NaN (when shapes[each].type is 'circle')",
     ])
   })
 
   test('tagged unions: nullable wrappers carry them, and nesting mirrors the type tree', () => {
     const report = analyzeSource('nullable-tagged.ts', `
-      type Owner = {type: 'explore'; page: number} | {type: 'imagine'; count: number}
-      type Lightbox = {type: 'lightbox'; index: number; owner: null | Owner}
-      export function ownerPage(box: Lightbox): number {
-        const owner = box.owner
-        if (owner === null) { return box.index }
-        if (owner.type === 'explore') { return owner.page }
-        return owner.count
+      type Part = {type: 'intro'; page: number} | {type: 'appendix'; count: number}
+      type Chapter = {type: 'chapter'; index: number; holder: null | Part}
+      export function holderPage(chapter: Chapter): number {
+        const holder = chapter.holder
+        if (holder === null) { return chapter.index }
+        if (holder.type === 'intro') { return holder.page }
+        return holder.count
       }
     `)
-    // box.owner is nullish-wrapped, and nullish subtrees never fold (their lines carry
-    // the null caveat the folded assertion cannot), so only box.index counts toward the
-    // fold threshold and every line stays exact.
-    expect(analyzedFunction(report, 'ownerPage').assumptions).toEqual([
-      "box.owner is null or box.owner.page is finite and not NaN (when box.owner.type is 'explore')",
-      "box.owner is null or box.owner.count is finite and not NaN (when box.owner.type is 'imagine')",
+    // chapter.holder is nullish-wrapped, and nullish subtrees never fold (their lines
+    // carry the null caveat the folded assertion cannot), so only chapter.index counts
+    // toward the fold threshold and every line stays exact.
+    expect(analyzedFunction(report, 'holderPage').assumptions).toEqual([
+      "chapter.holder is null or chapter.holder.page is finite and not NaN (when chapter.holder.type is 'intro')",
+      "chapter.holder is null or chapter.holder.count is finite and not NaN (when chapter.holder.type is 'appendix')",
     ])
-    expect(analyzedFunction(report, 'ownerPage').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'holderPage').ensures).toEqual(['return is a finite number'])
   })
 
   test('tagged unions: boolean tags and literal-union tags dispatch like string tags', () => {
@@ -106,14 +106,14 @@ describe('tagged unions and narrowing', () => {
         if (raw > 0) { return {ok: true, value: raw} }
         return {ok: false, code: 400}
       }
-      type Nav =
-        | {type: 'desktopCollapsedNav' | 'desktopExpandedNav'; navWidth: number}
-        | {type: 'mobileNav'; sheetHeight: number}
-      export function navSpace(nav: Nav): number {
-        switch (nav.type) {
-          case 'desktopCollapsedNav': return nav.navWidth
-          case 'desktopExpandedNav': return nav.navWidth
-          case 'mobileNav': return nav.sheetHeight
+      type Forecast =
+        | {type: 'sunny' | 'cloudy'; uvIndex: number}
+        | {type: 'rainy'; rainfall: number}
+      export function exposure(forecast: Forecast): number {
+        switch (forecast.type) {
+          case 'sunny': return forecast.uvIndex
+          case 'cloudy': return forecast.uvIndex
+          case 'rainy': return forecast.rainfall
         }
       }
     `)
@@ -130,10 +130,10 @@ describe('tagged unions and narrowing', () => {
     ])
     // Tagged unions never fold: the qualified lines scope each assumption to its
     // variant, which one folded line cannot express.
-    expect(analyzedFunction(report, 'navSpace').assumptions).toEqual([
-      "nav.navWidth is finite and not NaN (when nav.type is 'desktopCollapsedNav')",
-      "nav.navWidth is finite and not NaN (when nav.type is 'desktopExpandedNav')",
-      "nav.sheetHeight is finite and not NaN (when nav.type is 'mobileNav')",
+    expect(analyzedFunction(report, 'exposure').assumptions).toEqual([
+      "forecast.uvIndex is finite and not NaN (when forecast.type is 'sunny')",
+      "forecast.uvIndex is finite and not NaN (when forecast.type is 'cloudy')",
+      "forecast.rainfall is finite and not NaN (when forecast.type is 'rainy')",
     ])
   })
 
@@ -165,20 +165,20 @@ describe('tagged unions and narrowing', () => {
         if (setting as boolean) { return 1 }
         return 0
       }
-      type Frame = {kind: 'lightbox'; width: number} | {kind: 'archive'; count: number}
-      function measureFrame(frame: Frame): number {
-        if (frame.kind === 'archive') { return frame.count }
-        return frame.width
+      type Shape = {kind: 'rect'; width: number} | {kind: 'circle'; count: number}
+      function measureShape(shape: Shape): number {
+        if (shape.kind === 'circle') { return shape.count }
+        return shape.width
       }
       export function launderTag(raw: string): number {
-        return measureFrame({kind: raw as 'lightbox', width: 100})
+        return measureShape({kind: raw as 'rect', width: 100})
       }
       export function launderQuotedTag(raw: string): number {
-        return measureFrame({'kind': raw as 'lightbox', width: 100})
+        return measureShape({'kind': raw as 'rect', width: 100})
       }
-      export function rebuildKeepsPin(frame: Frame): Frame {
-        if (frame.kind === 'lightbox') { return {kind: frame.kind, width: frame.width + 4} }
-        return frame
+      export function rebuildKeepsPin(shape: Shape): Shape {
+        if (shape.kind === 'rect') { return {kind: shape.kind, width: shape.width + 4} }
+        return shape
       }
       type Mixed = {ok: boolean; x: number} | {ok: false; y: number}
       export function makeMixed(useFirst: boolean): Mixed {
@@ -210,12 +210,12 @@ describe('tagged unions and narrowing', () => {
     // The tag pin is value-driven (known string content / exact booleans), so no
     // type-channel spelling — direct cast or quoted key — can pin a variant the runtime
     // tag does not hold, while the explicit rebuild
-    // {kind: frame.kind, ...} keeps its pin through the declared variant's exact tag
+    // {kind: shape.kind, ...} keeps its pin through the declared variant's exact tag
     // value (the narrowed union's tag read carries the value itself).
     expect(report.functions.find(fn => fn.name === 'launderTag')?.kind).toBe('partial')
     expect(report.functions.find(fn => fn.name === 'launderQuotedTag')?.kind).toBe('partial')
     expect(analyzedFunction(report, 'rebuildKeepsPin').ensures)
-      .toContain("return.kind is 'lightbox' or 'archive'")
+      .toContain("return.kind is 'rect' or 'circle'")
     expect(analyzedFunction(report, 'makeMixed').ensures).toEqual([
       'return.ok is false',
       'return.x is a finite integer number from 1 through 1 (when return.ok is false and return.x is present)',
@@ -229,10 +229,10 @@ describe('tagged unions and narrowing', () => {
     // A preset annotated as one member shape used to throw at the join. A record meeting
     // a union now degrades to their shared properties instead of crashing.
     const report = analyzeSource('union-round1.ts', `
-      type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
-      const sidebarPreset: {type: 'sidebar'; width: number} = {type: 'sidebar', width: 200}
-      export function pick(compact: boolean): Frame {
-        return compact ? {type: 'mobile', scale: 0.5} : sidebarPreset
+      type Shape = {type: 'rect'; width: number} | {type: 'circle'; scale: number}
+      const rectPreset: {type: 'rect'; width: number} = {type: 'rect', width: 200}
+      export function pick(compact: boolean): Shape {
+        return compact ? {type: 'circle', scale: 0.5} : rectPreset
       }
     `)
     // The preset's variant is unknown to the analysis, so the join degrades to the shared
@@ -247,11 +247,11 @@ describe('tagged unions and narrowing', () => {
     // own exhaustiveness acceptance. Property refinements also write back through union
     // parents, so a range check inside a variant sticks.
     const report = analyzeSource('union-round1b.ts', `
-      type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
-      export function widthOf(frame: Frame): number {
-        switch (frame.type) {
-          case 'sidebar': return frame.width
-          case 'mobile': return frame.scale * 320
+      type Shape = {type: 'rect'; width: number} | {type: 'circle'; scale: number}
+      export function widthOf(shape: Shape): number {
+        switch (shape.type) {
+          case 'rect': return shape.width
+          case 'circle': return shape.scale * 320
         }
       }
       type Overlay = {mode: 'zoom'; level: number} | {mode: 'pan'; dx: number}
@@ -268,40 +268,40 @@ describe('tagged unions and narrowing', () => {
   test('unclassifiable properties become opaque leaves and intersections classify', () => {
     // A recursive or mixed-literal property no longer vetoes its record: it is carried
     // without claims, numeric use of it rejects at the read position, and the record's
-    // numeric contract survives its weird neighbors. Route variants written as
+    // numeric contract survives its weird neighbors. Variants written as
     // intersections (Base & {...}) classify like the merged record they are.
     const report = analyzeSource('opaque-leaves.ts', `
-      type Filter = {kind: 'all'} | {kind: 'top'}
-      type Base = {type: 'explore'; scroll: number}
-      type ExploreRoute = Base & {filter: Filter | null; recursive: ExploreRoute | null}
-      type Route = ExploreRoute | {type: 'home'; depth: number}
-      export function scrollOf(route: Route): number {
-        if (route.type === 'explore') { return route.scroll }
-        return route.depth
+      type Tone = {kind: 'serif'} | {kind: 'mono'}
+      type Base = {type: 'chapter'; scroll: number}
+      type ChapterSection = Base & {tone: Tone | null; nested: ChapterSection | null}
+      type Section = ChapterSection | {type: 'appendix'; depth: number}
+      export function scrollOf(section: Section): number {
+        if (section.type === 'chapter') { return section.scroll }
+        return section.depth
       }
     `)
     expect(analyzedFunction(report, 'scrollOf').assumptions).toEqual([
-      "route.scroll is finite and not NaN (when route.type is 'explore')",
-      "route.depth is finite and not NaN (when route.type is 'home')",
+      "section.scroll is finite and not NaN (when section.type is 'chapter')",
+      "section.depth is finite and not NaN (when section.type is 'appendix')",
     ])
     expect(analyzedFunction(report, 'scrollOf').ensures).toEqual(['return is a finite number'])
   })
 
   test('variant literals fill their optionals, so reads after joins never miss', () => {
     const report = analyzeSource('variant-fill.ts', `
-      type Route = {type: 'archive'; folder?: string; page: number} | {type: 'home'; scroll: number}
-      export function build(deep: boolean): Route {
-        if (deep) { return {type: 'archive', folder: 'x', page: 2} }
-        return {type: 'archive', page: 1}
+      type Section = {type: 'chapter'; title?: string; page: number} | {type: 'intro'; scroll: number}
+      export function build(deep: boolean): Section {
+        if (deep) { return {type: 'chapter', title: 'x', page: 2} }
+        return {type: 'chapter', page: 1}
       }
       export function pageOf(deep: boolean): number {
-        const route = build(deep)
-        if (route.type === 'archive') { return route.page }
+        const section = build(deep)
+        if (section.type === 'chapter') { return section.page }
         return 0
       }
     `)
-    // 1 through 2, not 0 through 2: build only ever returns archive variants, so the
-    // home arm is provably dead and prunes.
+    // 1 through 2, not 0 through 2: build only ever returns chapter variants, so the
+    // intro arm is provably dead and prunes.
     expect(analyzedFunction(report, 'pageOf').ensures).toEqual(['return is a finite integer number from 1 through 2'])
   })
 
@@ -311,13 +311,13 @@ describe('tagged unions and narrowing', () => {
     // learned, so the check is honestly unknown and both branches analyze — the round-2
     // regression (a kind-mismatch stop) healed.
     const report = analyzeSource('record-dispatch.ts', `
-      type Route = {kind: 'home'; scroll: number} | {kind: 'about'; scroll: number}
-      function openHome(): {kind: 'home'; scroll: number} { return {kind: 'home', scroll: 3} }
-      function openAbout(): {kind: 'about'; scroll: number} { return {kind: 'about', scroll: 14} }
+      type Section = {kind: 'intro'; scroll: number} | {kind: 'outro'; scroll: number}
+      function openIntro(): {kind: 'intro'; scroll: number} { return {kind: 'intro', scroll: 3} }
+      function openOutro(): {kind: 'outro'; scroll: number} { return {kind: 'outro', scroll: 14} }
       export function currentScroll(flag: boolean): number {
-        const route: Route = flag ? openHome() : openAbout()
-        if (route.kind === 'home') { return route.scroll }
-        return route.scroll
+        const section: Section = flag ? openIntro() : openOutro()
+        if (section.kind === 'intro') { return section.scroll }
+        return section.scroll
       }
     `)
     expect(analyzedFunction(report, 'currentScroll').ensures)
@@ -539,27 +539,26 @@ describe('tagged unions and narrowing', () => {
   })
 
   test('a function that only switches on a union tag prints an empty assumes block', () => {
-    // The real specimen behind the read filter: mj-gallery's submissionCreatesVideo
-    // switches on submissionType.type and returns a boolean, reading exactly one
-    // property — yet it used to print dozens of per-variant array and number lines about
-    // properties it never touched. The boolean ensures rests on nothing in any variant's
-    // slots (a smuggled non-boolean cannot reach the return through the tag dispatch),
-    // so the honest assumes block is empty. The tag read itself keeps nothing: a string
+    // The case behind the read filter: a function that switches on a shape's type tag
+    // and returns a boolean reads exactly one property — yet it used to print many
+    // per-variant array and number lines about properties it never touched. The boolean
+    // ensures rests on nothing in any variant's slots (a smuggled non-boolean cannot reach
+    // the return through the tag dispatch), so the honest assumes block is empty. The tag read itself keeps nothing: a string
     // tag is opaque and prints no line anyway.
     const report = analyzeSource('tag-switch-only.ts', `
-      type SubmitJob =
-        | {type: 'image'; imagePrompts: string[]; weights: number[]}
-        | {type: 'video'; frames: number[]; durationMs: number}
-      export function createsVideo(job: SubmitJob): boolean {
-        switch (job.type) {
-          case 'image': return false
-          case 'video': return true
+      type Piece =
+        | {type: 'circle'; labels: string[]; weights: number[]}
+        | {type: 'polygon'; sides: number[]; perimeter: number}
+      export function hasCorners(piece: Piece): boolean {
+        switch (piece.type) {
+          case 'circle': return false
+          case 'polygon': return true
         }
       }
     `)
-    const specimen = analyzedFunction(report, 'createsVideo')
-    expect(specimen.assumptions).toEqual([])
-    expect(specimen.ensures).toEqual(['return is boolean'])
+    const hasCorners = analyzedFunction(report, 'hasCorners')
+    expect(hasCorners.assumptions).toEqual([])
+    expect(hasCorners.ensures).toEqual(['return is boolean'])
   })
 
 })

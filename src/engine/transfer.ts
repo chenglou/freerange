@@ -751,7 +751,7 @@ function requiredTaggedUnion(state: ExecutionState, id: ValueID): AbstractTagged
   return operand
 }
 
-// The branch where route.type === 'lightbox' held keeps only the matching variants; the
+// The branch where section.type === 'chapter' held keeps only the matching variants; the
 // other branch keeps the rest. A side with no variants left is impossible and prunes.
 // Written through the producer chain like every refinement, so the union binding itself
 // narrows, not just the read.
@@ -861,9 +861,10 @@ function writeThroughProducers(
       }
       writeThroughProducers(state, producer.object, rebuilt, producers)
     }
-    // A property read through a tagged union (box.owner after a tag check on box, or a
-    // shared property before one): the refinement meets into every variant that carries
-    // the property, so the narrowing sticks on the union binding, not just this read.
+    // A property read through a tagged union (chapter.holder after a tag check on chapter,
+    // or a shared property before one): the refinement meets into every variant that
+    // carries the property, so the narrowing sticks on the union binding, not just this
+    // read.
     if (parent?.kind === 'taggedUnion') {
       const rebuildVariant = (variant: TaggedVariant): TaggedVariant => {
         const existing = recordProperty(variant.record, producer.property)

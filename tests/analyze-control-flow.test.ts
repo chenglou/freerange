@@ -170,7 +170,7 @@ describe('control flow and contracts', () => {
     // are asked to write.
     const report = analyzeFile(showcaseFixture)
     expect(report.functions.map(fn => `${fn.name}:${fn.kind}`)).toEqual([
-      'springStep:analyzed',
+      'integrateSpring:analyzed',
       'springDone:analyzed',
       'frameSteps:analyzed',
       'advanceClock:analyzed',
@@ -214,18 +214,18 @@ describe('control flow and contracts', () => {
     expect(kinds).toEqual({analyzed: 10, partial: 1, unsupported: 4})
     expect(requirementsBesidesInputFiniteness(analyzedFunction(report, 'clamp'))[0])
       .toContain('min <= max')
-    // springStep: the physics integration can overflow, and an overflowed pos minus dest
+    // integrateSpring: the physics integration can overflow, and an overflowed pos minus dest
     // is Infinity - Infinity, so pos and v honestly carry possible NaN with the blame
     // site at the Fspring multiplication; dest, k, and b pass through untouched.
-    expect(analyzedFunction(report, 'springStep').ensures).toEqual([
+    expect(analyzedFunction(report, 'integrateSpring').ensures).toEqual([
       'return.pos is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:19)',
       'return.dest is a finite number',
       'return.v is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at demo/index.ts:41:19)',
       'return.k is a finite number',
       'return.b is a finite number',
     ])
-    // springGoToEnd snaps to rest: v is exactly 0, pos becomes dest.
-    expect(analyzedFunction(report, 'springGoToEnd').ensures).toEqual([
+    // settleSpring snaps to rest: v is exactly 0, pos becomes dest.
+    expect(analyzedFunction(report, 'settleSpring').ensures).toEqual([
       'return.pos is a finite number',
       'return.dest is a finite number',
       'return.v is a finite integer number from 0 through 0',

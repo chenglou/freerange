@@ -32,8 +32,8 @@ describe('arrays and declared values', () => {
     // optionalLength([5]) then falsified the printed 'ensures: return is a finite integer
     // number from 2 through 2' while every printed assumes line held. Arity lives in the
     // tuple target's elementFlags; rather than model an arity range, tuples with any
-    // optional, rest, or variadic position leave the subset (owner decision — no measured
-    // corpus function uses the shapes, and widening later is cheap). Each position then
+    // optional, rest, or variadic position leave the subset (owner decision — widening
+    // later is cheap). Each position then
     // takes the existing fallback: a parameter rejects with the rewrite hint, a record
     // property is carried without claims, and an unclassifiable module binding's reads
     // stop — so no exact-length claim survives anywhere for these shapes.

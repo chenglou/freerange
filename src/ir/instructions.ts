@@ -35,7 +35,7 @@ export type InstructionIR =
     })
   // `value === null` and friends. sentinel 'nullish' is the loose form (== null, and the
   // ?? test), which covers both sentinels; negated flips the polarity (!==, !=).
-  // route.type === 'lightbox': consumes the tagged-union value directly (the tag read
+  // section.type === 'chapter': consumes the tagged-union value directly (the tag read
   // never becomes a property instruction), and branch refinement keeps only the matching
   // variants on the true side, the rest on the false side.
   | (InstructionBase & {kind: 'tagCheck'; union: ValueID; tagValue: string | boolean; negated: boolean})

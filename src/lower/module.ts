@@ -122,7 +122,7 @@ export function scanModuleBindings(
 
 // The category of one imported name. A named or default import whose target resolves to a
 // const declarator with a plain numeric-literal initializer in a project .ts file, e.g.
-// `export const INPUT_ROW_HEIGHT = 54` in a neighboring file, carries that exact value
+// `export const BADGE_SIZE = 20` in a neighboring file, carries that exact value
 // into this file. Everything else — `let` exports, computed initializers, .d.ts
 // declarations, unresolved modules — stays a plain import whose reads stop.
 //
@@ -141,7 +141,7 @@ export function scanModuleBindings(
 //   - The exporting file's own analysis result (skipped statements, rejected functions,
 //     demoted bindings) cannot matter: the initializer IS the literal, so nothing that
 //     file computes feeds the value. An initializer beyond a literal (`export const
-//     ROW_HEIGHT_TOTAL = INPUT_ROW_HEIGHT + 8`) would depend on that file's module
+//     BADGE_SLOT = BADGE_SIZE + 8`) would depend on that file's module
 //     evaluation, which is exactly why the acceptance stops at literals.
 // The remaining assumption, shared with the rest of the analyzer: the code runs under ES
 // module semantics (or a transpilation that preserves const and live-binding behavior).
@@ -487,7 +487,7 @@ function declaredRecordProperties(
       context,
       [...seen, type],
     )
-    // A property the walk cannot classify — a recursive route, a mixed-literal union, a
+    // A property the walk cannot classify — a recursive type, a mixed-literal union, a
     // DOM element — becomes an opaque leaf instead of vetoing the whole record: the value
     // is carried without claims, and a read that needs more than carrying is gated at the
     // read position (numeric use rejects at lowering; a modeled-kind read of the
@@ -526,7 +526,7 @@ function wrapOptional(declared: DeclaredKind): DeclaredKind {
 
 // One union member as variants: its values for the union's tag property plus its record
 // walk. A member whose tag is a single literal gives one variant; a tag written as a
-// union of literals (`type: 'desktopCollapsedNav' | 'desktopExpandedNav'`, or a plain
+// union of literals (`type: 'sunny' | 'cloudy'`, or a plain
 // boolean — the checker's `true | false`) expands into one variant per literal, all
 // sharing the member's record shape, so the check machinery only ever sees single-literal
 // tags. The expansion is bounded by the literals the author wrote. The tag rides along
@@ -550,10 +550,8 @@ function declaredTaggedVariants(
 
 // Within one source file, the classification walk is pure over the type, and the checker
 // interns types, so one walk per (type, remaining depth) suffices. The type graph has heavy sharing,
-// and the walk previously ran once per PATH — exponential in the depth cap; a profile
-// caught 35 million property resolutions over ~216 distinct types in one file, all of
-// lowering's residual cost. Cached nulls matter as much as hits: rejection walks repeat
-// too.
+// and a walk that runs once per PATH is exponential in the depth cap. Cached nulls matter
+// as much as hits: rejection walks repeat too.
 //
 // Two disciplines make a memoized answer bit-identical to the walk it replaces. Depth is
 // part of the key, because the cap makes deep results budget-dependent. A nested result is
@@ -616,7 +614,7 @@ function declaredKindUncached(type: ts.Type, context: DeclaredKindContext, seen:
         // shapes under a nullish wrapper are a tagged union, not a nullable record.
         const members = rest.map(member => declaredKind(member, context, seen))
         inner = joinScalarDeclaredKinds(members)
-        // `owner: null | LightboxOwnerRoute` where the inner is itself a union of tagged
+        // `shape: null | Shape` where the inner is itself a union of tagged
         // shapes: the non-missing members classify as one tagged union, and maybeNullish
         // carries it like any other inner.
         const restTagProperty = inner == null ? taggedUnionProperty(rest, checker) : null
@@ -663,8 +661,7 @@ function declaredKindUncached(type: ts.Type, context: DeclaredKindContext, seen:
       // caller passing [5] falsifies with every printed assumes line holding. Only
       // all-required tuples keep the exact positional model; a tuple with any optional,
       // rest, or variadic position leaves the classified subset (owner decision: reject
-      // rather than model an arity range — no measured corpus function uses the shapes,
-      // and widening later is cheap).
+      // rather than model an arity range; widening later is cheap).
       if (tupleHasOptionalOrRestPositions(type, checker)) return null
       const elements: DeclaredKind[] = []
       for (const elementType of checker.getTypeArguments(type as ts.TypeReference)) {

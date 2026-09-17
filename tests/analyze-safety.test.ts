@@ -783,9 +783,9 @@ describe('acceptance and module safety', () => {
     // Width subtyping permits a value of the second variant to carry an extra x property,
     // so runtime presence cannot prove which declared variant the value inhabits.
     const report = analyzeSource('in-check.ts', `
-      type Route = {type: 'withX'; x: number} | {type: 'withoutX'; y: number}
-      export function readX(route: Route): number {
-        if ('x' in route) return route.x
+      type Shape = {type: 'withX'; x: number} | {type: 'withoutX'; y: number}
+      export function readX(shape: Shape): number {
+        if ('x' in shape) return shape.x
         return 0
       }
     `)

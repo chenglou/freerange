@@ -14,7 +14,7 @@ function scheduleRender(): void {
 // === generic spring physics
 // 4ms/step for the spring animation's step. Typically 4 steps for 60fps (16.6ms/frame) and 2 for 120fps (8.3ms/frame). Frame time delta varies, so not always true
 // could use 8ms instead, but 120fps' 8.3ms/frame means the computation might not fit in the remaining 0.3ms, which means sometime the simulation step wouldn't even run once, giving the illusion of jank
-const msPerAnimationStep = 4
+const physicsStepMs = 4
 type Spring = {
   pos: number
   dest: number
@@ -31,11 +31,11 @@ function spring(
 ): Spring {
   return {pos, dest: pos, v, k, b} // k = stiffness, b = damping. Try https://chenglou.me/react-motion/demos/demo5-spring-parameters-chooser/
 }
-function springStep(config: Spring): Spring {
+function integrateSpring(config: Spring): Spring {
   // https://blog.maximeheckel.com/posts/the-physics-behind-spring-animations/
   // this seems inspired by https://github.com/chenglou/react-motion/blob/9e3ce95bacaa9a1b259f969870a21c727232cc68/src/stepper.js
   // convert to seconds for the physics equation
-  const t = msPerAnimationStep / 1000
+  const t = physicsStepMs / 1000
   const {pos, dest, v, k, b} = config
   // for animations, dest is actually spring at rest. Current position is the spring's stretched/compressed state
   const Fspring = -k * (pos - dest) // Spring stiffness, in kg / s^2
@@ -46,7 +46,7 @@ function springStep(config: Spring): Spring {
 
   return {pos: newPos, dest, v: newV, k, b}
 }
-function springGoToEnd(config: Spring): Spring {
+function settleSpring(config: Spring): Spring {
   return {pos: config.dest, dest: config.dest, v: 0, k: config.k, b: config.b}
 }
 
@@ -161,11 +161,11 @@ type BoxDom = {
 }
 const domCache: {boxes: BoxDom[]} = {
   // cache lifetime: app lifetime; nodes attach and detach with occlusion
-  boxes: photoGalleryData.map(d => {
+  boxes: photoGalleryData.map((d, i) => {
     // upon zooming into 1D mode (big image), swapping out an img src for a higher-res one would cause a flash of blank image in certain cases. Instead, we put the low-res image as a background-image on the container, then the high-res image as a real img on top. Hand-rolled double buffering...
     const node = document.createElement('div')
         node.className = 'box'
-        node.style.backgroundImage = `url(https://cdn.midjourney.com/${d.id}_384_N.webp)` // 128 is the next smallest. Too small for retina screens
+        node.style.backgroundImage = `linear-gradient(135deg, hsl(${i * 47 % 360} 45% 45%), hsl(${(i * 47 + 60) % 360} 50% 20%))` // generated stand-in for the low-res thumbnail
     const img = document.createElement('img')
         // img.decoding = 'async' // this sucks. It's slower _and_ still janks the UI. No point
     const promptNode = document.createElement('figcaption')
@@ -202,11 +202,11 @@ function stepSpring(
 ): Spring {
   let stepped = s
   for (let i = 0; i < steps; i++) {
-    const next = springStep(stepped)
-    if (!Number.isFinite(next.pos) || !Number.isFinite(next.v)) return springGoToEnd(s)
+    const next = integrateSpring(stepped)
+    if (!Number.isFinite(next.pos) || !Number.isFinite(next.v)) return settleSpring(s)
     stepped = next
   }
-  return springStillAnimating(stepped) ? stepped : springGoToEnd(stepped) // close enough? Snap to done
+  return springStillAnimating(stepped) ? stepped : settleSpring(stepped) // close enough? Snap to done
 }
 
 // === events
@@ -414,10 +414,10 @@ function render(now: number): boolean {
 
   // === step 4: run animation
   let newAnimatedUntilTime = state.animatedUntilTime ?? now
-  const steps = Math.floor((now - newAnimatedUntilTime) / msPerAnimationStep) // run x spring steps. Decouple physics simulation from framerate!
-  newAnimatedUntilTime += steps * msPerAnimationStep
+  const steps = Math.floor((now - newAnimatedUntilTime) / physicsStepMs) // run x spring steps. Decouple physics simulation from framerate!
+  newAnimatedUntilTime += steps * physicsStepMs
   const stillAnimating = animationDisabled ? false : stepSprings(steps)
-  if (animationDisabled) springForEach(springGoToEnd)
+  if (animationDisabled) springForEach(settleSpring)
 
   // === step 5: render. Batch DOM writes
   const browserUIMaxSizeTop = 100, browserUIMaxSizeBottom = 150 // browsers UI like Safari are transluscent. Random conservative numbers
@@ -446,7 +446,7 @@ function render(now: number): boolean {
         promptNode.style.setProperty('line-clamp', '999')
         promptNode.style.webkitLineClamp = '999'
         img.style.display = 'block'
-        let src = `https://cdn.midjourney.com/${d.id}.webp`
+        let src = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${d.naturalSizeX}" height="${Math.round(d.naturalSizeX / d.ar)}"><linearGradient id="g" x2="1" y2="1"><stop stop-color="hsl(${i * 47 % 360} 55% 60%)"/><stop offset="1" stop-color="hsl(${(i * 47 + 60) % 360} 50% 22%)"/></linearGradient><rect width="100%" height="100%" fill="url(#g)"/><circle cx="50%" cy="45%" r="18%" fill="hsl(${(i * 47 + 180) % 360} 60% 70% / 0.5)"/></svg>`)}` // generated stand-in for the full-size image
         if (!stillAnimating && img.src !== src) img.src = src // load the full res image
       } else {
         node.style.zIndex = `${i + 1}` // simple proper z-index management

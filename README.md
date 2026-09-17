@@ -108,7 +108,7 @@ console.assert(availableWidth >= 0)
 There are infinitely many assertable things. Here are some good, non-noisy ones:
 - Guarantee that two UI items don't overlap:
   ```ts
-  console.assert(input.bottom < content.top)
+  console.assert(legend.bottom <= plot.top)
   ```
 - Guarantee that a virtualized list never renders more items than intended:
   ```ts
@@ -117,11 +117,11 @@ There are infinitely many assertable things. Here are some good, non-noisy ones:
   ```
 - Ensure that two separately calculated values are equal:
   ```ts
-  const frame = {
-    input: {bottom: inputBottom},
-    inputTray: {bottom: inputBottom},
+  const tooltip = {
+    body: {centerX: anchorCenterX},
+    arrow: {centerX: anchorCenterX},
   }
-  console.assert(frame.inputTray.bottom === frame.input.bottom)
+  console.assert(tooltip.arrow.centerX === tooltip.body.centerX)
   ```
 
 Every plain `number` parameter already requires a finite, non-`NaN` value. The same requirement applies to numeric fields selected from a fixed-shape object parameter. Freerange also checks whether a divisor may be `0` and the other conditions shown by `fr --audit`. You don't need to assert the same information explicitly.
@@ -457,7 +457,7 @@ A caller requirement is not automatically a bug. For example, `requires: columns
 
 An `ensures` line assumes its `requires` and `assumes`. A requirement may be a real API rule, or it may expose a relationship Freerange cannot currently prove. An assumption may identify a real input boundary or an analysis limitation. Decide what the program should do before changing code to remove either one.
 
-Always read the coverage line. No findings does not mean an unsupported file is safe. A derived guarantee becoming weaker, for example `at least 54` becoming `at least 0`, appears in the audit rather than the shorter findings output.
+Always read the coverage line. No findings does not mean an unsupported file is safe. A derived guarantee becoming weaker, for example `at least 8` becoming `at least 0`, appears in the audit rather than the shorter findings output.
 
 ## Development
 

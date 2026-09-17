@@ -65,8 +65,8 @@ test('the README documents every audit suggestion code', () => {
 
 test('every suggested rewrite changes the analyzer result as claimed', () => {
   const guarded = guide('guard-derived-value')
-  expect(nonInputRequirements(analyzeSource('guard-before.ts', guarded.before), 'remap')).toHaveLength(1)
-  expect(nonInputRequirements(analyzeSource('guard-after.ts', guarded.after), 'remap')).toEqual([])
+  expect(nonInputRequirements(analyzeSource('guard-before.ts', guarded.before), 'progressBar')).toHaveLength(1)
+  expect(nonInputRequirements(analyzeSource('guard-after.ts', guarded.after), 'progressBar')).toEqual([])
 
   const normalized = guide('encode-input-rule')
   expect(analyzed(analyzeSource('normalize-before.ts', normalized.before), 'perColumn').ensures.join('\n'))
@@ -105,15 +105,15 @@ test('every suggested rewrite changes the analyzer result as claimed', () => {
 
 test('behavior tests pin the suggestion caveats', async () => {
   const guarded = guide('guard-derived-value')
-  const remapBefore = exportedFunction(await loadGuideModule(guarded.before), 'remap')
-  const remapAfter = exportedFunction(await loadGuideModule(guarded.after), 'remap')
+  const progressBefore = exportedFunction(await loadGuideModule(guarded.before), 'progressBar')
+  const progressAfter = exportedFunction(await loadGuideModule(guarded.after), 'progressBar')
   for (const arguments_ of [
-    [5, 0, 10, 0, 100],
-    [5, 2, 2, 0, 100],
-    [5, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, 0, 100],
-    [5, Number.NaN, 10, 0, 100],
+    [5, 0, 10],
+    [5, 2, 2],
+    [5, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY],
+    [5, Number.NaN, 10],
   ]) {
-    expect(Object.is(returnedNumber(remapBefore, ...arguments_), returnedNumber(remapAfter, ...arguments_))).toBe(true)
+    expect(Object.is(returnedNumber(progressBefore, ...arguments_), returnedNumber(progressAfter, ...arguments_))).toBe(true)
   }
 
   const normalized = guide('encode-input-rule')
