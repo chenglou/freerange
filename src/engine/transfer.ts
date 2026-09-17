@@ -113,6 +113,15 @@ export type StepResult =
       kind: 'assertion'
       assertion: number
       observation: AbstractBoolean
+      // The staticAssert instruction's disjunctions.
+      disjunctions: number[]
+      value: Extract<AbstractValue, {kind: 'void'}>
+    }
+  // The true branch of a left side of a || group inside an interior console.assert condition.
+  | {
+      kind: 'disjunctionHolds'
+      assertion: number
+      disjunction: number
       value: Extract<AbstractValue, {kind: 'void'}>
     }
   | {kind: 'stop'; stop: Stop}
@@ -520,7 +529,19 @@ function evaluateInstructionKinded(
     }
     case 'staticAssert': {
       const observation = staticConditionObservation(instruction.value, state, context)
-      return {kind: 'assertion', assertion: instruction.assertion, observation, value: {kind: 'void'}}
+      return {
+        kind: 'assertion',
+        assertion: instruction.assertion,
+        observation,
+        disjunctions: instruction.disjunctions,
+        value: {kind: 'void'},
+      }
+    }
+    case 'staticDisjunctionHolds': return {
+      kind: 'disjunctionHolds',
+      assertion: instruction.assertion,
+      disjunction: instruction.disjunction,
+      value: {kind: 'void'},
     }
     case 'staticRequire': {
       const failureKind = instruction.purpose === 'finiteInput' ? 'finiteInput' : 'declared'
@@ -1511,7 +1532,7 @@ function evaluateSameOperandBinary(
 // rules may revisit the same pair through several min/max operands, so those pairs remain
 // memoized before their producers are expanded.
 
-function staticConditionObservation(
+export function staticConditionObservation(
   valueID: ValueID,
   state: ExecutionState,
   context: TransferContext,

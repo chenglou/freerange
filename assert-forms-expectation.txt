@@ -1,0 +1,24 @@
+Registered design for the assert-forms prototype, written before any code.
+
+Feature switch: FREERANGE_ASSERT_FORMS=1. Without it, Freerange behaves exactly as main.
+
+Forms, in build order:
+1. && in leading requirements (consecutive staticRequire) and interior assertions (parts under one assertion index)
+2. boolean-valued conditions whose lowering emits only removable instructions
+3. interior || (a true-edge constant, B's parts on the false edge, a removability gate over every block the condition creates, at most 16 disjuncts)
+4. pure + - * and supported Math.* operands, in assertion conditions only
+5. expression-bodied local predicate helpers, inlined only where every reference is a direct call inside a console.assert condition
+
+Cut: leading ||, helper references in ordinary code, element reads, / and % in conditions, asserts in loops, any src/engine or src/domain change.
+
+Caps, each past which the function is unsupported with a new staticAssertionForm reason: condition depth 32, parts per assert 64, disjuncts per || chain 16, helper inlining depth 1, helper body 256 AST nodes.
+
+Counting rules, per assertion line compared with main on the same files; a line's combined verdict is the worst over its parts, in the order not analyzed > can be false > could not prove > requirement > proved:
+- newly analyzed: main not analyzed, combined verdict anything else
+- newly proved: main not proved, combined verdict proved
+- lost proof: main proved, combined verdict not proved
+
+Gates:
+- lost proofs 0
+- no assertion that fails on a concrete input reads proved
+- every newly analyzed line uses one of the forms above
