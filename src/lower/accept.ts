@@ -1,11 +1,11 @@
 import * as ts from 'typescript'
 import {unsupported} from './context.ts'
 
-// The early acceptance check from current-decisions.md ("What TypeScript code does the
-// analyzer accept?"): the wholesale structural rules — property writes (values are
+// The early acceptance check from current-decisions.md ("How is the accepted subset
+// enforced?"): the rules that cover a whole function — property writes (values are
 // immutable after construction) and `var` — checked before lowering ever sees the code.
-// (`any`-typed values and type assertions used to be rejected here too; both are carried
-// claim-free now — see valueKind's opaque arm and unwrap's assertion peeling.) Called once
+// (`any`-typed values and type assertions used to be rejected here too; both are opaque
+// values now — see valueKind's opaque case and unwrap's handling of assertions.) Called once
 // per analyzed top-level function and once per top-level statement of the module initializer; a
 // violation throws LoweringStop and is caught like any other rejection.
 export function assertAccepted(root: ts.Node, deferFunctionBodies: boolean = false): void {
