@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Stop trusting the initial value of a module `let` that top-level code assigns again, because the file's functions can run during module initialization and observe the earlier value.
-- Print `assumes: other modules do not modify <name> or any object or array inside it` on functions whose results rest on a module-level object or array.
+- Print `assumes: other modules do not modify <name> or any object or array inside it` on every function that reads a module-level object or array, directly or through a same-file call.
 - Stop treating number fields declared only in a `.d.ts` file, such as those of library types, as finite after a function call, because the call never checks those fields.
 
 ## 0.0.5 - 2026-09-03
@@ -29,7 +29,7 @@
 
 ## 0.0.2 - 2026-07-21
 
-- Add node support (#2)
+- Add Node support (#2).
 
 ## 0.0.1 - 2026-07-20
 

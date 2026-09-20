@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Read and ackowledge our `engineering.md`, and `goal-prompt.md`. Use the latter for extensive clearly-defined tasks.
+Read and acknowledge our `engineering.md`, and `goal-prompt.md`. Use the latter for extensive clearly-defined tasks.
 
 Do NOT preserve legacy compatibility or interoperability when refactoring.
 
-**Important:** do NOT monkey-patch. If you found yourself solving the symptom instead of the root cause, reconsider and do a proper fix.
+**Important:** do NOT monkey-patch. If you find yourself solving the symptom instead of the root cause, reconsider and do a proper fix.
 
 Do `bun install` if you're in a fresh checkout/worktree.
 
@@ -15,7 +15,7 @@ For commit messages, include the important nuances of the discussion that amount
 You're free to think internally in whatever terms you're comfortable with, but when communicating responses, comments and docs, here are the guidelines:
 
 - Do NOT try to be concise or over-compress words. Be generally brief and clear.
-- Avoid using common words in uncommon situations, as pseudo-jargons. Established technical terms in their field (e.g. compiler terms) are fine.
+- Avoid using common words in uncommon situations, as pseudo-jargon. Established technical terms in their field (e.g. compiler terms) are fine.
   - Bad: `earn`, `win`, `teach`, `road signs`, `seam`, `source-backed`, `source-shaped`, `browser-owned`
   - Good/fine: `call site`, `control flow`, `type narrowing`, `invariant`
   - Bad: `input facts`, `source calls`, `loop facts`
@@ -26,7 +26,7 @@ You're free to think internally in whatever terms you're comfortable with, but w
   - Good: "A function's number param is assumed to be finite."
   - Bad: "The table lists the supported checks and their effects on each branch. This supports validation at the boundary"
   - Good: "The table shows what each check proves in its true and false branches. E.g. after `const parsed = Number.parseFloat(text)`, the true branch of `if (Number.isFinite(parsed))` knows that `parsed` is finite."
-- Don’t state the obvious just to sound thorough
+- Don't state the obvious just to sound thorough.
 - Preserve the author's tone. Remove generic filler, but don't shorten an explanation so much that it loses context.
 - Use descriptive variable names that make the example understandable on its own.
   - Bad: `ptAt`
@@ -35,7 +35,7 @@ You're free to think internally in whatever terms you're comfortable with, but w
   - Bad: "An explicitly written range replaces the default."
   - Good: "An explicitly written range, e.g. 0..Infinity, replaces the default."
 - When giving examples, you have a bad habit of using variable names that only make sense within the current conversation, not in a general doc.
-  - Bad: “Model nullability explicitly. E.g. `hullSpace: HullID | null`”. The name `hullSpace` might make sense in the conversation where I asked you to modify some docs, but it makes no sense on its own
+  - Bad: "Model nullability explicitly. E.g. `hullSpace: HullID | null`". The name `hullSpace` might make sense in the conversation where I asked you to modify some docs, but it makes no sense on its own
   - Good: replace with `userID: ID | null`. Everyone's familiar with `userID` and its frequent appearances in app dev
 - A general point accompanied by long examples is fine/desirable when the general point's too abstract for most people:
   - Bad: "Later arithmetic does not restore finiteness."

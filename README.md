@@ -7,7 +7,7 @@ Freerange shows you the range of every `number` in your TypeScript codebase, let
 - **Fast**. Uses a negligible fraction of TypeScript's analysis time.
 - **Robust**. Adversarially tested by agents against thousands of edge cases.
 
-Freerange is deliberately designed to cater to a useful (and growing) subset of TypeScript, and gives concrete guidance for moving important calculations into that subset, so that your code and math can meet in the middle to unlock the most proof power without much ergonomics drawbacks. AI agents are especially well-suited to refactor such code, and we highly recommend you asking them to do so. However, if you/they do find an unsupported TS feature truly valuable, please file an issue!
+Freerange is deliberately designed to cater to a useful (and growing) subset of TypeScript, and gives concrete guidance for moving important calculations into that subset, so that your code and math can meet in the middle to unlock the most proof power without many ergonomic drawbacks. AI agents are especially well-suited to refactor such code, and we highly recommend asking them to do so. However, if you/they do find an unsupported TS feature truly valuable, please file an issue!
 
 ## Install
 
@@ -73,8 +73,7 @@ export function itemColumn(itemIndex: number, columnCount: number): number {
 
 In the example above, calling `itemColumn(0, 2.2)` produces an error (`columnCount` should be an integer) **at compile time**, not at runtime! No need to start a browser to know that the code is wrong here.
 
-`console.assert` calls at the very beginning of a function, before any other statement, are caller requirements. Like parameter types, every caller must satisfy them.
-Any `console.assert` later in the function will be proven by Freerange for the function itself. Otherwise, Freerange reports an error.
+`console.assert` calls at the very beginning of a function, before any other statement, are caller requirements. Like parameter types, every caller must satisfy them. Any `console.assert` later in the function will be proven by Freerange for the function itself. Otherwise, Freerange reports an error.
 
 Leading assertions can compare two inputs with `===`, `<`, `<=`, `>`, or `>=`. `!==` still needs one fixed finite number. A caller that proves the comparison satisfies the requirement immediately; otherwise the same requirement passes to its caller:
 
@@ -416,7 +415,7 @@ export function fixedTotal(): number {
 
 Freerange knows that the result is a nonnegative integer but does not derive that it is exactly `6`. Ordinary counting loops usually settle after two or three checks. If a range still changes after 16 checks, Freerange stops analyzing that path. Write a formula directly when it is the intended implementation, but do not replace repeated floating-point arithmetic with multiplication unless the different rounding behavior is acceptable.
 
-Code outside this scope may make a result less precise or stop analysis. Freerange does not publish a stronger guarantee by pretending that unsupported code was understood. If an unsupported pattern is important and cannot be reasonably refactored, please file an issue.
+Code outside this scope may make a result less precise or stop analysis. Freerange does not report a stronger guarantee by pretending that unsupported code was understood. If an unsupported pattern is important and cannot be reasonably refactored, please file an issue.
 
 ## Recommended TypeScript Config
 
@@ -445,7 +444,7 @@ Freerange uses a few terms consistently:
 - `proves`: a successful static `console.assert` check.
 - `unsupported`: Freerange cannot analyze the function because it uses code outside the analyzed subset. Freerange shows the first blocker you can potentially refactor.
 - `partially supported`: Freerange can analyze some, but not all, of the function.
-- `skipped`: some top-level statements in the modules weren't analyzed.
+- `skipped`: some top-level statements in the module weren't analyzed.
 
 ### Caller Requirements
 
