@@ -70,7 +70,7 @@ export type InferredPrecondition =
     }
   | {
       kind: 'declaredNumberCheck'
-      predicate: 'integer' | 'finite' | 'nan'
+      predicate: 'integer' | 'finite' | 'nan' | 'safeInteger'
       expression: NumericExpression
       site: SiteID
       purpose?: 'finiteInput'

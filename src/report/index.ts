@@ -134,7 +134,7 @@ function finiteAssumptionInputs(
   const paths = finitePathIndexes(fn, inputs)
   for (const precondition of preconditions) {
     if (precondition.kind !== 'declaredNumberCheck'
-      || (precondition.predicate !== 'finite' && precondition.predicate !== 'integer')) continue
+      || (precondition.predicate !== 'finite' && precondition.predicate !== 'integer' && precondition.predicate !== 'safeInteger')) continue
     const path = numericParameterPath(precondition.expression)
     if (path == null || pathIndexHas(paths[path.parameter]!, path.properties)) continue
     inputs.push({parameter: path.parameter, properties: path.properties, site: precondition.site})
@@ -960,7 +960,7 @@ export function formatUnsupportedReason(reason: UnsupportedReason): string {
         case 'optionalCall': return 'optional console.assert calls are not supported'
         case 'directCheck': return 'console.assert must contain one direct numeric comparison using ===, !==, <, <=, >, or >=, or a supported Number check'
         case 'bindValueFirst': return 'calculate or read the value before console.assert, then check the variable'
-        case 'functionCall': return 'console.assert cannot call a function inside its condition except Number.isInteger, Number.isFinite, or Number.isNaN'
+        case 'functionCall': return 'console.assert cannot call a function inside its condition except Number.isInteger, Number.isFinite, Number.isSafeInteger, or Number.isNaN'
         case 'callerRequirement': return 'a leading console.assert describes what callers must provide. ===, <, <=, >, and >= may compare two parameters or fixed-record properties; !== needs one fixed finite number. It can also require a parameter to be an integer or a parameter or fixed-record property to be finite'
       }
     }
