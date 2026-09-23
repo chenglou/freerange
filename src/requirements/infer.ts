@@ -272,6 +272,7 @@ export function constantRequirementStatus(
       case 'finite': return Number.isFinite(value)
       case 'integer': return Number.isInteger(value)
       case 'nan': return Number.isNaN(value)
+      case 'safeInteger': return Number.isSafeInteger(value)
     }
   }
   const left = constantNumericExpression(requirement.left)

@@ -57,6 +57,7 @@ function conditionWords(precondition: InferredPrecondition, parameters: Paramete
     case 'declaredNumberCheck': {
       const predicate = precondition.predicate === 'integer'
         ? 'isInteger'
+        : precondition.predicate === 'safeInteger' ? 'isSafeInteger'
         : precondition.predicate === 'finite' ? 'isFinite' : 'isNaN'
       return `Number.${predicate}(${formatExpression(precondition.expression, parameters)})`
     }

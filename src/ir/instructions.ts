@@ -87,7 +87,7 @@ export type InstructionIR =
   // possibly-NaN value clean.
   | (InstructionBase & {
       kind: 'numberCheck'
-      predicate: 'integer' | 'finite' | 'nan'
+      predicate: 'integer' | 'finite' | 'nan' | 'safeInteger'
       value: ValueID
       // Generated entry checks establish function-boundary contracts but are not body reads.
       purpose?: 'finiteInput'

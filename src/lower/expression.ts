@@ -513,12 +513,12 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         for (const argument of current.arguments) lowerExpression(argument, context)
         return addInstruction(context, current, {kind: 'parsedNumber', integer: method === 'parseInt'})
       }
-      if (standardNumber && (method === 'isInteger' || method === 'isFinite' || method === 'isNaN') && current.arguments.length === 1) {
+      if (standardNumber && (method === 'isInteger' || method === 'isFinite' || method === 'isNaN' || method === 'isSafeInteger') && current.arguments.length === 1) {
         requireNumberType(current.arguments[0]!, context.checker)
         const value = lowerExpression(current.arguments[0]!, context)
         return addInstruction(context, current, {
           kind: 'numberCheck',
-          predicate: method === 'isInteger' ? 'integer' : method === 'isFinite' ? 'finite' : 'nan',
+          predicate: method === 'isInteger' ? 'integer' : method === 'isFinite' ? 'finite' : method === 'isSafeInteger' ? 'safeInteger' : 'nan',
           value,
         })
       }
@@ -641,7 +641,7 @@ function lowerStaticAnnotation(annotation: StaticAnnotation, context: FunctionCo
 type WrittenRequirementOperand = {kind: 'parameter'; value: ValueID} | {kind: 'constant'; value: number}
 
 type WrittenRequirement =
-  | {kind: 'numberCheck'; predicate: 'integer' | 'finite'; value: ValueID}
+  | {kind: 'numberCheck'; predicate: 'integer' | 'finite' | 'safeInteger'; value: ValueID}
   | {
       kind: 'comparison'
       left: WrittenRequirementOperand
@@ -655,12 +655,12 @@ function writtenRequirement(condition: ts.Expression, context: FunctionContext):
     && current.arguments.length === 1 && ts.isPropertyAccessExpression(current.expression)
     && current.expression.questionDotToken == null
     && isStandardGlobal(current.expression.expression, 'Number', context)
-    && (current.expression.name.text === 'isInteger' || current.expression.name.text === 'isFinite')) {
+    && (current.expression.name.text === 'isInteger' || current.expression.name.text === 'isFinite' || current.expression.name.text === 'isSafeInteger')) {
     const argument = current.arguments[0]!
     const value = staticRequirementParameterPathValue(argument, context)
     return value == null ? null : {
       kind: 'numberCheck',
-      predicate: current.expression.name.text === 'isInteger' ? 'integer' : 'finite',
+      predicate: current.expression.name.text === 'isInteger' ? 'integer' : current.expression.name.text === 'isSafeInteger' ? 'safeInteger' : 'finite',
       value,
     }
   }
@@ -835,7 +835,7 @@ function staticNumberCheckOperand(expression: ts.Expression, context: FunctionCo
     || expression.expression.questionDotToken != null) return null
   const callee = expression.expression
   return isStandardGlobal(callee.expression, 'Number', context)
-    && (callee.name.text === 'isInteger' || callee.name.text === 'isFinite' || callee.name.text === 'isNaN')
+    && (callee.name.text === 'isInteger' || callee.name.text === 'isFinite' || callee.name.text === 'isNaN' || callee.name.text === 'isSafeInteger')
     ? expression.arguments[0]!
     : null
 }

@@ -1043,7 +1043,7 @@ function meetValues(current: AbstractValue, refined: AbstractValue): AbstractVal
   }
 }
 
-function evaluateNumberCheck(predicate: 'integer' | 'finite' | 'nan', operand: AbstractNumber): AbstractBoolean {
+function evaluateNumberCheck(predicate: 'integer' | 'finite' | 'nan' | 'safeInteger', operand: AbstractNumber): AbstractBoolean {
   const finite = finiteNumberPart(operand)
   if (predicate === 'nan') {
     // The domain cannot express "always NaN", so the false side stays possible.
@@ -1055,6 +1055,21 @@ function evaluateNumberCheck(predicate: 'integer' | 'finite' | 'nan', operand: A
       // True is possible when a finite inhabitant exists; false when NaN or an infinity can.
       canBeTrue: finite != null,
       canBeFalse: operand.mayBeNaN || !isFiniteNumber(operand),
+    }
+  }
+  if (predicate === 'safeInteger') {
+    // Number.isSafeInteger(x) is true only for a finite integer within [-2^53+1, 2^53-1].
+    const MAX = Number.MAX_SAFE_INTEGER
+    const lower = finite == null ? 0 : Math.max(Math.ceil(finite.lower), -MAX)
+    const upper = finite == null ? -1 : Math.min(Math.floor(finite.upper), MAX)
+    // canBeFalse unless we can prove EVERY inhabitant is a safe integer: no NaN, finite,
+    // already known integer, and the whole interval sits inside the safe range.
+    const alwaysSafe = !operand.mayBeNaN && isFiniteNumber(operand) && operand.integer
+      && finite != null && finite.lower >= -MAX && finite.upper <= MAX
+    return {
+      kind: 'boolean',
+      canBeTrue: finite != null && lower <= upper,
+      canBeFalse: !alwaysSafe,
     }
   }
   return {
@@ -1090,6 +1105,11 @@ function refineNumberCheck(
     if (refined == null) return null
     if (check.predicate === 'integer') {
       refined = {...refined, integer: true, lower: Math.ceil(refined.lower), upper: Math.floor(refined.upper)}
+    }
+    if (check.predicate === 'safeInteger') {
+      // Passing Number.isSafeInteger proves integrality and clamps to the safe range.
+      const MAX = Number.MAX_SAFE_INTEGER
+      refined = {...refined, integer: true, lower: Math.max(Math.ceil(refined.lower), -MAX), upper: Math.min(Math.floor(refined.upper), MAX)}
     }
     if (refined.lower > refined.upper) return null
     writeThroughProducers(result, check.value, refined, producers)
